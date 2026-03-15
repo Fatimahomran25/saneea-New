@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+
+import 'package:firebase_dynamic_links/firebase_dynamic_links.dart';
+
+import 'views/intro.dart';
 import 'views/signup.dart';
 import 'views/login.dart';
 import 'views/freelancer_home.dart';
 import 'views/client_home_screen.dart';
 import 'views/admin_home.dart';
-import 'views/intro.dart';
-import 'views/password.dart';
+import 'views/password.dart'; // <-- ForgotPasswordScreen + ResetPasswordScreen
+
+import 'package:saneea_app/views/admin_profile.dart';
+import 'views/bank_account.dart';
+import 'views/freelancer_profile.dart';
+import 'views/client_profile.dart';
+
+final navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,42 +25,74 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+    _initDynamicLinks();
+  }
+
+  Future<void> _initDynamicLinks() async {
+    // لما التطبيق شغال (Foreground)
+    FirebaseDynamicLinks.instance.onLink
+        .listen((PendingDynamicLinkData data) {
+          final Uri link = data.link;
+          _handleResetLink(link);
+        })
+        .onError((e) {
+          debugPrint('DynamicLink error: $e');
+        });
+
+    // لما التطبيق ينفتح من رابط (Cold start)
+    final PendingDynamicLinkData? data = await FirebaseDynamicLinks.instance
+        .getInitialLink();
+
+    if (data != null) {
+      _handleResetLink(data.link);
+    }
+  }
+
+  void _handleResetLink(Uri link) {
+    // Firebase sends:
+    // https://xxxx.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=XXX...
+    final mode = link.queryParameters['mode'];
+    final oobCode = link.queryParameters['oobCode'];
+
+    if (mode == 'resetPassword' && oobCode != null && oobCode.isNotEmpty) {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => ResetPasswordScreen(oobCode: oobCode),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
+      // navigatorKey: navigatorKey,
+      title: 'Saneea',
       debugShowCheckedModeBanner: false,
       initialRoute: '/intro',
       routes: {
         '/intro': (context) => const IntroScreen(),
         '/signup': (context) => const SignupScreen(),
         '/login': (context) => const login(),
-        '/freelancerHome': (_) => const FreelancerHomeScreen(),
+        '/freelancerHome': (_) => const FreelancerHomeView(),
         '/clientHome': (_) => const ClientHomeScreen(),
         '/adminHome': (context) => const AdminHomeScreen(),
-        '/forgotPassword': (context) => const ForgotPasswordPlaceholder(),
+        '/adminProfile': (_) => const AdminProfileScreen(),
+        '/forgotPassword': (context) => const ForgotPasswordScreen(),
+        '/freelancerProfile': (_) => const FreelancerProfileView(),
+        '/clientProfile': (_) => const ClientProfile(),
+        '/bankAccount': (_) => const BankAccountView(),
       },
     );
   }

@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/login_model.dart';
+import 'dart:async';
 
 class LoginController {
+  final LoginModel model = LoginModel();
+
   final nationalIdCtrl = TextEditingController();
   final passwordCtrl = TextEditingController();
 
@@ -61,17 +65,24 @@ class LoginController {
   // ==========================
 
   Future<String?> _emailByNationalId(String nid) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('users')
-        .where('nationalId', isEqualTo: nid)
-        .limit(1)
-        .get();
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('nationalId', isEqualTo: nid)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 5));
 
-    if (snap.docs.isEmpty) return null;
+      if (snap.docs.isEmpty) return null;
 
-    final data = snap.docs.first.data();
-    final email = (data['email'] ?? '').toString().trim();
-    return email.isEmpty ? null : email;
+      final data = snap.docs.first.data();
+      final email = (data['email'] ?? '').toString().trim();
+      return email.isEmpty ? null : email;
+    } on TimeoutException {
+      throw FirebaseAuthException(code: 'network-request-failed');
+    } catch (_) {
+      throw FirebaseAuthException(code: 'network-request-failed');
+    }
   }
 
   String _mapAuthError(FirebaseAuthException e) {
@@ -97,12 +108,10 @@ class LoginController {
 
     final nid = nationalIdCtrl.text.trim();
     final pass = passwordCtrl.text;
-
     isLoading = true;
 
     try {
       final email = await _emailByNationalId(nid);
-
       if (email == null) {
         serverError = 'National ID / Password is incorrect.';
         return false;

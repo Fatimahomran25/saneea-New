@@ -280,6 +280,10 @@ class _loginState extends State<login> {
                                         c.passwordFieldError != null)
                                       return;
 
+                                    c.model.nationalId = c.nationalIdCtrl.text
+                                        .trim();
+                                    c.model.password = c.passwordCtrl.text;
+
                                     final success = await c.login();
 
                                     if (!success) {

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:io';
 
 /// ✅ Controller that highlights text overflow (characters after [limit])
 class HighlightOverflowController extends TextEditingController {
@@ -112,11 +114,37 @@ class _AnnouncementViewState extends State<AnnouncementView> {
     super.dispose();
   }
 
+  bool _containsLetter(String text) {
+    return RegExp(r'[a-zA-Z\u0600-\u06FF]').hasMatch(text);
+  }
+
+  Future<bool> _hasInternet() async {
+    final result = await Connectivity().checkConnectivity();
+    if (result == ConnectivityResult.none) return false;
+
+    try {
+      final lookup = await InternetAddress.lookup(
+        'example.com',
+      ).timeout(const Duration(seconds: 3));
+      return lookup.isNotEmpty && lookup.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _publish() async {
     final text = _textController.text.trim();
 
-    // شروطك الحالية (فاضي / روابط / فوق 150)
     if (text.isEmpty || _hasLink || _tooLong) return;
+
+    if (!_containsLetter(text)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Service request must contain at least one letter'),
+        ),
+      );
+      return;
+    }
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -126,16 +154,39 @@ class _AnnouncementViewState extends State<AnnouncementView> {
       return;
     }
 
+    //  جديد: فحص الإنترنت قبل الإرسال
+    final ok = await _hasInternet();
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Please try again.'),
+        ),
+      );
+      return;
+    }
+
     try {
-      // ✅ يحفظ داخل المستخدم نفسه
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .collection('announcements')
           .add({'text': text, 'createdAt': FieldValue.serverTimestamp()});
 
-      // ترجع للنهاية (الـ Home)
       Navigator.pop(context, text);
+    } on FirebaseException catch (e) {
+      // لو صار انقطاع/سيرفر
+      final msg =
+          (e.code == 'unavailable' || e.code == 'network-request-failed')
+          ? 'No internet connection. Please try again.'
+          : 'Failed to publish: ${e.message ?? e.code}';
+
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } on SocketException {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Please try again.'),
+        ),
+      );
     } catch (e) {
       ScaffoldMessenger.of(
         context,

@@ -1,18 +1,39 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../models/signup_model.dart';
+// السبب: هذا الاستيراد ضروري لاستخدام عناصر Flutter الأساسية داخل الكنترولر مثل:
+// TextEditingController لإدارة نصوص الحقول، وكذلك BuildContext و Navigator في loginTap().
 
-/// SignupController acts as the "Controller" for the SignupScreen:
-/// - Holds TextEditingControllers for all input fields
-/// - Provides validation getters used by the UI
-/// - Stores lightweight UI state (submitted, serverError)
-/// - Handles account creation using FirebaseAuth + Firestore
+import 'package:firebase_auth/firebase_auth.dart';
+// السبب: هذا الاستيراد ضروري لإنشاء الحساب وتسجيل المستخدم عبر Firebase Authentication.
+// مستخدم هنا في: FirebaseAuth.instance.createUserWithEmailAndPassword(...)
+// وكذلك للتعامل مع الاستثناءات: FirebaseAuthException.
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+// السبب: هذا الاستيراد ضروري للتعامل مع قاعدة البيانات Firestore.
+// مستخدم هنا في: FirebaseFirestore.instance.collection(...).where(...).get()
+// وأيضاً في: .doc(uid).set({...})
+// وكذلك FieldValue.serverTimestamp() لتسجيل وقت الإنشاء من السيرفر.
+// وأيضاً للتعامل مع الاستثناءات: FirebaseException.
+
+import '../models/signup_model.dart';
+// السبب: هذا الاستيراد ضروري لاستخدام SignupModel و AccountType.
+// مستخدم هنا في: final SignupModel model = SignupModel();
+// ومستخدم في: setAccountType(AccountType type) وفي إرجاع AccountType من createAccount().
+
+import 'dart:async';
+// السبب: هذا الاستيراد ضروري لاستخدام TimeoutException و Duration.
+// مستخدم هنا مع: .timeout(const Duration(seconds: 8))
+// وكذلك في: on TimeoutException catch (_) { ... }.
+
+/// SignupController يعمل كـ "Controller" لشاشة التسجيل:
+/// - يحتفظ بـ TextEditingControllers لكل حقول الإدخال
+/// - يوفر خصائص تحقق (Validation getters) تستخدمها الواجهة
+/// - يحتفظ بحالة بسيطة للواجهة (submitted, serverError, isLoading)
+/// - ينفذ إنشاء الحساب عبر FirebaseAuth و Firestore
 class SignupController {
-  /// Data model that stores non-text state like the selected AccountType.
+  /// موديل لتخزين البيانات غير النصية مثل نوع الحساب المختار (AccountType).
   final SignupModel model = SignupModel();
 
-  /// Text controllers for reading and controlling the user's input in the UI.
+  /// متحكمات النص الخاصة بحقول الإدخال في الواجهة لقراءة النص والتحكم به.
   final nationalIdCtrl = TextEditingController();
   final firstNameCtrl = TextEditingController();
   final lastNameCtrl = TextEditingController();
@@ -20,41 +41,45 @@ class SignupController {
   final passwordCtrl = TextEditingController();
   final confirmPasswordCtrl = TextEditingController();
 
-  // ===== UI/STATE =====
+  // ===== حالة الواجهة =====
 
-  /// Indicates whether the user attempted to submit the form.
-  /// Used by the UI to show validation errors (red borders/messages).
+  /// يوضح هل المستخدم حاول إرسال الفورم أم لا.
+  /// تستخدمه الواجهة لإظهار حدود/رسائل التحقق عند الإرسال.
   bool submitted = false;
 
-  /// Holds server-side errors (Firebase/Auth/Firestore) to display in the UI.
-  /// Example: email already exists, nationalId already exists, etc.
+  /// رسالة خطأ قادمة من Firebase/Auth/Firestore لعرضها في الواجهة عند الفشل.
+  /// مثال: الإيميل مستخدم أو رقم الهوية مكرر.
   String? serverError;
 
-  // ===== HELPERS =====
+  /// حالة تحميل لمنع الضغط المتكرر على زر إنشاء الحساب أثناء تنفيذ الطلب.
+  bool isLoading = false;
 
-  /// Helper method used by name validation.
-  /// Ensures the string contains letters only (A-Z / a-z).
+  // ===== دوال مساعدة =====
+
+  /// دالة مساعدة للتحقق من الاسم: تقبل أحرف إنجليزية فقط (A-Z / a-z).
+  /// ملاحظة: هذا يعني أن إدخال أحرف عربية سيُعتبر غير صالح وفق هذا الشرط.
   bool _isOnlyLetters(String v) => RegExp(r'^[a-zA-Z]+$').hasMatch(v);
 
-  // ===== VALIDATION =====
+  // ===== التحقق (Validation) =====
 
-  /// Checks whether the user selected an account type.
-  /// The selection is stored in the model (not a text field).
+  /// يتحقق أن المستخدم اختار نوع الحساب (Freelancer أو Client).
+  /// النوع محفوظ داخل model وليس داخل TextField.
   bool get isAccountTypeSelected => model.accountType != null;
 
-  /// Validates Saudi National ID / Iqama based on:
-  /// - Exactly 10 digits
-  /// - Starts with 1 (National ID) or 2 (Iqama)
+  /// يتحقق من رقم الهوية/الإقامة:
+  /// - الطول 10 أرقام
+  /// - يبدأ بـ 1 (هوية) أو 2 (إقامة)
+  /// ملاحظة: هذا تحقق مبدئي، ولا يتحقق من صحة الرقم حسابياً.
   bool get isNationalIdValid {
     final v = nationalIdCtrl.text.trim();
     if (v.length != 10) return false;
     return v.startsWith('1') || v.startsWith('2');
   }
 
-  /// Validates first name:
-  /// - Not empty
-  /// - Max 15 characters
-  /// - Letters only
+  /// يتحقق من الاسم الأول:
+  /// - غير فارغ
+  /// - لا يتجاوز 15 حرف
+  /// - أحرف إنجليزية فقط حسب _isOnlyLetters
   bool get isFirstNameValid {
     final v = firstNameCtrl.text.trim();
     if (v.isEmpty) return false;
@@ -62,10 +87,10 @@ class SignupController {
     return _isOnlyLetters(v);
   }
 
-  /// Validates last name:
-  /// - Not empty
-  /// - Max 15 characters
-  /// - Letters only
+  /// يتحقق من الاسم الأخير:
+  /// - غير فارغ
+  /// - لا يتجاوز 15 حرف
+  /// - أحرف إنجليزية فقط حسب _isOnlyLetters
   bool get isLastNameValid {
     final v = lastNameCtrl.text.trim();
     if (v.isEmpty) return false;
@@ -73,8 +98,8 @@ class SignupController {
     return _isOnlyLetters(v);
   }
 
-  /// Validates email format (restricted here to Gmail addresses only).
-  /// This is UI/business requirement, not a Firebase requirement.
+  /// يتحقق من البريد الإلكتروني بصيغة Gmail فقط (شرط خاص بالتطبيق).
+  /// ملاحظة: هذا شرط تجاري/واجهة وليس شرطاً من Firebase.
   bool get isEmailValid {
     final v = emailCtrl.text.trim();
     if (v.isEmpty) return false;
@@ -82,31 +107,49 @@ class SignupController {
     return gmailRegex.hasMatch(v);
   }
 
-  /// Password rule #3: contains at least one special character.
+  /// قاعدة كلمة المرور: يحتوي على رمز خاص واحد على الأقل.
   bool get hasSpecialChar =>
       RegExp(r'[!@#$%^&*(),.?":{}|<>_\-]').hasMatch(passwordCtrl.text);
 
-  /// Password rule #2: contains at least one digit.
+  /// قاعدة كلمة المرور: يحتوي على رقم واحد على الأقل.
   bool get hasNumber => RegExp(r'\d').hasMatch(passwordCtrl.text);
 
-  /// Password rule #0: contains at least 8 letters (A-Z / a-z).
+  /// قاعدة كلمة المرور: يحتوي على حرف كبير واحد على الأقل (A-Z).
+  bool get hasUppercase => RegExp(r'[A-Z]').hasMatch(passwordCtrl.text);
+
+  /// قاعدة كلمة المرور: يحتوي على حرف صغير واحد على الأقل (a-z).
+  bool get hasLowercase => RegExp(r'[a-z]').hasMatch(passwordCtrl.text);
+
+  /// قاعدة كلمة المرور: يحتوي على 8 أحرف إنجليزية على الأقل (A-Z / a-z) داخل كلمة المرور.
+  /// ملاحظة: هذا يتحقق من عدد الأحرف فقط، وليس طول النص الكامل (قد يشمل رموز/أرقام).
   bool get hasAtLeast8Letters =>
       RegExp(r'[A-Za-z]').allMatches(passwordCtrl.text).length >= 8;
 
-  /// Overall password validity (must satisfy all rules).
-  bool get isPasswordValid => hasAtLeast8Letters && hasNumber && hasSpecialChar;
+  /// صلاحية كلمة المرور بناءً على القواعد5  المعرفة أعلاه.
+  bool get isPasswordValid =>
+      hasAtLeast8Letters &&
+      hasUppercase &&
+      hasLowercase &&
+      hasNumber &&
+      hasSpecialChar;
 
-  /// Same logic as isPasswordValid but named "Strong" for UI display purposes.
+  /// قوة كلمة المرور (نفس شروط isPasswordValid هنا).
   bool get isPasswordStrong =>
-      hasAtLeast8Letters && hasNumber && hasSpecialChar;
+      hasAtLeast8Letters &&
+      hasUppercase &&
+      hasLowercase &&
+      hasNumber &&
+      hasSpecialChar;
 
-  /// Confirm password must be non-empty and match the original password.
+  /// تحقق تأكيد كلمة المرور:
+  /// - غير فارغ
+  /// - يطابق كلمة المرور الأصلية
   bool get isConfirmPasswordValid =>
       confirmPasswordCtrl.text.isNotEmpty &&
       confirmPasswordCtrl.text == passwordCtrl.text;
 
-  /// Aggregated validation used before attempting account creation.
-  /// If false, UI should stop and show missing/invalid fields.
+  /// تحقق مجمع لكل الحقول المطلوبة قبل محاولة إنشاء الحساب.
+  /// إذا كان false: يجب على الواجهة إيقاف الإرسال وإظهار الأخطاء.
   bool get allRequiredValid =>
       isAccountTypeSelected &&
       isNationalIdValid &&
@@ -116,21 +159,21 @@ class SignupController {
       isPasswordValid &&
       isConfirmPasswordValid;
 
-  // ===== ACTIONS =====
+  // ===== إجراءات (Actions) =====
 
-  /// Saves selected account type into the model.
-  /// Called when user taps Freelancer/Client button.
+  /// حفظ نوع الحساب المختار داخل الموديل.
+  /// تُستدعى عند ضغط المستخدم على زر Freelancer أو Client في الواجهة.
   void setAccountType(AccountType type) {
     model.accountType = type;
   }
 
-  /// Marks the form as submitted so UI can show validation feedback.
+  /// تعليم أن المستخدم حاول إرسال الفورم حتى تبدأ الواجهة بإظهار أخطاء التحقق.
   void submit() {
     submitted = true;
   }
 
-  /// Disposes all TextEditingControllers to prevent memory leaks.
-  /// Called from the screen's dispose().
+  /// التخلص من جميع TextEditingControllers لتفادي تسرب الذاكرة.
+  /// يجب استدعاؤها من dispose() في الشاشة.
   void dispose() {
     nationalIdCtrl.dispose();
     firstNameCtrl.dispose();
@@ -140,81 +183,108 @@ class SignupController {
     confirmPasswordCtrl.dispose();
   }
 
-  /// Creates a new user account:
-  /// 1) Verifies allRequiredValid (client-side validation)
-  /// 2) Checks if nationalId already exists in Firestore (business rule)
-  /// 3) Creates FirebaseAuth user with email/password
-  /// 4) Writes user profile data into Firestore using UID as document ID
+  /// إنشاء حساب جديد:
+  /// 1) يمنع التنفيذ إذا كان هناك طلب جارٍ (isLoading)
+  /// 2) يتحقق من allRequiredValid (تحقق على الجهاز)
+  /// 3) يتحقق من تكرار رقم الهوية في Firestore (شرط تجاري)
+  /// 4) ينشئ مستخدم في FirebaseAuth باستخدام email/password
+  /// 5) يحفظ بيانات المستخدم في Firestore باستخدام uid كمعرف للوثيقة
   ///
-  /// Returns:
-  /// - AccountType on success (so the UI can navigate to the correct home page)
-  /// - null on failure (and sets serverError for the UI)
+  /// يعيد:
+  /// - AccountType عند النجاح (لتستخدمه الواجهة في التوجيه للصفحة المناسبة)
+  /// - null عند الفشل مع ضبط serverError لعرض السبب
   Future<AccountType?> createAccount() async {
-    // Clear old server error whenever a new attempt starts.
+    if (isLoading) return null;
+
+    // تفعيل حالة التحميل وإزالة أي خطأ سابق قبل بدء العملية.
+    isLoading = true;
     serverError = null;
 
-    // Stop early if any required field is invalid.
-    if (!allRequiredValid) return null;
-
-    // Read sanitized values from text fields.
-    final nationalId = nationalIdCtrl.text.trim();
-    final firstName = firstNameCtrl.text.trim();
-    final lastName = lastNameCtrl.text.trim();
-    final email = emailCtrl.text.trim();
-    final password = passwordCtrl.text;
-
-    // accountType is non-null here because allRequiredValid is true.
-    final accountType = model.accountType!;
-
     try {
-      // Firestore uniqueness check for National ID / Iqama.
-      // Prevents multiple accounts from using the same nationalId.
+      // إيقاف العملية إذا كان التحقق المجمع غير مكتمل.
+      if (!allRequiredValid) return null;
+
+      // قراءة القيم بعد تنظيف المسافات.
+      final nationalId = nationalIdCtrl.text.trim();
+      final firstName = firstNameCtrl.text.trim();
+      final lastName = lastNameCtrl.text.trim();
+      final email = emailCtrl.text.trim();
+      final password = passwordCtrl.text;
+      final accountType = model.accountType!;
+
+      // التحقق من وجود نفس nationalId مسبقاً في مجموعة users.
+      // timeout لتفادي الانتظار الطويل إذا الاتصال ضعيف.
       final existing = await FirebaseFirestore.instance
           .collection('users')
           .where('nationalId', isEqualTo: nationalId)
           .limit(1)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 8));
 
       if (existing.docs.isNotEmpty) {
+        // منع إنشاء حساب جديد إذا كان رقم الهوية موجود مسبقاً.
         serverError = "National ID / Iqama already exists.";
         return null;
       }
 
-      // Create authentication account in FirebaseAuth.
+      // إنشاء المستخدم في Firebase Authentication.
       final credential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(email: email, password: password);
+          .createUserWithEmailAndPassword(email: email, password: password)
+          .timeout(const Duration(seconds: 8));
 
-      // UID is the primary identifier for the authenticated user.
+      // الحصول على uid للمستخدم الجديد لاستخدامه كمعرف وثيقة في Firestore.
       final uid = credential.user!.uid;
 
-      // Store user profile data in Firestore under users/{uid}.
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'accountType': accountType.name,
-        'nationalId': nationalId,
-        'firstName': firstName,
-        'lastName': lastName,
-        'email': email,
-        // Server timestamp ensures consistent time regardless of client device time.
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // حفظ بيانات الملف الشخصي في Firestore.
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .set({
+            'accountType': accountType.name,
+            'nationalId': nationalId,
+            'firstName': firstName,
+            'lastName': lastName,
+            'email': email,
+            'createdAt': FieldValue.serverTimestamp(),
+          })
+          .timeout(const Duration(seconds: 8));
 
-      // Return type so the UI can navigate accordingly.
-      return accountType; // ✅ this enables navigation based on account type
+      // إعادة نوع الحساب لتمكين الواجهة من التوجيه للصفحة المناسبة.
+      return accountType;
     } on FirebaseAuthException catch (e) {
-      // FirebaseAuth-specific errors (email already used, weak password, etc.)
-      serverError = e.code == 'email-already-in-use'
-          ? "Email already exists. Try a different email."
-          : (e.message ?? "Auth error.");
+      // أخطاء المصادقة/إنشاء الحساب في FirebaseAuth.
+      if (e.code == 'network-request-failed') {
+        serverError = "No internet connection.";
+      } else if (e.code == 'email-already-in-use') {
+        serverError = "Email already exists. Try a different email.";
+      } else {
+        serverError = e.message ?? "Auth error.";
+      }
+      return null;
+    } on FirebaseException catch (e) {
+      // أخطاء Firestore مثل عدم التوفر أو تأخير الاستجابة.
+      if (e.code == 'unavailable' || e.code == 'deadline-exceeded') {
+        serverError = "No internet connection. Please try again.";
+      } else {
+        serverError = "Database error. Try again.";
+      }
+      return null;
+    } on TimeoutException {
+      // timeout من .timeout(...) عند بطء/انقطاع الشبكة.
+      serverError = "Connection timed out. Check your internet.";
       return null;
     } catch (_) {
-      // Any other unexpected errors (network, permissions, etc.)
+      // أي أخطاء غير متوقعة.
       serverError = "Something went wrong. Try again.";
       return null;
+    } finally {
+      // إيقاف حالة التحميل دائماً سواء نجحت العملية أو فشلت.
+      isLoading = false;
     }
   }
 
-  /// Navigates to the login screen.
-  /// Called when user clicks "Log in" link on the signup page.
+  /// الانتقال إلى صفحة تسجيل الدخول.
+  /// تُستدعى عند الضغط على رابط "Log in" في شاشة التسجيل.
   void loginTap(BuildContext context) {
     Navigator.pushNamed(context, '/login');
   }

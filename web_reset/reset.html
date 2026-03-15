@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Reset Password</title>
+
+<style>
+  body{
+    font-family: Arial, sans-serif;
+    max-width:420px;
+    margin:40px auto;
+    padding:0 16px;
+  }
+
+  h2{ text-align:center; margin-bottom:8px; }
+
+  .hint{
+    color:#555;
+    font-size:13px;
+    margin-bottom:14px;
+    text-align:center;
+  }
+
+  .passWrap{
+    position:relative;
+    width:100%;
+    margin:10px 0;
+  }
+
+  .passWrap input{
+    width:100%;
+    padding:12px 54px 12px 12px; /* مساحة للعين */
+    font-size:16px;
+    box-sizing:border-box;
+    border:1px solid #bbb;
+    border-radius:8px;
+    outline:none;
+    background:#fff;
+  }
+
+  .passWrap input:focus{
+    border-color:#4F378B;
+  }
+
+  .eye{
+    position:absolute;
+    right:10px;
+    top:50%;
+    transform:translateY(-50%);
+    width:40px;
+    height:40px;
+    border:none;
+    background:transparent;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:0;
+  }
+
+  /* مهم: نعطي SVG مساحة أكبر + stroke عشان ما ينقص */
+  .eye svg{
+    width:24px;
+    height:24px;
+    overflow:visible;
+    stroke:#4F378B;
+    stroke-width:2.2;
+    fill:none;
+    stroke-linecap:round;
+    stroke-linejoin:round;
+  }
+
+  /* ===== rules list like signup ===== */
+  .rulesBlock{ margin:10px 0 0; }
+
+  .rule{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin:7px 0;
+    font-size:14px;
+  }
+
+  .dot{
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    background:#9e9e9e; /* default gray */
+    flex:0 0 10px;
+  }
+
+  .txt{ color:#9e9e9e; }
+
+  .rule.ok  .dot{ background:#1b8f3a; }
+  .rule.ok  .txt{ color:#1b8f3a; }
+
+  .rule.bad .dot{ background:#c62828; }
+  .rule.bad .txt{ color:#c62828; }
+
+  button#saveBtn{
+    width:100%;
+    padding:14px;
+    font-size:16px;
+    margin-top:18px;
+    cursor:pointer;
+    border:none;
+    border-radius:10px;
+    background:#4F378B;
+    color:#fff;
+  }
+  button#saveBtn:disabled{
+    background:#ccc;
+    cursor:not-allowed;
+  }
+
+  .err{
+    color:#c62828;
+    margin-top:12px;
+    white-space:pre-line;
+    text-align:center;
+    font-size:14px;
+  }
+</style>
+</head>
+
+<body>
+  <h2>Reset Password</h2>
+  <div id="emailHint" class="hint"></div>
+
+  <!-- NEW PASSWORD -->
+  <div class="passWrap">
+    <input id="newPass" type="password" placeholder="New password" autocomplete="new-password">
+    <button type="button" id="toggleNew" class="eye" aria-label="Toggle password">
+      <!-- eye (open) -->
+      <svg id="iconNew" viewBox="0 0 24 24">
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>
+    </button>
+  </div>
+
+  <!-- rules تحت new password -->
+  <div id="rulesMain" class="rulesBlock"></div>
+
+  <!-- CONFIRM PASSWORD -->
+  <div class="passWrap">
+    <input id="confirmPass" type="password" placeholder="Confirm password" autocomplete="new-password">
+    <button type="button" id="toggleConfirm" class="eye" aria-label="Toggle password">
+      <!-- eye (open) -->
+      <svg id="iconConfirm" viewBox="0 0 24 24">
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>
+    </button>
+  </div>
+
+  <!-- match تحت confirm -->
+  <div id="rulesMatch" class="rulesBlock"></div>
+
+  <div id="err" class="err"></div>
+  <button id="saveBtn" disabled>Save</button>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+  import { getAuth, verifyPasswordResetCode, confirmPasswordReset }
+    from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey:"AIzaSyCy5c_QTIkum1HgAyjc5--QaCCYNcHYcFw",
+    authDomain:"freelance-app-be58f.firebaseapp.com",
+    projectId:"freelance-app-be58f",
+    storageBucket:"freelance-app-be58f.firebasestorage.app",
+    messagingSenderId:"315464062158",
+    appId:"1:315464062158:web:9beb3072049caca9126c9f"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+
+  const params = new URLSearchParams(location.search);
+  const oobCode = params.get("oobCode");
+
+  const newPass = document.getElementById("newPass");
+  const confirmPass = document.getElementById("confirmPass");
+  const rulesMainEl = document.getElementById("rulesMain");
+  const rulesMatchEl = document.getElementById("rulesMatch");
+  const errEl = document.getElementById("err");
+  const saveBtn = document.getElementById("saveBtn");
+  const emailHint = document.getElementById("emailHint");
+
+  // SVG for open/closed eye (closed is the open eye + slash)
+  function setEyeIcon(svgEl, isHidden){
+    if(!svgEl) return;
+
+    if(isHidden){
+      // eye-off
+      svgEl.innerHTML = `
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M4 4L20 20"></path>
+      `;
+    }else{
+      // eye-on
+      svgEl.innerHTML = `
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      `;
+    }
+  }
+
+  // ====== eye toggle ======
+  function toggle(input, iconSvg){
+    const toText = input.type === "password";
+    input.type = toText ? "text" : "password";
+    setEyeIcon(iconSvg, !toText); // إذا صار text => مو مخفي
+  }
+
+  const iconNew = document.getElementById("iconNew");
+  const iconConfirm = document.getElementById("iconConfirm");
+
+  // initial state: hidden
+  setEyeIcon(iconNew, true);
+  setEyeIcon(iconConfirm, true);
+
+  document.getElementById("toggleNew").addEventListener("click", () => toggle(newPass, iconNew));
+  document.getElementById("toggleConfirm").addEventListener("click", () => toggle(confirmPass, iconConfirm));
+
+  // ====== rules checks ======
+  function hasUpper(s){ return /[A-Z]/.test(s); }
+  function hasLower(s){ return /[a-z]/.test(s); }
+  function hasNum(s){ return /[0-9]/.test(s); }
+  function hasSpecial(s){ return /[!@#$%^&*(),.?":{}|<>_\-\\/\[\]=+;`~]/.test(s); }
+
+  // المطلوب: 8 حروف (letters) على الأقل
+  function lettersAtLeast8(s){
+    const letters = (s.match(/[A-Za-z]/g) || []).length;
+    return letters >= 8;
+  }
+
+  // state: "neutral" | "ok" | "bad"
+  function ruleRow(text, state){
+    const cls = state === "ok" ? "ok" : (state === "bad" ? "bad" : "");
+    return `
+      <div class="rule ${cls}">
+        <span class="dot"></span>
+        <span class="txt">${text}</span>
+      </div>`;
+  }
+
+  function updateUI(){
+    const p = newPass.value;
+    const c = confirmPass.value;
+
+    const typed = p.length > 0;
+    const typedConfirm = c.length > 0;
+
+    // ✅ شلّينا شرط 10 characters بالكامل
+    const r1 = lettersAtLeast8(p);      // 8 letters (A-Z/a-z)
+    const r2 = hasUpper(p);
+    const r3 = hasLower(p);
+    const r4 = hasNum(p);
+    const r5 = hasSpecial(p);
+    const r6 = (c === p) && typedConfirm;
+
+    const s1 = !typed ? "neutral" : (r1 ? "ok" : "bad");
+    const s2 = !typed ? "neutral" : (r2 ? "ok" : "bad");
+    const s3 = !typed ? "neutral" : (r3 ? "ok" : "bad");
+    const s4 = !typed ? "neutral" : (r4 ? "ok" : "bad");
+    const s5 = !typed ? "neutral" : (r5 ? "ok" : "bad");
+    const s6 = !typedConfirm ? "neutral" : (r6 ? "ok" : "bad");
+
+    // اول 5 تحت new password
+    rulesMainEl.innerHTML =
+      ruleRow("At least 8 letters (A-Z / a-z)", s1) +
+      ruleRow("At least one uppercase letter", s2) +
+      ruleRow("At least one lowercase letter", s3) +
+      ruleRow("At least one numeric character", s4) +
+      ruleRow("At least one special character", s5);
+
+    // المطابقة تحت confirm
+    rulesMatchEl.innerHTML = ruleRow("Passwords match", s6);
+
+    saveBtn.disabled = !(r1 && r2 && r3 && r4 && r5 && r6);
+  }
+
+  newPass.addEventListener("input", () => { errEl.textContent=""; updateUI(); });
+  confirmPass.addEventListener("input", () => { errEl.textContent=""; updateUI(); });
+
+  // ====== verify link ======
+  try{
+    if(!oobCode) throw new Error("Missing reset code (oobCode).");
+    const email = await verifyPasswordResetCode(auth, oobCode);
+    emailHint.textContent = "for " + email;
+  }catch(e){
+    errEl.textContent = "This reset link is invalid or expired.";
+    saveBtn.disabled = true;
+  }
+
+  // ====== save ======
+  saveBtn.addEventListener("click", async () => {
+    try{
+      saveBtn.disabled = true;
+      await confirmPasswordReset(auth, oobCode, newPass.value);
+      alert("Password updated ✅ You can login now");
+    }catch(e){
+      errEl.textContent = e?.message ?? "Something went wrong";
+    }finally{
+      updateUI();
+    }
+  });
+
+  updateUI();
+</script>
+
+</body>
+</html>
