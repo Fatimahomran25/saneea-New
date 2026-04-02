@@ -14,13 +14,13 @@ class FreelancerProfileModel {
   final String email;
   final String bio;
   final String? photoUrl;
-
+ final String? serviceField;
   final String? serviceType;
   final String? workingMode;
 
   final String? iban;
 
-  final List<ExperienceModel> experiences; // ترجع فاضية
+  final List<ExperienceModel> experiences;
   final List<String> portfolioUrls;
 
   const FreelancerProfileModel({
@@ -32,6 +32,7 @@ class FreelancerProfileModel {
     required this.email,
     required this.bio,
     required this.photoUrl,
+    required this.serviceField, 
     required this.serviceType,
     required this.workingMode,
     required this.iban,
@@ -45,6 +46,8 @@ class FreelancerProfileModel {
     String? email,
     String? bio,
     String? photoUrl,
+    bool clearPhotoUrl = false,
+    String? serviceField,
     String? serviceType,
     bool clearServiceType = false,
     String? workingMode,
@@ -61,7 +64,8 @@ class FreelancerProfileModel {
       lastName: lastName ?? this.lastName,
       email: email ?? this.email,
       bio: bio ?? this.bio,
-      photoUrl: photoUrl ?? this.photoUrl,
+      photoUrl: clearPhotoUrl ? null : (photoUrl ?? this.photoUrl),
+      serviceField: serviceField ?? this.serviceField,
       serviceType: clearServiceType ? null : (serviceType ?? this.serviceType),
       workingMode: clearWorkingMode ? null : (workingMode ?? this.workingMode),
       iban: iban ?? this.iban,
@@ -93,11 +97,16 @@ class FreelancerProfileModel {
       lastName: last,
       email: (data['email'] ?? '').toString(),
       bio: (data['bio'] ?? '').toString(),
-      photoUrl: data['photoUrl']?.toString(),
+      photoUrl: data['profile']?.toString(),
+      serviceField: data['serviceField']?.toString(),
       serviceType: data['serviceType']?.toString(),
       workingMode: data['workingMode']?.toString(),
       iban: data['iban']?.toString(),
-      experiences: const [], // ✅ رجعناها مثل أول
+      experiences: (data['experiences'] is List)
+    ? (data['experiences'] as List)
+        .map((e) => ExperienceModel.fromMap(Map<String, dynamic>.from(e)))
+        .toList()
+    : <ExperienceModel>[],
       portfolioUrls: ports,
     );
   }
@@ -119,10 +128,34 @@ class ExperienceModel {
   }
 
   factory ExperienceModel.fromMap(Map<String, dynamic> map) {
-    return ExperienceModel(
-      field: map['field'] ?? '',
-      org: map['org'] ?? '',
-      period: map['period'] ?? '',
+  return ExperienceModel(
+    field: (map['field'] ?? '').toString(),
+    org: (map['org'] ?? '').toString(),
+    period: (map['period'] ?? '').toString(),
+  );
+}
+}
+
+
+class FreelancerReviewModel {
+  final String reviewerName;
+  final int rating;
+  final String text;
+
+  const FreelancerReviewModel({
+    required this.reviewerName,
+    required this.rating,
+    required this.text,
+  });
+
+  static FreelancerReviewModel fromFirestore(Map<String, dynamic> data) {
+    final r = data['rating'];
+    final ratingInt = (r is int) ? r : (r is num ? r.toInt() : 0);
+
+    return FreelancerReviewModel(
+      reviewerName: (data['reviewerName'] ?? 'User').toString(),
+      rating: ratingInt.clamp(0, 5),
+      text: (data['text'] ?? '').toString(),
     );
   }
 }

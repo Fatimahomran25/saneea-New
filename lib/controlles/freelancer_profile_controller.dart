@@ -17,7 +17,7 @@ class FreelancerProfileController extends ChangeNotifier {
 
   String? error;
   FreelancerProfileModel? profile;
-
+  List<FreelancerReviewModel> reviews = [];
   // ✅ name as 2 fields
   final firstNameCtrl = TextEditingController();
   final lastNameCtrl = TextEditingController();
@@ -44,24 +44,49 @@ class FreelancerProfileController extends ChangeNotifier {
     "in-person",
     "both",
   ];
+  static const List<String> serviceFieldOptions = [
+    'Graphic Designers',
+    'Software Developers',
+    'Marketing',
+    'Accounting',
+    'Tutoring',
+  ];
 
   int get bioLen => bioCtrl.text.length;
+  String normalizeServiceField(String value) {
+    switch (value.trim()) {
+      case 'Graphic Designer':
+        return 'Graphic Designers';
+      case 'Software Developer':
+        return 'Software Developers';
+      case 'Marketer':
+      case 'Marketering':
+        return 'Marketing';
+      case 'Accountant':
+        return 'Accounting';
+      case 'Tutor':
+        return 'Tutoring';
+      default:
+        return value;
+    }
+  }
 
-  Future<void> init() async {
+  Future<void> init({String? userId}) async {
     isLoading = true;
     error = null;
     notifyListeners();
 
     try {
-      final user = _auth.currentUser;
-      if (user == null) {
-        error = "Not logged in";
+      final uid = userId ?? _auth.currentUser?.uid;
+
+      if (uid == null) {
+        error = "User not found";
         isLoading = false;
         notifyListeners();
         return;
       }
 
-      final doc = await _db.collection('users').doc(user.uid).get();
+      final doc = await _db.collection('users').doc(uid).get();
       final data = doc.data();
 
       if (data == null) {
@@ -71,16 +96,22 @@ class FreelancerProfileController extends ChangeNotifier {
         return;
       }
 
+      reviews = await _fetchReviews(uid);
+      final rating = _avgRating(reviews);
+
       profile = FreelancerProfileModel.fromFirestore(
-        uid: user.uid,
+        uid: uid,
         data: data,
-        rating: 0.0,
+        rating: rating,
       );
 
-      // ✅ fill from firestore
+      profile = profile!.copyWith(
+        serviceField: normalizeServiceField(profile!.serviceField ?? ''),
+      );
+
+      // تعبئة البيانات
       firstNameCtrl.text = profile!.firstName;
       lastNameCtrl.text = profile!.lastName;
-
       emailCtrl.text = profile!.email;
       bioCtrl.text = profile!.bio;
       ibanCtrl.text = profile!.iban ?? "";
@@ -126,14 +157,12 @@ class FreelancerProfileController extends ChangeNotifier {
   String? validateFirstName(String? v) {
     final value = (v ?? '').trim();
     if (value.isEmpty) return "First name is required";
-    if (value.length < 2) return "First name is too short";
     return null;
   }
 
   String? validateLastName(String? v) {
     final value = (v ?? '').trim();
     if (value.isEmpty) return "Last name is required";
-    if (value.length < 2) return "Last name is too short";
     return null;
   }
 
@@ -178,6 +207,95 @@ class FreelancerProfileController extends ChangeNotifier {
     if (i < 0 || i >= pickedPortfolioFiles.length) return;
     pickedPortfolioFiles.removeAt(i);
     notifyListeners();
+  }
+
+  Future<void> deletePortfolioImage(String imageUrl) async {
+    if (!isEditing || profile == null) return;
+
+    try {
+      final updatedUrls = List<String>.from(profile!.portfolioUrls)
+        ..remove(imageUrl);
+
+      await _storage.refFromURL(imageUrl).delete();
+
+      await _db.collection('users').doc(profile!.uid).set({
+        'portfolioUrls': updatedUrls,
+      }, SetOptions(merge: true));
+
+      profile = profile!.copyWith(portfolioUrls: updatedUrls);
+      notifyListeners();
+    } catch (e) {
+      error = "Failed to delete portfolio image";
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteProfileImage() async {
+    if (profile == null) return;
+
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+
+      final oldUrl = profile!.photoUrl;
+
+      // حذف من Storage
+      if (oldUrl != null && oldUrl.isNotEmpty) {
+        await _storage.refFromURL(oldUrl).delete();
+      }
+
+      // حذف من Firestore
+      await _db.collection('users').doc(user.uid).update({
+        'profile': FieldValue.delete(),
+      });
+
+      // تحديث الحالة
+      profile = profile!.copyWith(clearPhotoUrl: true);
+      pickedImageFile = null;
+
+      notifyListeners();
+    } catch (e) {
+      error = "Failed to delete profile image";
+      notifyListeners();
+    }
+  }
+
+  Future<void> setServiceFieldAndPersist(String v) async {
+    if (!isEditing || profile == null) return;
+
+    final old = profile!.serviceField;
+    profile = profile!.copyWith(serviceField: v);
+    notifyListeners();
+
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+      await _db.collection('users').doc(user.uid).update({'serviceField': v});
+    } catch (_) {
+      profile = profile!.copyWith(serviceField: old);
+      error = "Failed to save service field";
+      notifyListeners();
+    }
+  }
+
+  Future<List<FreelancerReviewModel>> _fetchReviews(String uid) async {
+    final snap = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('reviews')
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .get();
+
+    return snap.docs
+        .map((d) => FreelancerReviewModel.fromFirestore(d.data()))
+        .toList();
+  }
+
+  double _avgRating(List<FreelancerReviewModel> list) {
+    if (list.isEmpty) return 0;
+    final sum = list.fold<int>(0, (p, r) => p + r.rating);
+    return double.parse((sum / list.length).toStringAsFixed(1));
   }
 
   Future<void> setServiceTypeAndPersist(String v) async {
@@ -285,12 +403,15 @@ class FreelancerProfileController extends ChangeNotifier {
       if (user == null) throw "Not logged in";
       final uid = user.uid;
 
-      String? photoUrl = profile!.photoUrl;
+      String? profileUrl = profile!.photoUrl;
 
       if (pickedImageFile != null) {
         final ref = _storage.ref().child('users/$uid/profile.jpg');
-        await ref.putFile(pickedImageFile!);
-        photoUrl = await ref.getDownloadURL();
+        await ref.putFile(
+          pickedImageFile!,
+          SettableMetadata(contentType: 'image/jpeg'),
+        );
+        profileUrl = await ref.getDownloadURL();
       }
 
       // upload portfolio
@@ -321,16 +442,23 @@ class FreelancerProfileController extends ChangeNotifier {
       final ibanToSave = newIban.isEmpty ? "" : newIban;
 
       await _db.collection('users').doc(uid).set({
+        'email': newEmail,
         'firstName': newFirst,
         'lastName': newLast,
-        'email': newEmail,
+        'nationalId': profile!.nationalId,
         'bio': safeBio,
+
+        'portfolioUrls': mergedPortfolioUrls,
+        if (profileUrl != null) 'profile': profileUrl,
+
+        'rating': profile!.rating,
+
+        'serviceField': profile!.serviceField,
         'serviceType': profile!.serviceType,
         'workingMode': profile!.workingMode,
-        'experiences': profile!.experiences.map((e) => e.toMap()).toList(),
+
         'iban': ibanToSave,
-        'portfolioUrls': mergedPortfolioUrls,
-        if (photoUrl != null) 'photoUrl': photoUrl,
+        'experiences': profile!.experiences.map((e) => e.toMap()).toList(),
       }, SetOptions(merge: true));
 
       if (newEmail != user.email) {
@@ -344,7 +472,7 @@ class FreelancerProfileController extends ChangeNotifier {
         lastName: newLast,
         email: newEmail,
         bio: safeBio,
-        photoUrl: photoUrl,
+        photoUrl: profileUrl,
         iban: ibanToSave.isEmpty ? null : ibanToSave,
         portfolioUrls: mergedPortfolioUrls,
       );
@@ -381,7 +509,11 @@ class FreelancerProfileController extends ChangeNotifier {
 
       await _db.collection('users').doc(user.uid).delete();
       await user.delete();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account deleted successfully')),
+      );
 
+      await Future.delayed(const Duration(seconds: 1));
       if (!context.mounted) return;
       Navigator.pushNamedAndRemoveUntil(context, '/signup', (r) => false);
     } catch (e) {
@@ -390,6 +522,45 @@ class FreelancerProfileController extends ChangeNotifier {
         context,
       ).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
     }
+  }
+
+  bool get hasRequiredProfileData {
+    final p = profile;
+    if (p == null) return false;
+
+    return (p.serviceField?.trim().isNotEmpty ?? false) &&
+        (p.serviceType?.trim().isNotEmpty ?? false) &&
+        (p.workingMode?.trim().isNotEmpty ?? false) &&
+        p.portfolioUrls.isNotEmpty;
+  }
+
+  List<String> get missingRequiredFields {
+    final p = profile;
+    if (p == null) {
+      return const [
+        'Service Field',
+        'Service Type',
+        'Working Mode',
+        'Portfolio',
+      ];
+    }
+
+    final missing = <String>[];
+
+    if (!(p.serviceField?.trim().isNotEmpty ?? false)) {
+      missing.add('Service Field');
+    }
+    if (!(p.serviceType?.trim().isNotEmpty ?? false)) {
+      missing.add('Service Type');
+    }
+    if (!(p.workingMode?.trim().isNotEmpty ?? false)) {
+      missing.add('Working Mode');
+    }
+    if (p.portfolioUrls.isEmpty) {
+      missing.add('Portfolio');
+    }
+
+    return missing;
   }
 
   @override

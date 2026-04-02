@@ -247,8 +247,7 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
                 );
 
                 if (!context.mounted) return;
-                Scaffold
-                Messenger.of(context).showSnackBar(
+                ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
                       'Please complete your profile first: $missing',

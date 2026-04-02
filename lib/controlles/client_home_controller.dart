@@ -17,20 +17,20 @@ class ClientHomeController extends ChangeNotifier {
     FreelancerModel(
       name: "Lina Alharbi",
       role: "Marketing",
-      rating: 4,
+      rating: 4.0,
       imagePath: "assets/toprated/lina.jpg", // ✅ صورتك
     ),
     FreelancerModel(
       name: "Ahmed Ali",
       role: "Graphic Designer",
-      rating: 3,
+      rating: 3.0,
       imagePath: "assets/toprated/ahmed.jpg",
     ),
 
     FreelancerModel(
       name: "Khalid Fahad",
       role: "Software Developer",
-      rating: 2,
+      rating: 2.0,
       imagePath: "assets/toprated/khalid.jpg", // مؤقت
     ),
   ];
@@ -48,10 +48,11 @@ class ClientHomeController extends ChangeNotifier {
         .toList();
   }
 
-  void onSearchChanged(String value) {
-    _query = value;
-    notifyListeners();
-  }
+  
+     void onSearchChanged(String value) {
+      _query = value.trim();
+     notifyListeners();
+   } 
 
   @override
   void dispose() {

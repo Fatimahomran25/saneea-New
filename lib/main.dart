@@ -17,6 +17,7 @@ import 'views/bank_account.dart';
 import 'views/freelancer_profile.dart';
 import 'views/client_profile.dart';
 
+
 final navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
@@ -93,6 +94,8 @@ class _MyAppState extends State<MyApp> {
         '/freelancerProfile': (_) => const FreelancerProfileView(),
         '/clientProfile': (_) => const ClientProfile(),
         '/bankAccount': (_) => const BankAccountView(),
+
+
       },
     );
   }

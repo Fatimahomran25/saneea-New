@@ -10,7 +10,7 @@ class CategoryModel {
 class FreelancerModel {
   final String name;
   final String role;
-  final int rating;
+  final double rating;
   final String imagePath; // ✅ asset path
 
   const FreelancerModel({

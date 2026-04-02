@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+
 import '../models/client_profile_model.dart';
 
 class ClientProfileController extends ChangeNotifier {
@@ -11,7 +13,6 @@ class ClientProfileController extends ChangeNotifier {
   final _db = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
 
-  // UI state
   bool isLoading = true;
   bool isSaving = false;
   bool isEditing = false;
@@ -20,55 +21,77 @@ class ClientProfileController extends ChangeNotifier {
   ClientProfileModel? profile;
   List<ClientReviewModel> reviews = [];
 
-  // fields
   final nameCtrl = TextEditingController();
   final emailCtrl = TextEditingController();
   final bioCtrl = TextEditingController();
 
   File? pickedImageFile;
+  String? viewedUserId;
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileSub;
 
   static const int bioMax = 150;
   final RegExp gmailReg = RegExp(r'^[a-zA-Z0-9._%+-]+@gmail\.com$');
 
   int get bioLen => bioCtrl.text.length;
 
-  Future<void> init() async {
+  bool get isOwnProfile {
+    final currentUid = _auth.currentUser?.uid;
+    if (currentUid == null || profile == null) return true;
+    return profile!.uid == currentUid;
+  }
+
+  Future<void> init({String? userId}) async {
     isLoading = true;
     error = null;
+    viewedUserId = userId;
     notifyListeners();
 
     try {
-      final user = _auth.currentUser;
-      if (user == null) {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
         error = "Not logged in";
         isLoading = false;
         notifyListeners();
         return;
       }
 
-      // 1) read profile
-      final doc = await _db.collection('users').doc(user.uid).get();
-      final data = doc.data() ?? {};
+      final targetUid = userId ?? currentUser.uid;
 
-      // 2) read reviews + rating
-      final fetchedReviews = await _fetchReviews(user.uid);
-      final rating = _avgRating(fetchedReviews);
+      await _profileSub?.cancel();
 
-      profile = ClientProfileModel.fromFirestore(
-        uid: user.uid,
-        data: data,
-        rating: rating,
-      );
+      _profileSub = _db.collection('users').doc(targetUid).snapshots().listen((
+        doc,
+      ) async {
+        try {
+          final data = doc.data() ?? {};
 
-      reviews = fetchedReviews;
+          final fetchedReviews = await _fetchReviews(targetUid);
+          final rating = _avgRating(fetchedReviews);
 
-      // fill controllers
-      nameCtrl.text = profile!.name;
-      emailCtrl.text = profile!.email;
-      bioCtrl.text = profile!.bio;
+          profile = ClientProfileModel.fromFirestore(
+            uid: targetUid,
+            data: data,
+            rating: rating,
+          );
 
-      isLoading = false;
-      notifyListeners();
+          reviews = fetchedReviews;
+
+          if (!isEditing && profile != null) {
+            nameCtrl.text = profile!.name;
+            emailCtrl.text = profile!.email;
+            bioCtrl.text = profile!.bio;
+          }
+
+          error = null;
+          isLoading = false;
+          notifyListeners();
+        } catch (e) {
+          error = e.toString();
+          isLoading = false;
+          notifyListeners();
+        }
+      });
     } catch (e) {
       error = e.toString();
       isLoading = false;
@@ -77,7 +100,6 @@ class ClientProfileController extends ChangeNotifier {
   }
 
   Future<List<ClientReviewModel>> _fetchReviews(String uid) async {
-    // users/{uid}/reviews
     final snap = await _db
         .collection('users')
         .doc(uid)
@@ -87,19 +109,48 @@ class ClientProfileController extends ChangeNotifier {
         .get();
 
     return snap.docs
-        .map((d) => ClientReviewModel.fromFirestore(d.data()))
+        .map((doc) => ClientReviewModel.fromFirestore(doc.data()))
         .toList();
   }
 
   double _avgRating(List<ClientReviewModel> list) {
     if (list.isEmpty) return 0;
-    final sum = list.fold<int>(0, (p, r) => p + r.rating);
+    final sum = list.fold<int>(0, (prev, review) => prev + review.rating);
     return double.parse((sum / list.length).toStringAsFixed(1));
   }
 
-  // edit flow
+  Future<void> deleteProfileImage() async {
+    if (!isOwnProfile) return;
+
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await _db.collection('users').doc(user.uid).get();
+      final data = doc.data() ?? {};
+
+      final photoUrl = (data['photoUrl'] ?? data['profile'] ?? '').toString();
+
+      if (photoUrl.isNotEmpty) {
+        final ref = _storage.refFromURL(photoUrl);
+        await ref.delete();
+      }
+
+      await _db.collection('users').doc(user.uid).update({
+        'photoUrl': FieldValue.delete(),
+        'profile': FieldValue.delete(),
+      });
+
+      profile = profile?.copyWith(clearPhotoUrl: true);
+      pickedImageFile = null;
+      notifyListeners();
+    } catch (e) {
+      debugPrint("DELETE IMAGE ERROR: $e");
+    }
+  }
+
   void startEdit() {
-    if (profile == null) return;
+    if (profile == null || !isOwnProfile) return;
     isEditing = true;
     notifyListeners();
   }
@@ -117,59 +168,46 @@ class ClientProfileController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // validators
-  String? validateName(String? v) {
-    final value = (v ?? '').trim();
-    if (value.isEmpty) return "Name is required";
-    if (value.length < 2) return "Name is too short";
+  String? validateName(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return "Name is required";
+    if (text.length < 2) return "Name is too short";
     return null;
   }
 
-  String? validateGmail(String? v) {
-    final value = (v ?? '').trim();
-    if (value.isEmpty) return "Email is required";
-    if (!gmailReg.hasMatch(value))
+  String? validateGmail(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return "Email is required";
+    if (!gmailReg.hasMatch(text)) {
       return "Enter a valid gmail (name@gmail.com)";
+    }
     return null;
   }
 
-  String? validateBio(String? v) {
-    final value = (v ?? '');
-    if (value.length > bioMax) return "Bio must be $bioMax characters or less";
+  String? validateBio(String? value) {
+    final text = value ?? '';
+    if (text.length > bioMax) {
+      return "Bio must be $bioMax characters or less";
+    }
     return null;
   }
 
-  String? validateIbanNullable(String? v) {
-    final s = (v ?? '').trim();
-    if (s.isEmpty) return null; // optional
-
-    // يشيل المسافات
-    final clean = s.replaceAll(' ', '');
-
-    // ✅ Saudi IBAN: يبدأ SA وبعدها 22 رقم (المجموع 24)
-    final reg = RegExp(r'^SA\d{22}$');
-    if (!reg.hasMatch(clean))
-      return 'IBAN غير صحيح. مثال: SA00 0000 0000 0000 0000 0000';
-    return null;
-  }
-
-  // image
   void setPickedImage(File file) {
-    if (!isEditing) return;
+    if (!isEditing || !isOwnProfile) return;
     pickedImageFile = file;
     notifyListeners();
   }
 
   Future<String?> _uploadProfileImage(String uid) async {
     if (pickedImageFile == null) return profile?.photoUrl;
+
     final ref = _storage.ref().child('profile_images').child('$uid.jpg');
     await ref.putFile(pickedImageFile!);
     return await ref.getDownloadURL();
   }
 
-  // save
   Future<bool> save() async {
-    if (profile == null) return false;
+    if (profile == null || !isOwnProfile) return false;
 
     isSaving = true;
     error = null;
@@ -182,8 +220,9 @@ class ClientProfileController extends ChangeNotifier {
       final newName = nameCtrl.text.trim();
       final parts = newName
           .split(RegExp(r'\s+'))
-          .where((e) => e.isNotEmpty)
+          .where((part) => part.isNotEmpty)
           .toList();
+
       final firstName = parts.isNotEmpty ? parts.first : '';
       final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
       final newEmail = emailCtrl.text.trim();
@@ -201,9 +240,9 @@ class ClientProfileController extends ChangeNotifier {
         'email': newEmail,
         'bio': safeBio,
         if (photoUrl != null) 'photoUrl': photoUrl,
+        if (photoUrl != null) 'profile': photoUrl,
       }, SetOptions(merge: true));
 
-      // refresh rating/reviews
       final fetchedReviews = await _fetchReviews(user.uid);
       final rating = _avgRating(fetchedReviews);
 
@@ -229,23 +268,35 @@ class ClientProfileController extends ChangeNotifier {
     }
   }
 
-  // logout -> sign in
   Future<void> logout(BuildContext context) async {
     await _auth.signOut();
     if (!context.mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
   }
 
-  // delete -> signup
   Future<void> deleteAccount(BuildContext context) async {
+    if (!isOwnProfile) return;
+
     try {
       final user = _auth.currentUser;
       if (user == null) return;
 
-      // delete Firestore doc first
-      await _db.collection('users').doc(user.uid).delete();
+      final requestsSnapshot = await _db
+          .collection('requests')
+          .where('clientId', isEqualTo: user.uid)
+          .get();
 
-      // delete auth user (قد يطلب recent login)
+      for (final doc in requestsSnapshot.docs) {
+        final data = doc.data();
+        if (data['status'] == 'pending') {
+          await doc.reference.update({
+            'status': 'cancelled_by_client',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      await _db.collection('users').doc(user.uid).delete();
       await user.delete();
 
       if (!context.mounted) return;
@@ -260,6 +311,7 @@ class ClientProfileController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _profileSub?.cancel();
     nameCtrl.dispose();
     emailCtrl.dispose();
     bioCtrl.dispose();

@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'signup.dart';
 
+//تمت
 class login extends StatefulWidget {
   const login({super.key});
 
@@ -41,6 +42,34 @@ class _loginState extends State<login> {
     _passFocus.dispose();
     c.dispose();
     super.dispose();
+  }
+
+  void updateTopMessage() {
+    final nid = c.nationalIdCtrl.text.trim();
+    final pass = c.passwordCtrl.text.trim();
+
+    if (!c.submitted) {
+      showTopMessage = false;
+      topMessage = null;
+      return;
+    }
+
+    if (nid.isEmpty && pass.isEmpty) {
+      showTopMessage = true;
+      topMessage = 'Please complete all required fields.';
+    } else if (nid.isEmpty) {
+      showTopMessage = true;
+      topMessage = 'Please enter your National ID / Iqama.';
+    } else if (nid.length != 10) {
+      showTopMessage = true;
+      topMessage = 'National ID / Iqama must be 10 digits.';
+    } else if (pass.isEmpty) {
+      showTopMessage = true;
+      topMessage = 'Please enter your password.';
+    } else {
+      showTopMessage = false;
+      topMessage = null;
+    }
   }
 
   @override
@@ -147,7 +176,11 @@ class _loginState extends State<login> {
                             child: TextField(
                               controller: c.nationalIdCtrl,
                               focusNode: _nidFocus,
-                              onChanged: (_) => setState(() {}),
+                              onChanged: (_) {
+                                setState(() {
+                                  updateTopMessage();
+                                });
+                              },
                               keyboardType: TextInputType.number,
                               inputFormatters: [
                                 FilteringTextInputFormatter.digitsOnly,
@@ -205,7 +238,11 @@ class _loginState extends State<login> {
                             child: TextField(
                               controller: c.passwordCtrl,
                               focusNode: _passFocus,
-                              onChanged: (_) => setState(() {}),
+                              onChanged: (_) {
+                                setState(() {
+                                  updateTopMessage();
+                                });
+                              },
                               obscureText: c.obscurePassword,
                               decoration: InputDecoration(
                                 border: InputBorder.none,
@@ -263,22 +300,13 @@ class _loginState extends State<login> {
 
                                     setState(() {
                                       c.submit();
-
-                                      if (c.nationalIdFieldError != null ||
-                                          c.passwordFieldError != null) {
-                                        showTopMessage = true;
-                                        topMessage =
-                                            'Please complete all required fields.';
-                                      } else {
-                                        showTopMessage = false;
-                                        topMessage = null;
-                                      }
+                                      updateTopMessage();
                                     });
 
-                                    // إذا فيه أخطاء بالحقول لا نكمل
                                     if (c.nationalIdFieldError != null ||
-                                        c.passwordFieldError != null)
+                                        c.passwordFieldError != null) {
                                       return;
+                                    }
 
                                     c.model.nationalId = c.nationalIdCtrl.text
                                         .trim();

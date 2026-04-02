@@ -24,23 +24,25 @@ class ClientProfileModel {
   });
 
   ClientProfileModel copyWith({
-    String? nationalId,
-    String? name,
-    String? email,
-    String? bio,
-    String? photoUrl,
-    double? rating,
-  }) {
-    return ClientProfileModel(
-      uid: uid,
-      nationalId: nationalId ?? this.nationalId,
-      name: name ?? this.name,
-      email: email ?? this.email,
-      bio: bio ?? this.bio,
-      photoUrl: photoUrl ?? this.photoUrl,
-      rating: rating ?? this.rating,
-    );
-  }
+  String? nationalId,
+  String? name,
+  String? email,
+  String? bio,
+  String? photoUrl,
+  bool clearPhotoUrl = false,
+  
+  double? rating,
+}) {
+  return ClientProfileModel(
+    uid: uid,
+    nationalId: nationalId ?? this.nationalId,
+    name: name ?? this.name,
+    email: email ?? this.email,
+    bio: bio ?? this.bio,
+    photoUrl: clearPhotoUrl ? null : (photoUrl ?? this.photoUrl),
+    rating: rating ?? this.rating,
+  );
+}
 
   Map<String, dynamic> toFirestore() {
     return {

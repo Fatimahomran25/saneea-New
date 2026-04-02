@@ -6,19 +6,52 @@ import 'package:firebase_auth/firebase_auth.dart';
 class AnnouncementController extends ChangeNotifier {
   AnnouncementModel _model = AnnouncementModel();
 
-  final TextEditingController textController = TextEditingController();
+  
+
+final TextEditingController descriptionController = TextEditingController();
+final TextEditingController budgetController = TextEditingController();
+
+String? selectedDuration;
 
   AnnouncementModel get model => _model;
 
-  void onChanged(String value) {
-    _model = _model.copyWith(query: value);
-    notifyListeners();
-  }
+  void onDescriptionChanged(String value) {
+  _model = _model.copyWith(description: value);
+  notifyListeners();
+}
+
+void onBudgetChanged(String value) {
+  final budget = double.tryParse(value) ?? 0;
+  _model = _model.copyWith(budget: budget);
+  notifyListeners();
+}
+
+void onDurationChanged(String? value) {
+  if (value == null) return;
+  selectedDuration = value;
+  _model = _model.copyWith(duration: value);
+  notifyListeners();
+}
 
   Future<void> publish(BuildContext context) async {
-    final message = textController.text.trim();
+    final description = descriptionController.text.trim();
+    final budgetText = budgetController.text.trim();
+    final budget = double.tryParse(budgetText);
 
-    if (message.isEmpty) {
+    if (description.isEmpty) {
+     if (budgetText.isEmpty || budget == null || budget <= 0) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('Enter a valid budget')),
+  );
+  return;
+}
+
+if (selectedDuration == null) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('Select duration')),
+  );
+  return;
+}
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Write something before publishing')),
       );
@@ -38,8 +71,14 @@ class AnnouncementController extends ChangeNotifier {
       final firstName = userDoc.data()?['firstName'] ?? '';
       final lastName = userDoc.data()?['lastName'] ?? '';
 
-      await FirebaseFirestore.instance.collection('announcements').add({
-        'message': message,
+      await FirebaseFirestore.instance
+      .collection('users')
+      .doc(user.uid)
+      .collection('announcements')
+      .add({
+       'description': description,
+        'budget': budget,
+       'duration': selectedDuration,
         'createdAt': FieldValue.serverTimestamp(),
         'userId': user.uid,
         'userName': '$firstName $lastName', // 👈 اسم صاحب الإعلان
@@ -59,7 +98,8 @@ class AnnouncementController extends ChangeNotifier {
 
   @override
   void dispose() {
-    textController.dispose();
+    descriptionController.dispose();
+    budgetController.dispose();
     super.dispose();
   }
 }
