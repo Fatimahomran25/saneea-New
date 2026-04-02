@@ -1,83 +1,687 @@
-/*import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'request_action_button.dart';
+import 'freelancer_profile.dart';
+import 'freelancer_incoming_requests_view.dart';
+import 'browse_announcements_view.dart';
+import 'my_announcement_requests_view.dart';
+import '../controlles/freelancer_profile_controller.dart';
 
-import 'freelancer_profile.dart'; // نفس مجلد views
-
-class FreelancerHomeView extends StatelessWidget {
+class FreelancerHomeView extends StatefulWidget {
   const FreelancerHomeView({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Freelancer Home"),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
+  State<FreelancerHomeView> createState() => _FreelancerHomeViewState();
+}
 
-        // ✅ زر البروفايل هنا
-        actions: [
-          IconButton(
-            tooltip: "Profile",
-            icon: const Icon(Icons.person_outline),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const FreelancerProfileView(),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 6),
-        ],
+class _FreelancerHomeViewState extends State<FreelancerHomeView> {
+  static const primary = Color(0xFF5A3E9E);
+
+  final TextEditingController _searchController = TextEditingController();
+  final FreelancerProfileController _profileController =
+      FreelancerProfileController();
+
+  Future<void> _openProfile() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FreelancerProfileView()),
+    );
+
+    await _profileController.init();
+  }
+
+  void _openIncomingRequests() {
+    if (!_profileController.hasRequiredProfileData) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FreelancerIncomingRequestsView()),
+    );
+  }
+
+  void _openBrowseAnnouncements() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const BrowseAnnouncementsView()),
+    );
+  }
+
+  void _openMyAnnouncementRequests() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MyAnnouncementRequestsView()),
+    );
+  }
+
+  void _comingSoon(String title) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$title coming soon')));
+  }
+
+  Widget _filterChip(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.shade300),
       ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+      ),
+    );
+  }
 
-      body: const Center(child: Text("Welcome Freelancer")),
+  @override
+  void initState() {
+    super.initState();
+    _profileController.init();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _profileController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      bottomNavigationBar: _FreelancerBottomNavigationBar(
+        primary: primary,
+        onChatsTap: () => _comingSoon('Chats'),
+        onHomeTap: () {},
+        onContractsTap: () => _comingSoon('Contracts'),
+      ),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            final contentMaxWidth = w > 700 ? 560.0 : w;
+            final padding = w > 700 ? 24.0 : 16.0;
+
+            return Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: contentMaxWidth),
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(padding, 0, padding, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      /// Top bar
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              GestureDetector(
+                                onTap: _openProfile,
+                                child:
+                                    StreamBuilder<
+                                      DocumentSnapshot<Map<String, dynamic>>
+                                    >(
+                                      stream: user == null
+                                          ? const Stream.empty()
+                                          : FirebaseFirestore.instance
+                                                .collection('users')
+                                                .doc(user.uid)
+                                                .snapshots(),
+                                      builder: (context, snapshot) {
+                                        final data = snapshot.data?.data();
+                                        final profileUrl =
+                                            (data?['profile'] ?? '').toString();
+
+                                        final name = (data?['firstName'] ?? '')
+                                            .toString();
+
+                                        return Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 20,
+                                              backgroundColor: primary
+                                                  .withOpacity(0.12),
+                                              backgroundImage:
+                                                  profileUrl.isNotEmpty
+                                                  ? NetworkImage(profileUrl)
+                                                  : null,
+                                              child: profileUrl.isEmpty
+                                                  ? const Icon(
+                                                      Icons.person_outline,
+                                                      color: primary,
+                                                      size: 22,
+                                                    )
+                                                  : null,
+                                            ),
+
+                                            const SizedBox(width: 10),
+
+                                            Text(
+                                              'Welcome, $name!',
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: primary,
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                      },
+                                    ),
+                              ),
+                            ],
+                          ),
+
+                          IconButton(
+                            onPressed: () => _comingSoon('Notifications'),
+                            icon: const Icon(
+                              Icons.notifications_none,
+                              color: primary,
+                              size: 26,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      const SizedBox(height: 18),
+
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Find Opportunities",
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: primary,
+                            ),
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          const Text(
+                            "Browse client requests or track your submitted proposals",
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.black54,
+                            ),
+                          ),
+
+                          const SizedBox(height: 14),
+                        ],
+                      ),
+                      Column(
+                        children: [
+                          // Browse
+                          InkWell(
+                            onTap: _openBrowseAnnouncements,
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 14,
+                                horizontal: 16,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE9E0FA),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Row(
+                                children: const [
+                                  Icon(Icons.search, color: primary, size: 20),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      "Browse Client Requests",
+                                      style: TextStyle(
+                                        color: primary,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.arrow_forward_ios,
+                                    size: 16,
+                                    color: Colors.black45,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          // My Requests
+                          InkWell(
+                            onTap: _openMyAnnouncementRequests,
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 14,
+                                horizontal: 16,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: primary.withOpacity(0.3),
+                                ),
+                              ),
+                              child: Row(
+                                children: const [
+                                  Icon(
+                                    Icons.assignment_outlined,
+                                    color: primary,
+                                    size: 20,
+                                  ),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      "My Sent Proposals",
+                                      style: TextStyle(
+                                        color: primary,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.arrow_forward_ios,
+                                    size: 16,
+                                    color: Colors.black45,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 22),
+
+                      /// Incoming Requests + See all
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            "Incoming Requests",
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: primary,
+                            ),
+                          ),
+                          AnimatedBuilder(
+                            animation: _profileController,
+                            builder: (context, _) {
+                              final enabled =
+                                  _profileController.hasRequiredProfileData;
+
+                              return TextButton(
+                                onPressed: enabled
+                                    ? _openIncomingRequests
+                                    : null,
+                                child: Text(
+                                  "See all",
+                                  style: TextStyle(
+                                    color: enabled
+                                        ? Colors.black54
+                                        : Colors.grey[400],
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      AnimatedBuilder(
+                        animation: _profileController,
+                        builder: (context, _) {
+                          if (_profileController.isLoading) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+
+                          final isReady =
+                              _profileController.hasRequiredProfileData;
+
+                          if (!isReady) {
+                            final missing =
+                                _profileController.missingRequiredFields;
+
+                            return Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFFDF7),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(
+                                    Icons.notifications,
+                                    color: Color(0xFFFFC107),
+                                    size: 22,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Complete the required profile details to become visible to clients:',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        ...missing.map(
+                                          (item) => Padding(
+                                            padding: const EdgeInsets.only(
+                                              bottom: 4,
+                                            ),
+                                            child: Text(
+                                              '• $item',
+                                              style: const TextStyle(
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 14),
+                                        FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: const Color(
+                                              0xFFFFE082,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                          ),
+                                          onPressed: _openProfile,
+                                          child: const Text('Complete Profile'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+
+                          return StreamBuilder<
+                            QuerySnapshot<Map<String, dynamic>>
+                          >(
+                            stream: user == null
+                                ? const Stream.empty()
+                                : FirebaseFirestore.instance
+                                      .collection('requests')
+                                      .where(
+                                        'freelancerId',
+                                        isEqualTo: user.uid,
+                                      )
+                                      .where('status', isEqualTo: 'pending')
+                                      .snapshots(),
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                );
+                              }
+
+                              if (snapshot.hasError) {
+                                return const Text('Something went wrong');
+                              }
+
+                              final docs = snapshot.data?.docs ?? [];
+
+                              if (docs.isEmpty) {
+                                return Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(18),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF6F2FB),
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: const Text(
+                                    'No incoming requests yet.',
+                                    style: TextStyle(fontSize: 14),
+                                  ),
+                                );
+                              }
+
+                              final previewDocs = docs.take(3).toList();
+
+                              return Column(
+                                children: previewDocs.map((doc) {
+                                  final data = doc.data();
+
+                                  final clientName =
+                                      (data['clientName'] ?? 'Client')
+                                          .toString();
+                                  final description =
+                                      (data['description'] ?? '').toString();
+                                  final clientId = (data['clientId'] ?? '')
+                                      .toString();
+
+                                  return GestureDetector(
+                                    onTap: _openIncomingRequests,
+                                    child: Container(
+                                      margin: const EdgeInsets.only(bottom: 10),
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(14),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF6F2FB),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child:
+                                          StreamBuilder<
+                                            DocumentSnapshot<
+                                              Map<String, dynamic>
+                                            >
+                                          >(
+                                            stream: FirebaseFirestore.instance
+                                                .collection('users')
+                                                .doc(clientId)
+                                                .snapshots(),
+                                            builder: (context, snapshot) {
+                                              final userData = snapshot.data
+                                                  ?.data();
+
+                                              final firstName =
+                                                  (userData?['firstName'] ?? '')
+                                                      .toString()
+                                                      .trim();
+                                              final lastName =
+                                                  (userData?['lastName'] ?? '')
+                                                      .toString()
+                                                      .trim();
+
+                                              final latestName =
+                                                  ('$firstName $lastName')
+                                                      .trim()
+                                                      .isEmpty
+                                                  ? clientName
+                                                  : ('$firstName $lastName')
+                                                        .trim();
+
+                                              final imageUrl =
+                                                  (userData?['photoUrl'] ??
+                                                          userData?['profile'] ??
+                                                          '')
+                                                      .toString()
+                                                      .trim();
+
+                                              return Row(
+                                                children: [
+                                                  CircleAvatar(
+                                                    radius: 22,
+                                                    backgroundColor: primary
+                                                        .withOpacity(0.12),
+                                                    backgroundImage:
+                                                        imageUrl.isNotEmpty
+                                                        ? NetworkImage(imageUrl)
+                                                        : null,
+                                                    child: imageUrl.isEmpty
+                                                        ? const Icon(
+                                                            Icons
+                                                                .person_outline,
+                                                            color: primary,
+                                                            size: 22,
+                                                          )
+                                                        : null,
+                                                  ),
+                                                  const SizedBox(width: 12),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          latestName,
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 16,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                                color: Colors
+                                                                    .black87,
+                                                              ),
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 4,
+                                                        ),
+                                                        Text(
+                                                          description.isEmpty
+                                                              ? '-'
+                                                              : description,
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 14,
+                                                                color: Colors
+                                                                    .black54,
+                                                              ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  const Icon(
+                                                    Icons
+                                                        .arrow_forward_ios_rounded,
+                                                    size: 18,
+                                                    color: Colors.black54,
+                                                  ),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                    ),
+                                  );
+                                }).toList(),
+                              );
+                            },
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 30),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 }
-*/
 
-import 'package:flutter/material.dart';
-import 'freelancer_profile.dart';
+class _FreelancerBottomNavigationBar extends StatelessWidget {
+  final Color primary;
+  final VoidCallback onChatsTap;
+  final VoidCallback onHomeTap;
+  final VoidCallback onContractsTap;
 
-class FreelancerHomeView extends StatelessWidget {
-  const FreelancerHomeView({super.key});
-
-  static const primary = Color(0xFF5A3E9E); // نفس الكلاينت
+  const _FreelancerBottomNavigationBar({
+    required this.primary,
+    required this.onChatsTap,
+    required this.onHomeTap,
+    required this.onContractsTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Freelancer Home"),
-
-        // ✅ نفس ستايل الكلاينت + على اليسار
-        leadingWidth: 56,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 12),
-          child: GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const FreelancerProfileView(),
-                ),
-              );
-            },
+    return Container(
+      padding: const EdgeInsets.fromLTRB(30, 14, 30, 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 18,
+            offset: const Offset(0, -6),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          GestureDetector(
+            onTap: onChatsTap,
+            child: Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+          ),
+          GestureDetector(
+            onTap: onHomeTap,
             child: CircleAvatar(
-              radius: 20,
-              backgroundColor: primary.withOpacity(0.12),
-              child: const Icon(Icons.person_outline, color: primary, size: 22),
+              radius: 30,
+              backgroundColor: primary,
+              child: const Icon(Icons.home, size: 28, color: Colors.white),
             ),
           ),
-        ),
-
-        // ❌ احذفي زر البروفايل من اليمين
-        actions: const [SizedBox(width: 6)],
+          GestureDetector(
+            onTap: onContractsTap,
+            child: Icon(Icons.description_outlined, color: primary, size: 26),
+          ),
+        ],
       ),
-      body: const Center(child: Text("Welcome Freelancer 👋")),
     );
   }
 }

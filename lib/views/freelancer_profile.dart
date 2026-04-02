@@ -1,13 +1,24 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-
+import 'package:saneea_app/views/client_home_screen.dart';
+import '../views/anouncment_view.dart';
 import '../controlles/freelancer_profile_controller.dart';
 import '../models/freelancer_profile_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../controlles/recommendation_controller.dart';
+import 'request_action_button.dart';
+//تمت
 
 class FreelancerProfileView extends StatefulWidget {
-  const FreelancerProfileView({super.key});
+  final String? userId;
+  final bool fromCategory;
 
+  const FreelancerProfileView({
+    super.key,
+    this.userId,
+    this.fromCategory = false, // 👈 الحل هنا
+  });
   @override
   State<FreelancerProfileView> createState() => _FreelancerProfileViewState();
 }
@@ -21,6 +32,8 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
   static const Color kCardBg = Color(0xFFF4F1FA);
   static const Color kSoftBorder = Color(0x66B8A9D9);
 
+  bool get _isOwnProfile => widget.userId == null;
+
   String _maskIban(String? iban) {
     final s = (iban ?? '').replaceAll(' ', '').toUpperCase();
     if (s.isEmpty) return "No bank account added";
@@ -28,10 +41,29 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
     return '$head •••• •••• •••• •••• ••••';
   }
 
+  String get _displayBio {
+    final bio = c.isEditing
+        ? c.bioCtrl.text.trim()
+        : (c.profile?.bio.trim() ?? '');
+    return bio.isEmpty ? 'No bio added yet.' : bio;
+  }
+
+  String get _displayEmail {
+    final email = c.isEditing
+        ? c.emailCtrl.text.trim()
+        : (c.profile?.email.trim() ?? '');
+    return email.isEmpty ? '-' : email;
+  }
+
+  String get _displayServiceField {
+    final field = c.profile?.serviceField?.trim() ?? '';
+    return field.isEmpty ? 'Freelancer' : field;
+  }
+
   @override
   void initState() {
     super.initState();
-    c.init();
+    c.init(userId: widget.userId);
   }
 
   @override
@@ -41,7 +73,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
   }
 
   Future<void> _pickProfileImage() async {
-    if (!c.isEditing) return;
+    if (!c.isEditing || !_isOwnProfile) return;
 
     try {
       final x = await ImagePicker().pickImage(
@@ -59,7 +91,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
   }
 
   Future<void> _pickPortfolioImages() async {
-    if (!c.isEditing) return;
+    if (!c.isEditing || !_isOwnProfile) return;
     final xs = await ImagePicker().pickMultiImage(imageQuality: 85);
     if (xs.isEmpty) return;
     c.addPortfolioFiles(xs.map((e) => File(e.path)).toList());
@@ -146,6 +178,862 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
     return res;
   }
 
+  Widget _buildOwnProfile() {
+    return Form(
+      key: _formKey,
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          const SizedBox(height: 10),
+
+          _HeaderLikeAdmin_NoJobTitle(
+            purple: kPurple,
+            headerBg: kHeaderBg,
+            isEditing: _isOwnProfile ? c.isEditing : false,
+            profile: c.profile!,
+            userId: widget.userId,
+            pickedImageFile: _isOwnProfile ? c.pickedImageFile : null,
+            onPickImage: _pickProfileImage,
+            onDeleteImage: () async {
+              if (!_isOwnProfile) return;
+
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Delete image?'),
+                  content: const Text(
+                    'Are you sure you want to delete your profile image?',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              );
+
+              if (confirm == true) {
+                await c.deleteProfileImage();
+
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      c.error == null
+                          ? 'Profile image deleted successfully'
+                          : c.error!,
+                    ),
+                  ),
+                );
+              }
+            },
+            firstNameCtrl: c.firstNameCtrl,
+            lastNameCtrl: c.lastNameCtrl,
+            onEditTap: (_isOwnProfile && !c.isEditing) ? c.startEdit : null,
+            firstNameValidator: c.validateFirstName,
+            lastNameValidator: c.validateLastName,
+            serviceFieldOptions:
+                FreelancerProfileController.serviceFieldOptions,
+            onServiceFieldChanged: (value) {
+              if (_isOwnProfile) {
+                c.setServiceFieldAndPersist(value);
+              }
+            },
+          ),
+
+          const SizedBox(height: 14),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(18, 22, 18, 22),
+              decoration: BoxDecoration(
+                color: kCardBg,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: kSoftBorder, width: 1.2),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!c.hasRequiredProfileData)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: kSoftBorder),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Complete the required fields to make your profile visible:',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          ...c.missingRequiredFields.map((e) => Text('• $e')),
+                        ],
+                      ),
+                    ),
+
+                  const SizedBox(height: 18),
+                  _EditableField(
+                    label: "Bio",
+                    enabled: c.isEditing,
+                    controller: c.bioCtrl,
+                    maxLength: FreelancerProfileController.bioMax,
+                    maxLines: 4,
+                    validator: c.validateBio,
+                    counterText:
+                        "${c.bioLen.clamp(0, FreelancerProfileController.bioMax)}/${FreelancerProfileController.bioMax}",
+                    hintText: "Write your bio...",
+                    purple: kPurple,
+                  ),
+                  const SizedBox(height: 18),
+
+                  _ReadOnlyBlock(
+                    title: "National ID / Iqama",
+                    value: c.profile!.nationalId,
+                    purple: kPurple,
+                  ),
+                  const SizedBox(height: 18),
+
+                  _EditableField(
+                    label: "Email Address",
+                    enabled: c.isEditing,
+                    controller: c.emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    validator: c.validateGmail,
+                    hintText: "name@gmail.com",
+                    purple: kPurple,
+                  ),
+                  const SizedBox(height: 14),
+
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "IBAN",
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: kPurple.withOpacity(0.25),
+                                  width: 1.2,
+                                ),
+                              ),
+                              child: Text(
+                                c.isEditing
+                                    ? c.ibanCtrl.text.isEmpty
+                                          ? "No bank account added"
+                                          : c.ibanCtrl.text
+                                    : _maskIban(c.profile!.iban),
+                                style: TextStyle(
+                                  color: Colors.grey.shade800,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      IconButton(
+                        tooltip: "Bank account",
+                        onPressed: () async {
+                          final changed = await Navigator.pushNamed(
+                            context,
+                            '/bankAccount',
+                          );
+                          if (changed == true) {
+                            await c.init(userId: widget.userId);
+                          }
+                        },
+                        icon: Icon(Icons.account_balance, color: kPurple),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  if ((c.profile!.serviceType ?? '').trim().isNotEmpty) ...[
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (c.profile!.serviceType ?? '').trim().isEmpty
+                              ? "Service Type *"
+                              : "Service Type",
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _SegmentBar(
+                          options:
+                              FreelancerProfileController.serviceTypeOptions,
+                          value: c.profile!.serviceType,
+                          enabled: c.isEditing,
+                          onChanged: (v) => c.setServiceTypeAndPersist(v),
+                          purple: kPurple,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  if ((c.profile!.workingMode ?? '').trim().isNotEmpty) ...[
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (c.profile!.workingMode ?? '').trim().isEmpty
+                              ? "Working Mode *"
+                              : "Working Mode",
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _SegmentBar(
+                          options:
+                              FreelancerProfileController.workingModeOptions,
+                          value: c.profile!.workingMode,
+                          enabled: c.isEditing,
+                          onChanged: (v) => c.setWorkingModeAndPersist(v),
+                          purple: kPurple,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  Row(
+                    children: [
+                      Text(
+                        "Experience",
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (_isOwnProfile && c.isEditing)
+                        TextButton.icon(
+                          onPressed: () async {
+                            final res = await _experienceDialog();
+                            if (res == null) return;
+                            await c.addExperience(res);
+                          },
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text("Add"),
+                          style: TextButton.styleFrom(foregroundColor: kPurple),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  ...List.generate(c.profile!.experiences.length, (i) {
+                    final e = c.profile!.experiences[i];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _ExperienceCard(
+                        purple: kPurple,
+                        experience: e,
+                        editable: _isOwnProfile ? c.isEditing : false,
+                        onEdit: () async {
+                          final res = await _experienceDialog(initial: e);
+                          if (res == null) return;
+                          await c.editExperience(i, res);
+                        },
+                        onDelete: () async => await c.deleteExperience(i),
+                      ),
+                    );
+                  }),
+
+                  const SizedBox(height: 14),
+
+                  _InnerBox(
+                    borderColor: kSoftBorder,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Rating",
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            _StarsReadOnly(value: c.profile!.rating, size: 22),
+                            const SizedBox(width: 10),
+                            Text(
+                              c.profile!.rating.toStringAsFixed(1),
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Text(
+                    "Reviews",
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  _InnerBox(
+                    borderColor: kSoftBorder,
+                    child: c.reviews.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 18),
+                            child: Center(
+                              child: Text(
+                                "No reviews yet.",
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Column(
+                            children: c.reviews.map((r) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _ReviewFigmaTile(
+                                  name: r.reviewerName,
+                                  rating: r.rating,
+                                  text: r.text,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  _InnerBox(
+                    borderColor: kSoftBorder,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              c.profile!.portfolioUrls.isEmpty
+                                  ? "Portfolio *"
+                                  : "Portfolio",
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            if (_isOwnProfile && c.isEditing)
+                              TextButton.icon(
+                                onPressed: _pickPortfolioImages,
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text("Add"),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: kPurple,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Builder(
+                          builder: (context) {
+                            final net = c.profile!.portfolioUrls;
+                            final local = c.pickedPortfolioFiles;
+                            final total = net.length + local.length;
+
+                            return GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: total == 0 ? 4 : total,
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 2,
+                                    crossAxisSpacing: 10,
+                                    mainAxisSpacing: 10,
+                                  ),
+                              itemBuilder: (ctx, i) {
+                                if (total == 0) {
+                                  return _PlaceholderTile(purple: kPurple);
+                                }
+                                if (i < net.length) {
+                                  final url = net[i];
+                                  return ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Stack(
+                                      children: [
+                                        Positioned.fill(
+                                          child: Image.network(
+                                            url,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                        if (_isOwnProfile && c.isEditing)
+                                          Positioned(
+                                            top: 6,
+                                            right: 6,
+                                            child: GestureDetector(
+                                              onTap: () =>
+                                                  c.deletePortfolioImage(url),
+                                              child: Container(
+                                                padding: const EdgeInsets.all(
+                                                  4,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.red.withOpacity(
+                                                    0.9,
+                                                  ),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Icon(
+                                                  Icons.close,
+                                                  color: Colors.white,
+                                                  size: 16,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                }
+
+                                final localIndex = i - net.length;
+                                final f = local[localIndex];
+
+                                return Stack(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.file(f, fit: BoxFit.cover),
+                                    ),
+                                    if (_isOwnProfile && c.isEditing)
+                                      Positioned(
+                                        top: 6,
+                                        right: 6,
+                                        child: GestureDetector(
+                                          onTap: () =>
+                                              c.removePortfolioAt(localIndex),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.red.withOpacity(
+                                                0.9,
+                                              ),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.close,
+                                              color: Colors.white,
+                                              size: 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  if (_isOwnProfile && c.isEditing) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _AdminOutlinedBtn(
+                            text: "Cancel",
+                            textColor: kPurple,
+                            borderColor: kPurple.withOpacity(0.25),
+                            onPressed: c.isSaving ? null : c.cancelEdit,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: kPurple,
+                              minimumSize: const Size.fromHeight(50),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            onPressed: c.isSaving
+                                ? null
+                                : () async {
+                                    FocusScope.of(context).unfocus();
+
+                                    final saved = await c.save();
+                                    if (!mounted) return;
+
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          saved
+                                              ? "Saved successfully ✅"
+                                              : "Save failed: ${c.error ?? ''}",
+                                        ),
+                                      ),
+                                    );
+                                  },
+                            child: c.isSaving
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Text("Done"),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else if (_isOwnProfile) ...[
+                    _AdminOutlinedBtn(
+                      text: "Reset password",
+                      textColor: const Color(0xFF2F7BFF),
+                      borderColor: kPurple.withOpacity(0.25),
+                      onPressed: () => c.goResetPassword(context),
+                    ),
+                    const SizedBox(height: 12),
+                    _AdminOutlinedBtn(
+                      text: "Delete account",
+                      textColor: Colors.red,
+                      borderColor: kPurple.withOpacity(0.25),
+                      onPressed: () => c.deleteAccount(context),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOtherProfile() {
+    final profile = c.profile!;
+
+    ImageProvider? avatar;
+    if (profile.photoUrl != null && profile.photoUrl!.isNotEmpty) {
+      avatar = NetworkImage(profile.photoUrl!);
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: CircleAvatar(
+              radius: 46,
+              backgroundColor: const Color(0xFFF6F2FB),
+              backgroundImage: avatar,
+              child: avatar == null
+                  ? const Icon(Icons.person, size: 42, color: kPurple)
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          Center(
+            child: Text(
+              profile.fullName,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          Center(
+            child: Text(
+              _displayServiceField,
+              style: const TextStyle(
+                fontSize: 15,
+                color: kPurple,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          const SizedBox(height: 10),
+
+          Center(
+            child: FutureBuilder(
+              future: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(widget.userId)
+                  .get(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return _StarsReadOnly(value: 0, size: 22);
+                }
+
+                final data = snapshot.data!.data() as Map<String, dynamic>;
+
+                final rating = (data['rating'] is int)
+                    ? (data['rating'] as int).toDouble()
+                    : (data['rating'] is double)
+                    ? data['rating']
+                    : double.tryParse(data['rating']?.toString() ?? '0') ?? 0.0;
+
+                return _StarsReadOnly(value: rating, size: 22);
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+          const SizedBox(height: 10),
+
+          Align(
+            alignment: Alignment.centerRight,
+            child: SendRequestButton(
+              freelancerId: widget.userId!,
+              freelancerName: profile.fullName,
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          _PublicInfoTile(title: 'Bio', value: _displayBio),
+
+          _PublicInfoTile(title: 'Email Address', value: _displayEmail),
+
+          if ((profile.serviceType ?? '').trim().isNotEmpty)
+            _PublicInfoTile(title: 'Service Type', value: profile.serviceType!),
+
+          if ((profile.workingMode ?? '').trim().isNotEmpty)
+            _PublicInfoTile(title: 'Working Mode', value: profile.workingMode!),
+
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F2FB),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Experience',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 10),
+                if (profile.experiences.isEmpty)
+                  const Text(
+                    'No experience added yet.',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                  )
+                else
+                  ...profile.experiences.map(
+                    (e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: kPurple.withOpacity(0.18),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 20,
+                              backgroundColor: const Color(0xFFF2EAFB),
+                              child: Icon(Icons.school, color: kPurple),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    e.field,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    e.org,
+                                    style: TextStyle(
+                                      color: kPurple,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    e.period,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F2FB),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Reviews',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 10),
+                if (c.reviews.isEmpty)
+                  const Text(
+                    'No reviews yet.',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                  )
+                else
+                  ...c.reviews.map(
+                    (r) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _ReviewFigmaTile(
+                        name: r.reviewerName,
+                        rating: r.rating,
+                        text: r.text,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          Text(
+            "Portfolio",
+            style: TextStyle(
+              color: Colors.grey.shade700,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          Builder(
+            builder: (context) {
+              final items = profile.portfolioUrls;
+
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: items.isEmpty ? 4 : items.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                ),
+                itemBuilder: (ctx, i) {
+                  if (items.isEmpty) {
+                    return _PlaceholderTile(purple: kPurple);
+                  }
+
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(items[i], fit: BoxFit.cover),
+                  );
+                },
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  static void _emptyAction() {}
+
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
@@ -163,482 +1051,44 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
               elevation: 0,
               leading: const BackButton(color: Colors.black),
               actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: IconButton(
-                    tooltip: "Log out",
-                    onPressed: () => c.logout(context),
-                    icon: const Icon(Icons.logout, color: Colors.red, size: 28),
+                if (_isOwnProfile)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: IconButton(
+                      tooltip: "Log out",
+                      onPressed: () => c.logout(context),
+                      icon: const Icon(
+                        Icons.logout,
+                        color: Colors.red,
+                        size: 28,
+                      ),
+                    ),
                   ),
-                ),
+
+                if (!_isOwnProfile && widget.fromCategory)
+                  IconButton(
+                    icon: const Icon(
+                      Icons.home_outlined,
+                      color: Color(0xFF5A3E9E),
+                      size: 26,
+                    ),
+                    onPressed: () {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ClientHomeScreen(),
+                        ),
+                        (route) => false,
+                      );
+                    },
+                  ),
               ],
             ),
             body: c.isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : (c.profile == null)
                 ? Center(child: Text(c.error ?? "Failed to load profile"))
-                : Form(
-                    key: _formKey,
-                    child: ListView(
-                      padding: const EdgeInsets.only(bottom: 24),
-                      children: [
-                        const SizedBox(height: 10),
-
-                        // ✅ Header نفس ستايلك + الاسم حقلين
-                        _HeaderLikeAdmin_NoJobTitle(
-                          purple: kPurple,
-                          headerBg: kHeaderBg,
-                          isEditing: c.isEditing,
-                          profile: c.profile!,
-                          pickedImageFile: c.pickedImageFile,
-                          onPickImage: _pickProfileImage,
-                          firstNameCtrl: c.firstNameCtrl,
-                          lastNameCtrl: c.lastNameCtrl,
-                          onEditTap: c.isEditing ? null : c.startEdit,
-                          firstNameValidator: c.validateFirstName,
-                          lastNameValidator: c.validateLastName,
-                        ),
-
-                        const SizedBox(height: 14),
-
-                        // ✅ الكارد الطويل
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.fromLTRB(18, 22, 18, 22),
-                            decoration: BoxDecoration(
-                              color: kCardBg,
-                              borderRadius: BorderRadius.circular(22),
-                              border: Border.all(
-                                color: kSoftBorder,
-                                width: 1.2,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _EditableField(
-                                  label: "Bio",
-                                  enabled: c.isEditing,
-                                  controller: c.bioCtrl,
-                                  maxLength: FreelancerProfileController.bioMax,
-                                  maxLines: 4,
-                                  validator: c.validateBio,
-                                  counterText:
-                                      "${c.bioLen.clamp(0, FreelancerProfileController.bioMax)}/${FreelancerProfileController.bioMax}",
-                                  hintText: "Write your bio...",
-                                  purple: kPurple,
-                                ),
-
-                                const SizedBox(height: 18),
-
-                                _ReadOnlyBlock(
-                                  title: "National ID / Iqama",
-                                  value: c.profile!.nationalId,
-                                  purple: kPurple,
-                                ),
-
-                                const SizedBox(height: 18),
-
-                                _EditableField(
-                                  label: "Email Address",
-                                  enabled: c.isEditing,
-                                  controller: c.emailCtrl,
-                                  keyboardType: TextInputType.emailAddress,
-                                  validator: c.validateGmail,
-                                  hintText: "name@gmail.com",
-                                  purple: kPurple,
-                                ),
-
-                                const SizedBox(height: 14),
-
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            "IBAN",
-                                            style: TextStyle(
-                                              color: Colors.grey.shade700,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          Container(
-                                            width: double.infinity,
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 12,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius:
-                                                  BorderRadius.circular(14),
-                                              border: Border.all(
-                                                color: kPurple.withOpacity(
-                                                  0.25,
-                                                ),
-                                                width: 1.2,
-                                              ),
-                                            ),
-                                            child: Text(
-                                              c.isEditing
-                                                  ? c.ibanCtrl.text.isEmpty
-                                                        ? "No bank account added"
-                                                        : c.ibanCtrl.text
-                                                  : _maskIban(c.profile!.iban),
-                                              style: TextStyle(
-                                                color: Colors.grey.shade800,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    IconButton(
-                                      tooltip: "Bank account",
-                                      onPressed: () async {
-                                        final changed =
-                                            await Navigator.pushNamed(
-                                              context,
-                                              '/bankAccount',
-                                            );
-                                        if (changed == true) {
-                                          await c.init();
-                                        }
-                                      },
-                                      icon: Icon(
-                                        Icons.account_balance,
-                                        color: kPurple,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                const SizedBox(height: 16),
-
-                                Text(
-                                  "Service Type",
-                                  style: TextStyle(
-                                    color: Colors.grey.shade700,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                _SegmentBar(
-                                  options: FreelancerProfileController
-                                      .serviceTypeOptions,
-                                  value: c.profile!.serviceType,
-                                  enabled: c.isEditing,
-                                  onChanged: (v) =>
-                                      c.setServiceTypeAndPersist(v),
-                                  purple: kPurple,
-                                ),
-
-                                const SizedBox(height: 14),
-
-                                Text(
-                                  "Working Mode",
-                                  style: TextStyle(
-                                    color: Colors.grey.shade700,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                _SegmentBar(
-                                  options: FreelancerProfileController
-                                      .workingModeOptions,
-                                  value: c.profile!.workingMode,
-                                  enabled: c.isEditing,
-                                  onChanged: (v) =>
-                                      c.setWorkingModeAndPersist(v),
-                                  purple: kPurple,
-                                ),
-
-                                const SizedBox(height: 16),
-
-                                // Experience
-                                Row(
-                                  children: [
-                                    Text(
-                                      "Experience",
-                                      style: TextStyle(
-                                        color: Colors.grey.shade700,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    if (c.isEditing)
-                                      TextButton.icon(
-                                        onPressed: () async {
-                                          final res = await _experienceDialog();
-                                          if (res == null) return;
-                                          await c.addExperience(res);
-                                        },
-                                        icon: const Icon(Icons.add, size: 18),
-                                        label: const Text("Add"),
-                                        style: TextButton.styleFrom(
-                                          foregroundColor: kPurple,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-
-                                ...List.generate(
-                                  c.profile!.experiences.length,
-                                  (i) {
-                                    final e = c.profile!.experiences[i];
-                                    return Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 10,
-                                      ),
-                                      child: _ExperienceCard(
-                                        purple: kPurple,
-                                        experience: e,
-                                        editable: c.isEditing,
-                                        onEdit: () async {
-                                          final res = await _experienceDialog(
-                                            initial: e,
-                                          );
-                                          if (res == null) return;
-                                          await c.editExperience(i, res);
-                                        },
-                                        onDelete: () async =>
-                                            await c.deleteExperience(i),
-                                      ),
-                                    );
-                                  },
-                                ),
-
-                                const SizedBox(height: 14),
-
-                                // Portfolio
-                                _InnerBox(
-                                  borderColor: kSoftBorder,
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Text(
-                                            "Portfolio",
-                                            style: TextStyle(
-                                              color: Colors.grey.shade700,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          const Spacer(),
-                                          if (c.isEditing)
-                                            TextButton.icon(
-                                              onPressed: _pickPortfolioImages,
-                                              icon: const Icon(
-                                                Icons.add,
-                                                size: 18,
-                                              ),
-                                              label: const Text("Add"),
-                                              style: TextButton.styleFrom(
-                                                foregroundColor: kPurple,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Builder(
-                                        builder: (context) {
-                                          final net = c.profile!.portfolioUrls;
-                                          final local = c.pickedPortfolioFiles;
-                                          final total =
-                                              net.length + local.length;
-
-                                          return GridView.builder(
-                                            shrinkWrap: true,
-                                            physics:
-                                                const NeverScrollableScrollPhysics(),
-                                            itemCount: total == 0 ? 4 : total,
-                                            gridDelegate:
-                                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                                  crossAxisCount: 2,
-                                                  crossAxisSpacing: 10,
-                                                  mainAxisSpacing: 10,
-                                                ),
-                                            itemBuilder: (ctx, i) {
-                                              if (total == 0) {
-                                                return _PlaceholderTile(
-                                                  purple: kPurple,
-                                                );
-                                              }
-
-                                              if (i < net.length) {
-                                                final url = net[i];
-                                                return ClipRRect(
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                  child: Image.network(
-                                                    url,
-                                                    fit: BoxFit.cover,
-                                                  ),
-                                                );
-                                              }
-
-                                              final localIndex = i - net.length;
-                                              final f = local[localIndex];
-
-                                              return Stack(
-                                                children: [
-                                                  ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          12,
-                                                        ),
-                                                    child: Image.file(
-                                                      f,
-                                                      fit: BoxFit.cover,
-                                                    ),
-                                                  ),
-                                                  if (c.isEditing)
-                                                    Positioned(
-                                                      top: 6,
-                                                      right: 6,
-                                                      child: IconButton(
-                                                        onPressed: () =>
-                                                            c.removePortfolioAt(
-                                                              localIndex,
-                                                            ),
-                                                        icon: const Icon(
-                                                          Icons.close,
-                                                          color: Colors.red,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                ],
-                                              );
-                                            },
-                                          );
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ),
-
-                                const SizedBox(height: 18),
-
-                                if (c.isEditing) ...[
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: _AdminOutlinedBtn(
-                                          text: "Cancel",
-                                          textColor: kPurple,
-                                          borderColor: kPurple.withOpacity(
-                                            0.25,
-                                          ),
-                                          onPressed: c.isSaving
-                                              ? null
-                                              : c.cancelEdit,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: FilledButton(
-                                          style: FilledButton.styleFrom(
-                                            backgroundColor: kPurple,
-                                            minimumSize: const Size.fromHeight(
-                                              50,
-                                            ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(14),
-                                            ),
-                                          ),
-                                          onPressed: c.isSaving
-                                              ? null
-                                              : () async {
-                                                  final ok =
-                                                      _formKey.currentState
-                                                          ?.validate() ??
-                                                      false;
-                                                  if (!ok) return;
-
-                                                  // ✅ تأكيد الاسم حقلين
-                                                  final okName =
-                                                      c.validateFirstName(
-                                                            c
-                                                                .firstNameCtrl
-                                                                .text,
-                                                          ) ==
-                                                          null &&
-                                                      c.validateLastName(
-                                                            c.lastNameCtrl.text,
-                                                          ) ==
-                                                          null;
-                                                  if (!okName) return;
-
-                                                  final saved = await c.save();
-                                                  if (!mounted) return;
-
-                                                  ScaffoldMessenger.of(
-                                                    context,
-                                                  ).showSnackBar(
-                                                    SnackBar(
-                                                      content: Text(
-                                                        saved
-                                                            ? "Saved successfully ✅"
-                                                            : "Save failed: ${c.error ?? ''}",
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
-                                          child: c.isSaving
-                                              ? const SizedBox(
-                                                  width: 18,
-                                                  height: 18,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                )
-                                              : const Text("Done"),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ] else ...[
-                                  _AdminOutlinedBtn(
-                                    text: "Reset password",
-                                    textColor: const Color(0xFF2F7BFF),
-                                    borderColor: kPurple.withOpacity(0.25),
-                                    onPressed: () => c.goResetPassword(context),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  _AdminOutlinedBtn(
-                                    text: "Delete account",
-                                    textColor: Colors.red,
-                                    borderColor: kPurple.withOpacity(0.25),
-                                    onPressed: () => c.deleteAccount(context),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 16),
-                      ],
-                    ),
-                  ),
+                : (_isOwnProfile ? _buildOwnProfile() : _buildOtherProfile()),
           );
         },
       ),
@@ -646,7 +1096,128 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
   }
 }
 
-// ===== Header Widget (No Job Title) =====
+class _PublicInfoTile extends StatelessWidget {
+  const _PublicInfoTile({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F2FB),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 6),
+          Text(
+            value.trim().isEmpty ? '-' : value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Colors.black,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TagInfoBlock extends StatelessWidget {
+  const _TagInfoBlock({
+    required this.title,
+    required this.value,
+    required this.purple,
+  });
+
+  final String title;
+  final String value;
+  final Color purple;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: purple.withOpacity(0.25), width: 1.2),
+          ),
+          child: Text(
+            value,
+            style: TextStyle(color: purple, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileInfoBlock extends StatelessWidget {
+  const _ProfileInfoBlock({
+    required this.title,
+    required this.value,
+    required this.purple,
+  });
+
+  final String title;
+  final String value;
+  final Color purple;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: purple.withOpacity(0.25), width: 1.2),
+          ),
+          child: Text(
+            value,
+            style: TextStyle(
+              color: Colors.grey.shade800,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
   const _HeaderLikeAdmin_NoJobTitle({
@@ -656,28 +1227,32 @@ class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
     required this.profile,
     required this.pickedImageFile,
     required this.onPickImage,
+    required this.onDeleteImage,
     required this.firstNameCtrl,
     required this.lastNameCtrl,
     required this.onEditTap,
     required this.firstNameValidator,
     required this.lastNameValidator,
+    required this.serviceFieldOptions,
+    required this.onServiceFieldChanged,
+    required this.userId,
   });
 
   final Color purple;
   final Color headerBg;
-
   final bool isEditing;
   final FreelancerProfileModel profile;
   final File? pickedImageFile;
   final VoidCallback onPickImage;
-
+  final Future<void> Function() onDeleteImage;
   final TextEditingController firstNameCtrl;
   final TextEditingController lastNameCtrl;
-
   final VoidCallback? onEditTap;
-
   final String? Function(String?) firstNameValidator;
   final String? Function(String?) lastNameValidator;
+  final List<String> serviceFieldOptions;
+  final void Function(String) onServiceFieldChanged;
+  final String? userId;
 
   @override
   Widget build(BuildContext context) {
@@ -691,7 +1266,7 @@ class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
-        height: 210,
+        height: 235,
         decoration: BoxDecoration(
           color: headerBg,
           borderRadius: BorderRadius.circular(18),
@@ -699,7 +1274,7 @@ class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
         ),
         child: Stack(
           children: [
-            if (!isEditing)
+            if (!isEditing && onEditTap != null)
               Positioned(
                 top: 10,
                 right: 10,
@@ -759,6 +1334,31 @@ class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
                                     Icons.add,
                                     color: Colors.white,
                                     size: 18,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (isEditing && avatar != null)
+                            Positioned(
+                              left: 10,
+                              bottom: 8,
+                              child: GestureDetector(
+                                onTap: onDeleteImage,
+                                child: Container(
+                                  width: 30,
+                                  height: 30,
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.delete,
+                                    color: Colors.white,
+                                    size: 16,
                                   ),
                                 ),
                               ),
@@ -829,14 +1429,76 @@ class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
                       ),
 
                     const SizedBox(height: 4),
-                    Text(
-                      "Freelancer",
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+
+                    if (!isEditing)
+                      Text(
+                        (profile.serviceField == null ||
+                                profile.serviceField!.isEmpty)
+                            ? "Add your job title *"
+                            : profile.serviceField!,
+                        style: TextStyle(
+                          color:
+                              (profile.serviceField == null ||
+                                  profile.serviceField!.isEmpty)
+                              ? Colors.grey.shade500
+                              : Colors.grey.shade700,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    else
+                      SizedBox(
+                        width: 170,
+                        child: DropdownButtonFormField<String>(
+                          isExpanded: true,
+                          value:
+                              (profile.serviceField == null ||
+                                  profile.serviceField!.isEmpty)
+                              ? null
+                              : profile.serviceField,
+                          items: serviceFieldOptions.map((field) {
+                            return DropdownMenuItem<String>(
+                              value: field,
+                              child: Text(
+                                field,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              onServiceFieldChanged(value);
+                            }
+                          },
+                          decoration: InputDecoration(
+                            hintText: "Select your job title *",
+                            isDense: true,
+                            filled: true,
+                            fillColor: Colors.white,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: purple.withOpacity(0.2),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: purple.withOpacity(0.2),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: purple, width: 1.2),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -847,8 +1509,6 @@ class _HeaderLikeAdmin_NoJobTitle extends StatelessWidget {
     );
   }
 }
-
-// ===== rest widgets (same as your file) =====
 
 class _InnerBox extends StatelessWidget {
   const _InnerBox({required this.child, required this.borderColor});
@@ -927,7 +1587,6 @@ class _EditableField extends StatelessWidget {
   final bool enabled;
   final TextEditingController controller;
   final Color purple;
-
   final int? maxLength;
   final int maxLines;
   final String? Function(String?)? validator;
@@ -1168,6 +1827,112 @@ class _SegmentBar extends StatelessWidget {
             ),
           );
         }).toList(),
+      ),
+    );
+  }
+}
+
+class _StarsReadOnly extends StatelessWidget {
+  const _StarsReadOnly({required this.value, this.size = 20});
+
+  final double value;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final safeValue = value.clamp(0, 5); // حماية
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (i) {
+        if (i < safeValue.floor()) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: Icon(Icons.star, size: size, color: Colors.amber),
+          );
+        } else if (i == safeValue.floor() && safeValue % 1 != 0) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: Icon(Icons.star_half, size: size, color: Colors.amber),
+          );
+        } else {
+          return Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: Icon(
+              Icons.star_border,
+              size: size,
+              color: Colors.grey.shade400,
+            ),
+          );
+        }
+      }),
+    );
+  }
+}
+
+class _ReviewFigmaTile extends StatelessWidget {
+  const _ReviewFigmaTile({
+    required this.name,
+    required this.rating,
+    required this.text,
+  });
+
+  final String name;
+  final int rating;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F3FB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0x66B8A9D9).withOpacity(0.7),
+          width: 1.1,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0x66B8A9D9).withOpacity(0.6),
+              ),
+            ),
+            child: const Icon(Icons.person_outline, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        name,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    _StarsReadOnly(value: rating.toDouble(), size: 16),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  text,
+                  style: TextStyle(color: Colors.grey.shade700, height: 1.25),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
