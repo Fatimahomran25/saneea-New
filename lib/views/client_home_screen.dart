@@ -427,8 +427,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           return const Text('No top rated freelancers');
         }
 
+        final top4 = docs.take(4).toList();
+
         return Column(
-          children: docs.map((doc) {
+          children: top4.map((doc) {
             final data = doc.data();
             final firstName = (data['firstName'] ?? '').toString();
             final lastName = (data['lastName'] ?? '').toString();
