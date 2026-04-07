@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:saneea_app/views/freelancer_profile.dart';
 import 'package:saneea_app/views/my_announcement_requests_view.dart';
 import '../controlles/recommendation_controller.dart';
 import '../controlles/freelancer_profile_controller.dart';
@@ -238,25 +239,6 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
                 return;
               }
 
-              final profileController = FreelancerProfileController();
-              await profileController.init();
-
-              if (!profileController.hasRequiredProfileData) {
-                final missing = profileController.missingRequiredFields.join(
-                  ', ',
-                );
-
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Please complete your profile first: $missing',
-                    ),
-                  ),
-                );
-                return;
-              }
-
               try {
                 await _controller.sendAnnouncementRequest(
                   announcementId: announcementId,
@@ -335,12 +317,162 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
     );
   }
 
-  Stream<bool> _hasAppliedStream({
+  Future<bool> _checkFreelancerProfileBeforeApply() async {
+    final profileController = FreelancerProfileController();
+    await profileController.init();
+
+    if (profileController.hasRequiredProfileData) {
+      return true;
+    }
+
+    if (!mounted) return false;
+
+    final missing = profileController.missingRequiredFields;
+
+    await showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: const Color.fromARGB(255, 254, 251, 238), // خلفية تحذير
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 🔥 العنوان
+              Row(
+                children: const [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Color.fromARGB(255, 255, 197, 21),
+                    size: 28,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Complete your profile to apply',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              const Text(
+                'You must complete these details before sending any request:',
+                style: TextStyle(fontSize: 14, color: Colors.black87),
+              ),
+
+              const SizedBox(height: 14),
+
+              // 🔥 القائمة
+              ...missing.map(
+                (field) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.circle,
+                        size: 6,
+                        color: Color.fromARGB(255, 255, 197, 21),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        field,
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 18),
+
+              // 🔥 الأزرار
+              Row(
+                children: [
+                  // زر OK
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(
+                          color: Color.fromARGB(255, 255, 197, 21),
+                        ),
+                        foregroundColor: Colors.black87,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'OK',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  // زر Complete Profile
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+
+                        // 👇 اربطيه بصفحة تعديل البروفايل
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => FreelancerProfileView(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color.fromARGB(
+                          255,
+                          255,
+                          206,
+                          60,
+                        ),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Complete Profile',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return false;
+  }
+
+  Stream<String?> _applicationStatusStream({
     required String announcementId,
     required String clientId,
   }) {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return Stream.value(false);
+    if (user == null) return Stream.value(null);
 
     return FirebaseFirestore.instance
         .collection('announcement_requests')
@@ -349,7 +481,10 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
         .where('freelancerId', isEqualTo: user.uid)
         .limit(1)
         .snapshots()
-        .map((snapshot) => snapshot.docs.isNotEmpty);
+        .map((snapshot) {
+          if (snapshot.docs.isEmpty) return null;
+          return snapshot.docs.first.data()['status']?.toString();
+        });
   }
 
   Stream<Set<String>> _appliedAnnouncementIdsStream() {
@@ -362,6 +497,10 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
         .snapshots()
         .map((snapshot) {
           return snapshot.docs
+              .where((doc) {
+                final status = doc.data()['status']?.toString();
+                return status == 'pending' || status == 'accepted';
+              })
               .map((doc) => (doc.data()['announcementId'] ?? '').toString())
               .where((id) => id.isNotEmpty)
               .toSet();
@@ -411,17 +550,19 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
             ),
           ),
           const SizedBox(height: 14),
-          StreamBuilder<bool>(
-            stream: _hasAppliedStream(
+          StreamBuilder<String?>(
+            stream: _applicationStatusStream(
               announcementId: doc.id,
               clientId: clientId,
             ),
             builder: (context, snapshot) {
-              final hasApplied = snapshot.data ?? false;
+              final status = snapshot.data;
+              final hasActiveApplication =
+                  status == 'pending' || status == 'accepted';
 
               return Column(
                 children: [
-                  if (hasApplied) ...[
+                  if (hasActiveApplication) ...[
                     Row(
                       children: [
                         Expanded(
@@ -488,22 +629,23 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: clientId.isEmpty
-                            ? null
-                            : () {
-                                _showApplyDialog(
-                                  announcementId: doc.id,
-                                  clientId: clientId,
-                                  description: description,
-                                );
-                              },
+                        onPressed: () async {
+                          final canApply =
+                              await _checkFreelancerProfileBeforeApply();
+                          if (!canApply) return;
+
+                          _showApplyDialog(
+                            announcementId: doc.id,
+                            clientId: clientId,
+                            description: description,
+                          );
+                        },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: primary,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                         child: const Text('Apply'),
                       ),

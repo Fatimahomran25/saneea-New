@@ -11,7 +11,7 @@ class RecommendationController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   final String backendBaseUrl =
-      "http://192.168.1.13:5000"; // يتغير حسب الجهاز/المحاكي
+      "http://172.20.10.5:5000"; // يتغير حسب الجهاز/المحاكي
 
   String _requestDocId({
     required String clientId,

@@ -115,38 +115,85 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
               children: [
                 TextFormField(
                   controller: fieldCtrl,
+                  maxLength: 35,
+                  maxLines: 1,
+                  autovalidateMode:
+                      AutovalidateMode.onUserInteraction, // 🔥 هذا المهم
                   decoration: const InputDecoration(
                     labelText: "Field",
                     hintText: "e.g. Graphic Design",
                     border: OutlineInputBorder(),
+                    counterText: "",
                   ),
-                  validator: (v) => (v == null || v.trim().isEmpty)
-                      ? "Field is required"
-                      : null,
+                  validator: (v) {
+                    final value = v?.trim() ?? '';
+
+                    if (value.isEmpty) return 'Field is required';
+
+                    if (value.contains('http') || value.contains('www')) {
+                      return 'Links are not allowed';
+                    }
+
+                    if (!RegExp(r'[a-zA-Z\u0600-\u06FF]').hasMatch(value)) {
+                      return 'Please enter a valid field name';
+                    }
+
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: orgCtrl,
+                  maxLength: 40,
+                  maxLines: 1,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
                   decoration: const InputDecoration(
                     labelText: "Organization",
                     hintText: "e.g. King Saud University",
                     border: OutlineInputBorder(),
+                    counterText: "",
                   ),
-                  validator: (v) => (v == null || v.trim().isEmpty)
-                      ? "Organization is required"
-                      : null,
+                  validator: (v) {
+                    final value = v?.trim() ?? '';
+
+                    if (value.isEmpty) return 'Organization is required';
+
+                    if (value.contains('http') || value.contains('www')) {
+                      return 'Links are not allowed';
+                    }
+
+                    if (!RegExp(r'[a-zA-Z\u0600-\u06FF]').hasMatch(value)) {
+                      return 'Please enter a valid organization';
+                    }
+
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: periodCtrl,
+                  maxLines: 1,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
                   decoration: const InputDecoration(
                     labelText: "Period",
                     hintText: "e.g. Sep 2021 - Jun 2023",
                     border: OutlineInputBorder(),
                   ),
-                  validator: (v) => (v == null || v.trim().isEmpty)
-                      ? "Period is required"
-                      : null,
+                  validator: (v) {
+                    final value = v?.trim() ?? '';
+
+                    if (value.isEmpty) return 'Period is required';
+
+                    if (value.contains('http') || value.contains('www')) {
+                      return 'Links are not allowed';
+                    }
+
+                    if (!RegExp(r'[a-zA-Z0-9]').hasMatch(value)) {
+                      return 'Please enter a valid period';
+                    }
+
+                    return null;
+                  },
                 ),
               ],
             ),
@@ -384,61 +431,55 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                   ),
                   const SizedBox(height: 16),
 
-                  if ((c.profile!.serviceType ?? '').trim().isNotEmpty) ...[
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          (c.profile!.serviceType ?? '').trim().isEmpty
-                              ? "Service Type *"
-                              : "Service Type",
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (c.profile!.serviceType ?? '').trim().isEmpty
+                            ? "Service Type *"
+                            : "Service Type",
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
                         ),
-                        const SizedBox(height: 8),
-                        _SegmentBar(
-                          options:
-                              FreelancerProfileController.serviceTypeOptions,
-                          value: c.profile!.serviceType,
-                          enabled: c.isEditing,
-                          onChanged: (v) => c.setServiceTypeAndPersist(v),
-                          purple: kPurple,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                  ],
+                      ),
+                      const SizedBox(height: 8),
+                      _SegmentBar(
+                        options: FreelancerProfileController.serviceTypeOptions,
+                        value: c.profile!.serviceType,
+                        enabled: c.isEditing,
+                        onChanged: (v) => c.setServiceTypeAndPersist(v),
+                        purple: kPurple,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
 
-                  if ((c.profile!.workingMode ?? '').trim().isNotEmpty) ...[
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          (c.profile!.workingMode ?? '').trim().isEmpty
-                              ? "Working Mode *"
-                              : "Working Mode",
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (c.profile!.workingMode ?? '').trim().isEmpty
+                            ? "Working Mode *"
+                            : "Working Mode",
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
                         ),
-                        const SizedBox(height: 8),
-                        _SegmentBar(
-                          options:
-                              FreelancerProfileController.workingModeOptions,
-                          value: c.profile!.workingMode,
-                          enabled: c.isEditing,
-                          onChanged: (v) => c.setWorkingModeAndPersist(v),
-                          purple: kPurple,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+                      ),
+                      const SizedBox(height: 8),
+                      _SegmentBar(
+                        options: FreelancerProfileController.workingModeOptions,
+                        value: c.profile!.workingMode,
+                        enabled: c.isEditing,
+                        onChanged: (v) => c.setWorkingModeAndPersist(v),
+                        purple: kPurple,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
 
                   Row(
                     children: [
