@@ -13,11 +13,12 @@ import 'request_action_button.dart';
 class FreelancerProfileView extends StatefulWidget {
   final String? userId;
   final bool fromCategory;
-
+  final bool fromChat;
   const FreelancerProfileView({
     super.key,
     this.userId,
-    this.fromCategory = false, // 👈 الحل هنا
+    this.fromCategory = false,
+    this.fromChat = false, // 👈 الحل هنا
   });
   @override
   State<FreelancerProfileView> createState() => _FreelancerProfileViewState();
@@ -886,14 +887,14 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
           ),
           const SizedBox(height: 24),
           const SizedBox(height: 10),
-
-          Align(
-            alignment: Alignment.centerRight,
-            child: SendRequestButton(
-              freelancerId: widget.userId!,
-              freelancerName: profile.fullName,
+          if (!widget.fromChat)
+            Align(
+              alignment: Alignment.centerRight,
+              child: SendRequestButton(
+                freelancerId: widget.userId!,
+                freelancerName: profile.fullName,
+              ),
             ),
-          ),
 
           const SizedBox(height: 24),
 

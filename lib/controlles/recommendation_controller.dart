@@ -11,7 +11,7 @@ class RecommendationController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   final String backendBaseUrl =
-      "http://172.20.10.5:5000"; // يتغير حسب الجهاز/المحاكي
+      "http://10.0.2.2:5000"; // يتغير حسب الجهاز/المحاكي
 
   String _requestDocId({
     required String clientId,
@@ -156,7 +156,9 @@ class RecommendationController {
     return results;
   }
 
-  Future<String?> getExistingRequestId({required String freelancerId}) async {
+  Future<Map<String, dynamic>?> getExistingRequest({
+    required String freelancerId,
+  }) async {
     final user = _auth.currentUser;
     if (user == null) return null;
 
@@ -168,15 +170,16 @@ class RecommendationController {
 
     if (snapshot.docs.isEmpty) return null;
 
+    // نبحث أولًا عن accepted أو pending فقط
     for (final doc in snapshot.docs) {
-      final data = doc.data();
-      final status = (data['status'] ?? '').toString().toLowerCase();
+      final status = (doc.data()['status'] ?? '').toString().toLowerCase();
 
-      if (status == 'pending' || status == 'accepted') {
-        return doc.id;
+      if (status == 'accepted' || status == 'pending') {
+        return {'id': doc.id, 'status': status};
       }
     }
 
+    // لو كل الموجود cancelled/rejected نعتبره ما فيه طلب فعّال
     return null;
   }
 
@@ -292,7 +295,7 @@ class RecommendationController {
     final snapshot = await _firestore
         .collection('requests')
         .where('clientId', isEqualTo: currentUser.uid)
-        .where('status', isEqualTo: 'pending')
+        .where('status', whereIn: ['pending', 'accepted'])
         .orderBy('createdAt', descending: true)
         .get();
 

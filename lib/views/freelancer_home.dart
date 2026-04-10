@@ -7,6 +7,8 @@ import 'freelancer_incoming_requests_view.dart';
 import 'browse_announcements_view.dart';
 import 'my_announcement_requests_view.dart';
 import '../controlles/freelancer_profile_controller.dart';
+import 'chat_list_view.dart';
+import '../controlles/chat_controller.dart';
 
 class FreelancerHomeView extends StatefulWidget {
   const FreelancerHomeView({super.key});
@@ -664,9 +666,54 @@ class _FreelancerBottomNavigationBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          GestureDetector(
-            onTap: onChatsTap,
-            child: Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+          StreamBuilder<int>(
+            stream: ChatController().getTotalUnreadCount(),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ChatListView()),
+                  );
+                },
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+                    if (unreadCount > 0)
+                      Positioned(
+                        right: -8,
+                        top: -6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 18,
+                            minHeight: 18,
+                          ),
+                          child: Text(
+                            unreadCount > 99 ? '99+' : unreadCount.toString(),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
           GestureDetector(
             onTap: onHomeTap,
