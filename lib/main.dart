@@ -20,7 +20,7 @@ import 'views/bank_account.dart';
 import 'views/freelancer_profile.dart';
 import 'views/client_profile.dart';
 import 'views/chat_view.dart';
-
+import 'views/freelancer_incoming_requests_view.dart';
 
 final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -42,6 +42,7 @@ class _MyAppState extends State<MyApp> {
   bool _isInitialNotificationHandled = false;
   bool _isAuthReady = false;
   String? _lastOpenedChatId; // Guard against duplicate chats
+  OverlayEntry? _foregroundNotificationEntry;
 
   @override
   void initState() {
@@ -53,19 +54,21 @@ class _MyAppState extends State<MyApp> {
   Future<void> _initApp() async {
     // Wait for Firebase Auth to be ready before proceeding
     debugPrint('⏳ [APP] Waiting for Firebase Auth initialization...');
-    await Future.delayed(const Duration(milliseconds: 500)); // Give auth time to restore
-    
+    await Future.delayed(
+      const Duration(milliseconds: 500),
+    ); // Give auth time to restore
+
     // Listen for auth state changes to know when user is ready
     FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (!_isAuthReady) {
         _isAuthReady = true;
         debugPrint('✅ [APP] Auth state ready - user: ${user?.uid}');
-        
+
         // Now initialize messaging and notification handlers
-        _messagingController.init();
+        _messagingController.init(onForegroundMessage: _showForegroundBanner);
         _initDynamicLinks();
         _initNotificationTapHandler();
-        
+
         String targetRoute = '/intro';
 
         if (user != null) {
@@ -113,32 +116,231 @@ class _MyAppState extends State<MyApp> {
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       final data = message.data;
       debugPrint('✅ Notification tapped (background → foreground): $data');
-      _handleNotificationTapWithChatData(data);
+      _handleNotificationTap(data);
     });
   }
 
-  Future<void> _handleNotificationTapWithChatData(Map<String, dynamic> data) async {
+  Future<void> _navigateToCorrectHome() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/intro');
+      return;
+    }
+
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      final accountType = (userDoc.data()?['accountType'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      if (accountType == 'admin') {
+        navigatorKey.currentState?.pushNamed('/adminHome');
+      } else if (accountType == 'client') {
+        navigatorKey.currentState?.pushNamed('/clientHome');
+      } else {
+        navigatorKey.currentState?.pushNamed('/freelancerHome');
+      }
+    } catch (_) {
+      navigatorKey.currentState?.pushNamed('/freelancerHome');
+    }
+  }
+
+  void _showForegroundBanner(
+    String title,
+    String body,
+    Map<String, dynamic> data,
+  ) {
+    final overlay = navigatorKey.currentState?.overlay;
+    if (overlay == null) return;
+
+    _foregroundNotificationEntry?.remove();
+    _foregroundNotificationEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        top: MediaQuery.of(context).padding.top + 12,
+        left: 12,
+        right: 12,
+        child: Material(
+          color: Colors.transparent,
+          child: SafeArea(
+            bottom: false,
+            child: GestureDetector(
+              onTap: () {
+                _removeForegroundBanner();
+                _handleNotificationTap(data);
+              },
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E1E),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 16,
+                      offset: Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.notifications_active_outlined,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            body,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _removeForegroundBanner,
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(_foregroundNotificationEntry!);
+    Future.delayed(const Duration(seconds: 4), _removeForegroundBanner);
+  }
+
+  void _removeForegroundBanner() {
+    _foregroundNotificationEntry?.remove();
+    _foregroundNotificationEntry = null;
+  }
+
+  Future<void> _handleNotificationTap(Map<String, dynamic> data) async {
+    final type = (data['type'] ?? '').toString().trim().toLowerCase();
+
+    if (type == 'service_request') {
+      await _handleServiceRequestTap(data);
+      return;
+    }
+
+    if (type == 'announcement_request') {
+      await _handleAnnouncementRequestTap(data);
+      return;
+    }
+
+    await _handleNotificationTapWithChatData(data);
+  }
+
+  Future<void> _handleServiceRequestTap(Map<String, dynamic> data) async {
+    final receiverId = (data['receiverId'] ?? '').toString();
+    final requestId = (data['requestId'] ?? '').toString();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    if (requestId.isEmpty) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) =>
+            FreelancerIncomingRequestsView(initialRequestId: requestId),
+      ),
+    );
+  }
+
+  Future<void> _handleAnnouncementRequestTap(Map<String, dynamic> data) async {
+    final receiverId = (data['receiverId'] ?? '').toString();
+    final senderId = (data['senderId'] ?? '').toString();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    if (senderId.isEmpty) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => FreelancerProfileView(userId: senderId),
+      ),
+    );
+  }
+
+  Future<void> _handleNotificationTapWithChatData(
+    Map<String, dynamic> data,
+  ) async {
     final chatId = data['chatId'] as String?;
 
     if (chatId == null) {
       debugPrint('❌ No chatId in notification data');
-      navigatorKey.currentState?.pushNamed('/freelancerHome');
+      await _navigateToCorrectHome();
       return;
     }
 
     try {
       // Fetch chat data to get user information
-      final chatDoc = await FirebaseFirestore.instance.collection('chat').doc(chatId).get();
+      final chatDoc = await FirebaseFirestore.instance
+          .collection('chat')
+          .doc(chatId)
+          .get();
       if (!chatDoc.exists) {
         debugPrint('❌ Chat document not found: $chatId');
-        navigatorKey.currentState?.pushNamed('/freelancerHome');
+        await _navigateToCorrectHome();
         return;
       }
 
       final chatData = chatDoc.data();
       if (chatData == null) {
         debugPrint('❌ Chat data is null');
-        navigatorKey.currentState?.pushNamed('/freelancerHome');
+        await _navigateToCorrectHome();
         return;
       }
 
@@ -147,7 +349,7 @@ class _MyAppState extends State<MyApp> {
 
       if (clientId == null || freelancerId == null) {
         debugPrint('❌ Chat missing clientId or freelancerId');
-        navigatorKey.currentState?.pushNamed('/freelancerHome');
+        await _navigateToCorrectHome();
         return;
       }
 
@@ -170,14 +372,17 @@ class _MyAppState extends State<MyApp> {
         otherUserRole = 'client';
       } else {
         debugPrint('❌ Current user is not a participant in this chat');
-        navigatorKey.currentState?.pushNamed('/freelancerHome');
+        await _navigateToCorrectHome();
         return;
       }
 
       // Fetch other user's name
       String otherUserName = 'User';
       try {
-        final userDoc = await FirebaseFirestore.instance.collection('users').doc(otherUserId).get();
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(otherUserId)
+            .get();
         if (userDoc.exists) {
           final userData = userDoc.data();
           final firstName = userData?['firstName'] ?? '';
@@ -189,60 +394,67 @@ class _MyAppState extends State<MyApp> {
         debugPrint('⚠️ Could not fetch user name: $e');
       }
 
-      debugPrint('🔗 Navigating to chat: $chatId with user: $otherUserName ($otherUserId, $otherUserRole)');
+      debugPrint(
+        '🔗 Navigating to chat: $chatId with user: $otherUserName ($otherUserId, $otherUserRole)',
+      );
 
       if (otherUserId.isEmpty) {
         debugPrint('❌ ERROR: otherUserId is empty before ChatView navigation!');
-        navigatorKey.currentState?.pushNamed('/freelancerHome');
+        await _navigateToCorrectHome();
         return;
       }
 
       // Guard against duplicate navigation to the same chat
       if (_lastOpenedChatId == chatId) {
-        debugPrint('⚠️  [DUPLICATE GUARD] Chat $chatId already open, skipping duplicate push');
+        debugPrint(
+          '⚠️  [DUPLICATE GUARD] Chat $chatId already open, skipping duplicate push',
+        );
         return;
       }
       _lastOpenedChatId = chatId;
 
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(
-          builder: (_) => ChatView(
-            chatId: chatId,
-            otherUserName: otherUserName,
-            otherUserId: otherUserId,
-            otherUserRole: otherUserRole,
-          ),
-        ),
-      ).then((_) {
-        if (_lastOpenedChatId == chatId) {
-          _lastOpenedChatId = null;
-        }
-      });
-
+      navigatorKey.currentState
+          ?.push(
+            MaterialPageRoute(
+              builder: (_) => ChatView(
+                chatId: chatId,
+                otherUserName: otherUserName,
+                otherUserId: otherUserId,
+                otherUserRole: otherUserRole,
+              ),
+            ),
+          )
+          .then((_) {
+            if (_lastOpenedChatId == chatId) {
+              _lastOpenedChatId = null;
+            }
+          });
     } catch (e) {
       debugPrint('❌ Error handling notification tap: $e');
-      navigatorKey.currentState?.pushNamed('/freelancerHome');
+      await _navigateToCorrectHome();
     }
   }
 
   Future<void> _handleInitialNotification() async {
-    final RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
-    
+    final RemoteMessage? initialMessage = await FirebaseMessaging.instance
+        .getInitialMessage();
+
     if (initialMessage != null && !_isInitialNotificationHandled) {
       _isInitialNotificationHandled = true;
       final data = initialMessage.data;
       debugPrint('✅ App launched from terminated state by notification: $data');
-      
+
       // Wait for app to fully build before navigating
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await Future.delayed(const Duration(milliseconds: 800));
-        _handleNotificationTapWithChatData(data);
+        _handleNotificationTap(data);
       });
     }
   }
 
   @override
   void dispose() {
+    _removeForegroundBanner();
     _messagingController.dispose();
     super.dispose();
   }
@@ -312,11 +524,7 @@ class _LoadingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
 

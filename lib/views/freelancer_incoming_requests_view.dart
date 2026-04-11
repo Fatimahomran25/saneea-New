@@ -7,7 +7,9 @@ import '../controlles/chat_controller.dart';
 import 'chat_view.dart';
 
 class FreelancerIncomingRequestsView extends StatefulWidget {
-  const FreelancerIncomingRequestsView({super.key});
+  final String? initialRequestId;
+
+  const FreelancerIncomingRequestsView({super.key, this.initialRequestId});
 
   @override
   State<FreelancerIncomingRequestsView> createState() =>
@@ -66,6 +68,17 @@ class _FreelancerIncomingRequestsViewState
     return text;
   }
 
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _visibleRequests(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> requests,
+  ) {
+    final requestId = widget.initialRequestId;
+    if (requestId == null || requestId.isEmpty) {
+      return requests;
+    }
+
+    return requests.where((doc) => doc.id == requestId).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -94,11 +107,12 @@ class _FreelancerIncomingRequestsViewState
           }
 
           final requests = snapshot.data ?? [];
+          final visibleRequests = _visibleRequests(requests);
 
-          if (requests.isEmpty) {
+          if (visibleRequests.isEmpty) {
             return const Center(
               child: Text(
-                'No incoming requests yet',
+                'This request is no longer available.',
                 style: TextStyle(fontSize: 16),
               ),
             );
@@ -108,10 +122,10 @@ class _FreelancerIncomingRequestsViewState
             onRefresh: _reload,
             child: ListView.separated(
               padding: const EdgeInsets.all(16),
-              itemCount: requests.length,
+              itemCount: visibleRequests.length,
               separatorBuilder: (_, __) => const SizedBox(height: 14),
               itemBuilder: (context, index) {
-                final doc = requests[index];
+                final doc = visibleRequests[index];
                 final data = doc.data();
 
                 final clientName = (data['clientName'] ?? 'Client').toString();

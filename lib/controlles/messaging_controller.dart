@@ -4,19 +4,27 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+typedef ForegroundMessageCallback =
+    void Function(String title, String body, Map<String, dynamic> data);
 
 class MessagingController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
 
   StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<User?>? _authStateSubscription;
 
   // Static variable to hold pending notification data for post-login handling
   static Map<String, dynamic>? _pendingNotificationData;
+  ForegroundMessageCallback? _onForegroundMessage;
 
-  Future<void> init() async {
+  Future<void> init({ForegroundMessageCallback? onForegroundMessage}) async {
+    _onForegroundMessage = onForegroundMessage;
     await _requestPermission();
     await _createNotificationChannel();
     _listenAuthStateChanges();
@@ -26,32 +34,80 @@ class MessagingController {
   }
 
   Future<void> _createNotificationChannel() async {
-    // This creates a notification channel on Android 8+
-    // Without this, notifications won't display on modern Android versions
-    const channelId = 'chat_notifications';
-    const channelName = 'Chat Messages';
-    const channelDescription = 'Notifications for new chat messages';
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const settings = InitializationSettings(android: androidSettings);
+    await _localNotifications.initialize(settings);
 
-    // These are Android SDK settings, not Flutter
-    // They must match settings in the Android manifest or be set programmatically
-    // For now, force the channel creation in the metadata
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'chat_notifications',
+            'Chat Messages',
+            description: 'Notifications for new chat messages',
+            importance: Importance.high,
+          ),
+        );
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'request_notifications',
+            'Request Notifications',
+            description: 'Notifications for service requests and proposals',
+            importance: Importance.high,
+          ),
+        );
+
+    if (kDebugMode) {
+      debugPrint('✅ Notification channels created (chat + request)');
+    }
   }
 
   void _listenForegroundMessages() {
     // This handler runs when the app is OPEN in foreground (including home page)
     // Without this, notifications only appear in the notification panel
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
       final notification = message.notification;
       final data = message.data;
 
-      debugPrint('📬 Foreground message received: title=${notification?.title}, body=${notification?.body}');
+      debugPrint(
+        '📬 Foreground message received: title=${notification?.title}, body=${notification?.body}',
+      );
 
       if (notification != null) {
-        _showForegroundNotification(
-          title: notification.title ?? 'New Message',
-          body: notification.body ?? '',
-          data: data,
+        final title = notification.title ?? 'New Message';
+        final body = notification.body ?? '';
+        final channelId =
+            data['type'] == 'service_request' ||
+                data['type'] == 'announcement_request'
+            ? 'request_notifications'
+            : 'chat_notifications';
+
+        await _localNotifications.show(
+          notification.hashCode,
+          title,
+          body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              channelId,
+              channelId == 'request_notifications'
+                  ? 'Request Notifications'
+                  : 'Chat Messages',
+              importance: Importance.max,
+              priority: Priority.high,
+              ticker: 'ticker',
+            ),
+          ),
         );
+
+        _showForegroundNotification(title: title, body: body, data: data);
       }
     });
   }
@@ -61,25 +117,16 @@ class MessagingController {
     required String body,
     required Map<String, dynamic> data,
   }) {
-    // Show in-app notification using a debug message and platform channel
-    // The system will handle displaying the notification since we're using high priority
     debugPrint('🔔 [FOREGROUND NOTIFICATION] $title: $body');
-    debugPrint('   📊 Data: chatId=${data['chatId']}, senderId=${data['senderId']}');
-    
-    // On Android, this message would normally be handled by FlutterFire
-    // which should display a heads-up notification due to HIGH priority channel
-    // If you want a custom in-app banner, you would need to:
-    // 1. Use a local notification plugin
-    // 2. Or implement a custom platform channel
-    // For now, FlutterFire's automatic notification delivery should handle this
+    debugPrint(
+      '   📊 Data: chatId=${data['chatId']}, senderId=${data['senderId']}',
+    );
+
+    _onForegroundMessage?.call(title, body, data);
   }
 
   Future<void> _requestPermission() async {
-    await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    await _messaging.requestPermission(alert: true, badge: true, sound: true);
   }
 
   void _listenAuthStateChanges() {
@@ -111,12 +158,9 @@ class MessagingController {
   }
 
   Future<void> _saveTokenForUser(String uid, String token) async {
-    await _firestore.collection('users').doc(uid).set(
-      {
-        'fcmToken': token,
-      },
-      SetOptions(merge: true),
-    );
+    await _firestore.collection('users').doc(uid).set({
+      'fcmToken': token,
+    }, SetOptions(merge: true));
   }
 
   // Method to clear FCM token on logout
@@ -133,22 +177,33 @@ class MessagingController {
   }
 
   // Handle notification tap
-  Future<void> handleNotificationTap(Map<String, dynamic> data, Function(String) navigateToChat, Function() navigateToLogin, Function() navigateToHome) async {
+  Future<void> handleNotificationTap(
+    Map<String, dynamic> data,
+    Function(String) navigateToChat,
+    Function() navigateToLogin,
+    Function() navigateToHome,
+  ) async {
     final receiverId = data['receiverId'] as String?;
     final senderId = data['senderId'] as String?;
     final chatId = data['chatId'] as String?;
 
     debugPrint('═══════════════════════════════════════════════');
     debugPrint('🔍 [TAP HANDLER] Starting notification tap handling');
-    debugPrint('   Payload - chatId: $chatId, senderId: $senderId, receiverId: $receiverId');
+    debugPrint(
+      '   Payload - chatId: $chatId, senderId: $senderId, receiverId: $receiverId',
+    );
     debugPrint('═══════════════════════════════════════════════');
 
     // ✅ CRITICAL FIX: Check current user first, then wait for auth state if needed
     User? user = _auth.currentUser;
     if (user == null) {
-      debugPrint('⏳ [TAP] Current user is null, waiting for auth state restoration...');
+      debugPrint(
+        '⏳ [TAP] Current user is null, waiting for auth state restoration...',
+      );
       try {
-        user = await _auth.authStateChanges().first.timeout(const Duration(seconds: 5));
+        user = await _auth.authStateChanges().first.timeout(
+          const Duration(seconds: 5),
+        );
         debugPrint('✅ [TAP] Auth state restored - user: ${user?.uid}');
       } catch (e) {
         debugPrint('❌ [TAP] Auth state timeout or error: $e');
@@ -166,7 +221,9 @@ class MessagingController {
     }
 
     if (receiverId == null || chatId == null) {
-      debugPrint('❌ [TAP] Incomplete data - receiverId: $receiverId, chatId: $chatId');
+      debugPrint(
+        '❌ [TAP] Incomplete data - receiverId: $receiverId, chatId: $chatId',
+      );
       navigateToHome();
       return;
     }
@@ -177,9 +234,13 @@ class MessagingController {
     debugPrint('   User role - isReceiver: $isReceiver, isSender: $isSender');
 
     if (!isReceiver) {
-      debugPrint('❌ [TAP] Current user (${user.uid}) is NOT the receiver ($receiverId)');
+      debugPrint(
+        '❌ [TAP] Current user (${user.uid}) is NOT the receiver ($receiverId)',
+      );
       if (isSender) {
-        debugPrint('   ℹ️  This is the sender - they tapped their own notification');
+        debugPrint(
+          '   ℹ️  This is the sender - they tapped their own notification',
+        );
       }
       navigateToHome();
       return;
@@ -205,7 +266,9 @@ class MessagingController {
       final clientId = chatData['clientId'] as String?;
       final freelancerId = chatData['freelancerId'] as String?;
 
-      debugPrint('   💬 Chat structure - clientId: $clientId, freelancerId: $freelancerId');
+      debugPrint(
+        '   💬 Chat structure - clientId: $clientId, freelancerId: $freelancerId',
+      );
 
       if (clientId == null || freelancerId == null) {
         debugPrint('❌ [TAP] Chat missing required IDs');
@@ -216,10 +279,14 @@ class MessagingController {
       // Verify user is a participant
       final isClient = user.uid == clientId;
       final isFreelancer = user.uid == freelancerId;
-      debugPrint('   👥 User is - client: $isClient, freelancer: $isFreelancer');
+      debugPrint(
+        '   👥 User is - client: $isClient, freelancer: $isFreelancer',
+      );
 
       if (!isClient && !isFreelancer) {
-        debugPrint('❌ [TAP] User (${user.uid}) is not a participant in this chat');
+        debugPrint(
+          '❌ [TAP] User (${user.uid}) is not a participant in this chat',
+        );
         navigateToHome();
         return;
       }
@@ -234,7 +301,10 @@ class MessagingController {
   }
 
   // Method to check and handle pending notification after login
-  Future<void> handlePendingNotificationAfterLogin(Function(String) navigateToChat, Function() navigateToHome) async {
+  Future<void> handlePendingNotificationAfterLogin(
+    Function(String) navigateToChat,
+    Function() navigateToHome,
+  ) async {
     if (_pendingNotificationData != null) {
       final data = _pendingNotificationData!;
       _pendingNotificationData = null; // Clear it

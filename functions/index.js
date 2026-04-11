@@ -127,3 +127,87 @@ exports.sendChatNotification = functions.firestore
 
     return null;
   });
+
+exports.sendRequestNotification = functions.firestore
+  .document('users/{receiverId}/notifications/{notificationId}')
+  .onCreate(async (snap, context) => {
+    const notificationData = snap.data();
+    if (!notificationData) {
+      console.log('❌ Notification data is empty');
+      return null;
+    }
+
+    const receiverId = (context.params.receiverId || '').toString();
+    const senderId = (notificationData.senderId || '').toString();
+    const senderName = (notificationData.senderName || 'New notification').toString().trim() || 'New notification';
+    const actionText = (notificationData.actionText || '').toString().trim();
+    const type = (notificationData.type || '').toString().trim();
+    const receiverFromData = (notificationData.receiverId || '').toString().trim();
+
+    if (!receiverId || !senderId || !actionText || !type) {
+      console.log('❌ Missing required notification fields');
+      return null;
+    }
+
+    if (receiverFromData && receiverFromData !== receiverId) {
+      console.log(`❌ Receiver mismatch. path=${receiverId}, data=${receiverFromData}`);
+      return null;
+    }
+
+    const receiverRef = admin.firestore().doc(`users/${receiverId}`);
+    const receiverSnap = await receiverRef.get();
+    if (!receiverSnap.exists) {
+      console.log(`❌ Receiver not found: ${receiverId}`);
+      return null;
+    }
+
+    const receiverData = receiverSnap.data();
+    const fcmToken = receiverData?.fcmToken;
+    if (!fcmToken || typeof fcmToken !== 'string') {
+      console.log(`❌ Invalid or missing fcmToken for ${receiverId}`);
+      return null;
+    }
+
+    const rawSnippet = (notificationData.snippet || '').toString();
+    const snippet = rawSnippet.replace(/\s+/g, ' ').trim();
+    const body = snippet.length > 0 ? `${actionText} · ${snippet}` : actionText;
+
+    const senderProfileUrl = (notificationData.senderProfileUrl || '').toString().trim();
+    const payload = {
+      token: fcmToken,
+      notification: {
+        title: senderName,
+        body,
+      },
+      data: {
+        type,
+        senderId,
+        receiverId,
+        actionText,
+        snippet,
+        requestId: (notificationData.requestId || '').toString(),
+        announcementId: (notificationData.announcementId || '').toString(),
+        announcementDescription: (notificationData.announcementDescription || '').toString(),
+        senderName,
+        senderProfileUrl,
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'request_notifications',
+          sound: 'default',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+          imageUrl: senderProfileUrl || undefined,
+        },
+      },
+    };
+
+    try {
+      const response = await admin.messaging().send(payload);
+      console.log(`✅ Request notification sent to ${receiverId}. Response: ${response}`);
+    } catch (error) {
+      console.error(`❌ FAILED request notification to ${receiverId}: ${error.code} - ${error.message}`);
+    }
+
+    return null;
+  });
