@@ -320,9 +320,22 @@ class ChatController {
             final clientId = (data['clientId'] ?? '').toString();
             final freelancerId = (data['freelancerId'] ?? '').toString();
 
-            final isClient = user.uid == clientId;
-            final otherUserId = isClient ? freelancerId : clientId;
-            final otherUserRole = isClient ? 'freelancer' : 'client';
+            final isClientUser = user.uid == clientId;
+            final isFreelancerUser = user.uid == freelancerId;
+
+            String otherUserId;
+            String otherUserRole;
+
+            if (isClientUser) {
+              otherUserId = freelancerId;
+              otherUserRole = 'freelancer';
+            } else if (isFreelancerUser) {
+              otherUserId = clientId;
+              otherUserRole = 'client';
+            } else {
+              otherUserId = freelancerId.isNotEmpty ? freelancerId : clientId;
+              otherUserRole = 'unknown';
+            }
 
             final userDoc = await _firestore
                 .collection('users')
@@ -340,7 +353,7 @@ class ChatController {
                 'updatedAt': data['updatedAt'] != null
                     ? (data['updatedAt'] as Timestamp).toDate()
                     : null,
-                'unreadCount': isClient
+                'unreadCount': isClientUser
                     ? (data['unreadCountClient'] ?? 0)
                     : (data['unreadCountFreelancer'] ?? 0),
               });
@@ -371,7 +384,7 @@ class ChatController {
               'updatedAt': data['updatedAt'] != null
                   ? (data['updatedAt'] as Timestamp).toDate()
                   : null,
-              'unreadCount': isClient
+                'unreadCount': isClientUser
                   ? (data['unreadCountClient'] ?? 0)
                   : (data['unreadCountFreelancer'] ?? 0),
             });

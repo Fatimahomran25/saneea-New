@@ -48,6 +48,11 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> _loadOtherUserPhoto() async {
     try {
+      if (widget.otherUserId.isEmpty) {
+        debugPrint('⚠️  Cannot load photo: otherUserId is empty');
+        return;
+      }
+      
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(widget.otherUserId)
@@ -63,11 +68,41 @@ class _ChatViewState extends State<ChatView> {
       setState(() {
         _otherUserPhotoUrl = photo;
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('❌ Error loading photo: $e');
+    }
   }
 
-  void _openOtherUserProfile() {
-    if (widget.otherUserRole == 'client') {
+  Future<void> _openOtherUserProfile() async {
+    if (widget.otherUserId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User information not available')),
+      );
+      return;
+    }
+
+    var otherRole = widget.otherUserRole.trim().toLowerCase();
+
+    if (otherRole != 'client' && otherRole != 'freelancer') {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.otherUserId)
+            .get();
+
+        final accountType =
+            (doc.data()?['accountType'] ?? '').toString().trim().toLowerCase();
+        if (accountType == 'client' || accountType == 'freelancer') {
+          otherRole = accountType;
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not resolve other user role: $e');
+      }
+    }
+
+    if (!mounted) return;
+
+    if (otherRole == 'client') {
       Navigator.push(
         context,
         MaterialPageRoute(
