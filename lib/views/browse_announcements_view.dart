@@ -467,12 +467,12 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
     return false;
   }
 
-  Stream<bool> _hasAppliedStream({
+  Stream<String?> _applicationStatusStream({
     required String announcementId,
     required String clientId,
   }) {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return Stream.value(false);
+    if (user == null) return Stream.value(null);
 
     return FirebaseFirestore.instance
         .collection('announcement_requests')
@@ -481,7 +481,10 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
         .where('freelancerId', isEqualTo: user.uid)
         .limit(1)
         .snapshots()
-        .map((snapshot) => snapshot.docs.isNotEmpty);
+        .map((snapshot) {
+          if (snapshot.docs.isEmpty) return null;
+          return snapshot.docs.first.data()['status']?.toString();
+        });
   }
 
   Stream<Set<String>> _appliedAnnouncementIdsStream() {
@@ -494,6 +497,10 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
         .snapshots()
         .map((snapshot) {
           return snapshot.docs
+              .where((doc) {
+                final status = doc.data()['status']?.toString();
+                return status == 'pending' || status == 'accepted';
+              })
               .map((doc) => (doc.data()['announcementId'] ?? '').toString())
               .where((id) => id.isNotEmpty)
               .toSet();
@@ -543,17 +550,19 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
             ),
           ),
           const SizedBox(height: 14),
-          StreamBuilder<bool>(
-            stream: _hasAppliedStream(
+          StreamBuilder<String?>(
+            stream: _applicationStatusStream(
               announcementId: doc.id,
               clientId: clientId,
             ),
             builder: (context, snapshot) {
-              final hasApplied = snapshot.data ?? false;
+              final status = snapshot.data;
+              final hasActiveApplication =
+                  status == 'pending' || status == 'accepted';
 
               return Column(
                 children: [
-                  if (hasApplied) ...[
+                  if (hasActiveApplication) ...[
                     Row(
                       children: [
                         Expanded(
@@ -638,7 +647,7 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        child: const Text('Apply'), // 🔥 هذا اللي ناقص عندك
+                        child: const Text('Apply'),
                       ),
                     ),
                   ],

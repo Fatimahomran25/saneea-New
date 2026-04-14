@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 import '../models/recommendation_model.dart';
 import 'request_action_button.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../controlles/chat_controller.dart';
+import 'chat_view.dart';
 
 //تمت
 class ClientFreelancerProfileView extends StatelessWidget {
   final FreelancerRecommendation freelancer;
-
-  const ClientFreelancerProfileView({super.key, required this.freelancer});
+  final bool fromChat;
+  const ClientFreelancerProfileView({
+    super.key,
+    required this.freelancer,
+    this.fromChat = false,
+  });
 
   static const primary = Color(0xFF5A3E9E);
 
@@ -118,6 +126,7 @@ class ClientFreelancerProfileView extends StatelessWidget {
         : freelancer.name;
 
     final profileImage = freelancer.profileImage;
+    final currentUserId = FirebaseAuth.instance.currentUser!.uid;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -173,12 +182,110 @@ class ClientFreelancerProfileView extends StatelessWidget {
             _buildRatingStars(freelancer.rating),
             const SizedBox(height: 24),
 
-            SendRequestButton(
-              freelancerId: freelancer.id,
-              freelancerName: freelancer.name,
-            ),
-            const SizedBox(height: 16),
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('requests')
+                  .where('clientId', isEqualTo: currentUserId)
+                  .where('freelancerId', isEqualTo: freelancer.id)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const SizedBox();
+                }
 
+                final docs = snapshot.data!.docs;
+
+                if (docs.isEmpty) {
+                  return SendRequestButton(
+                    freelancerId: freelancer.id,
+                    freelancerName: freelancer.name,
+                  );
+                }
+
+                QueryDocumentSnapshot<Map<String, dynamic>>? acceptedRequest;
+
+                for (final doc in docs) {
+                  final docStatus = (doc.data()['status'] ?? '')
+                      .toString()
+                      .toLowerCase();
+                  if (docStatus == 'accepted') {
+                    acceptedRequest = doc;
+                    break;
+                  }
+                }
+
+                if (acceptedRequest != null && !fromChat) {
+                  final requestId = acceptedRequest.id;
+
+                  return SizedBox(
+                    width: double.infinity,
+                    height: 45,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                      ),
+                      onPressed: () async {
+                        final chatController = ChatController();
+
+                        final chatId = await chatController.createOrGetChat(
+                          requestId: requestId,
+                          clientId: currentUserId,
+                          freelancerId: freelancer.id,
+                        );
+
+                        if (!context.mounted) return;
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatView(
+                              chatId: chatId,
+                              otherUserName: freelancer.name,
+                              otherUserId: freelancer.id,
+                              otherUserRole: 'freelancer',
+                            ),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'Chat',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  );
+                }
+
+                bool hasPending = false;
+
+                for (final doc in docs) {
+                  final docStatus = (doc.data()['status'] ?? '')
+                      .toString()
+                      .toLowerCase();
+                  if (docStatus == 'pending') {
+                    hasPending = true;
+                    break;
+                  }
+                }
+
+                if (hasPending) {
+                  return const Text(
+                    'Request sent',
+                    style: TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                }
+
+                return SendRequestButton(
+                  freelancerId: freelancer.id,
+                  freelancerName: freelancer.name,
+                );
+              },
+            ),
             _infoTile(
               icon: Icons.work_outline,
               title: 'Service Type',

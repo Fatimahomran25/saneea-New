@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 //تمت
 class FreelancerClientProfileView extends StatelessWidget {
   final String clientId;
-
-  const FreelancerClientProfileView({super.key, required this.clientId});
+  final bool fromChat;
+  const FreelancerClientProfileView({
+    super.key,
+    required this.clientId,
+    this.fromChat = false,
+  });
 
   static const primary = Color(0xFF5A3E9E);
 

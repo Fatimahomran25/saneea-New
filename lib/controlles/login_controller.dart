@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/login_model.dart';
 import 'dart:async';
+import 'messaging_controller.dart';
 
 class LoginController {
   final LoginModel model = LoginModel();
@@ -132,5 +133,11 @@ class LoginController {
     } finally {
       isLoading = false;
     }
+  }
+
+  Future<void> logout() async {
+    final messagingController = MessagingController();
+    await messagingController.clearToken();
+    await FirebaseAuth.instance.signOut();
   }
 }

@@ -3,7 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import '../models/recommendation_model.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
 
 class RecommendationController {
@@ -11,13 +10,53 @@ class RecommendationController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   final String backendBaseUrl =
-      "http://192.168.1.13:5000"; // يتغير حسب الجهاز/المحاكي
+      "http://192.168.1.18:5000"; // يتغير حسب الجهاز/المحاكي
 
   String _requestDocId({
     required String clientId,
     required String freelancerId,
   }) {
     return '${clientId}_$freelancerId';
+  }
+
+  String _singleLineSnippet(String rawText) {
+    final text = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.isEmpty) return '';
+    return text;
+  }
+
+  Future<void> _createRequestNotification({
+    required String receiverId,
+    required String senderId,
+    required String senderName,
+    required String senderProfileUrl,
+    required String actionText,
+    required String type,
+    required String snippet,
+    String? requestId,
+    String? announcementId,
+    String? announcementDescription,
+  }) async {
+    final data = {
+      'type': type,
+      'senderId': senderId,
+      'senderName': senderName,
+      'senderProfileUrl': senderProfileUrl,
+      'receiverId': receiverId,
+      'actionText': actionText,
+      'snippet': snippet,
+      'requestId': requestId,
+      'announcementId': announcementId,
+      'announcementDescription': announcementDescription,
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+
+    await _firestore
+        .collection('users')
+        .doc(receiverId)
+        .collection('notifications')
+        .add(data);
   }
 
   // 🔧 تعديل فاطمه
@@ -98,8 +137,8 @@ class RecommendationController {
 
       final hasCompleteProfile =
           f.serviceField.trim().isNotEmpty &&
-          (f.serviceType?.trim().isNotEmpty ?? false) &&
-          (f.workingMode?.trim().isNotEmpty ?? false) &&
+          f.serviceType.trim().isNotEmpty &&
+          f.workingMode.trim().isNotEmpty &&
           f.portfolioUrls.isNotEmpty;
 
       return fieldMatch && hasCompleteProfile;
@@ -156,7 +195,9 @@ class RecommendationController {
     return results;
   }
 
-  Future<String?> getExistingRequestId({required String freelancerId}) async {
+  Future<Map<String, dynamic>?> getExistingRequest({
+    required String freelancerId,
+  }) async {
     final user = _auth.currentUser;
     if (user == null) return null;
 
@@ -168,15 +209,16 @@ class RecommendationController {
 
     if (snapshot.docs.isEmpty) return null;
 
+    // نبحث أولًا عن accepted أو pending فقط
     for (final doc in snapshot.docs) {
-      final data = doc.data();
-      final status = (data['status'] ?? '').toString().toLowerCase();
+      final status = (doc.data()['status'] ?? '').toString().toLowerCase();
 
-      if (status == 'pending' || status == 'accepted') {
-        return doc.id;
+      if (status == 'accepted' || status == 'pending') {
+        return {'id': doc.id, 'status': status};
       }
     }
 
+    // لو كل الموجود cancelled/rejected نعتبره ما فيه طلب فعّال
     return null;
   }
 
@@ -206,6 +248,8 @@ class RecommendationController {
     final clientName =
         "${clientData['firstName'] ?? ''} ${clientData['lastName'] ?? ''}"
             .trim();
+    final senderProfileUrl =
+        (clientData['photoUrl'] ?? clientData['profile'] ?? '').toString();
 
     final requestId = _requestDocId(
       clientId: currentUser.uid,
@@ -246,6 +290,17 @@ class RecommendationController {
     };
 
     await requestRef.set(requestData, SetOptions(merge: true));
+
+    await _createRequestNotification(
+      receiverId: freelancer.id,
+      senderId: currentUser.uid,
+      senderName: clientName.isEmpty ? 'Client' : clientName,
+      senderProfileUrl: senderProfileUrl,
+      actionText: 'sent you a service request',
+      type: 'service_request',
+      snippet: _singleLineSnippet(description),
+      requestId: requestId,
+    );
   }
 
   Future<void> cancelRequest({required String requestId}) async {
@@ -292,7 +347,7 @@ class RecommendationController {
     final snapshot = await _firestore
         .collection('requests')
         .where('clientId', isEqualTo: currentUser.uid)
-        .where('status', isEqualTo: 'pending')
+        .where('status', whereIn: ['pending', 'accepted'])
         .orderBy('createdAt', descending: true)
         .get();
 
@@ -329,6 +384,23 @@ class RecommendationController {
     final freelancerName =
         "${freelancerData['firstName'] ?? ''} ${freelancerData['lastName'] ?? ''}"
             .trim();
+    final senderProfileUrl =
+        (freelancerData['profile'] ?? freelancerData['photoUrl'] ?? '')
+            .toString();
+
+    String announcementDescription = '';
+    try {
+      final announcementDoc = await _firestore
+          .collection('users')
+          .doc(clientId)
+          .collection('announcements')
+          .doc(announcementId)
+          .get();
+      announcementDescription = (announcementDoc.data()?['description'] ?? '')
+          .toString();
+    } catch (_) {
+      announcementDescription = '';
+    }
 
     final existing = await _firestore
         .collection('announcement_requests')
@@ -355,6 +427,18 @@ class RecommendationController {
     } else {
       await _firestore.collection('announcement_requests').add(requestData);
     }
+
+    await _createRequestNotification(
+      receiverId: clientId,
+      senderId: currentUser.uid,
+      senderName: freelancerName.isEmpty ? 'Freelancer' : freelancerName,
+      senderProfileUrl: senderProfileUrl,
+      actionText: 'sent you a proposal',
+      type: 'announcement_request',
+      snippet: _singleLineSnippet(proposalText),
+      announcementId: announcementId,
+      announcementDescription: _singleLineSnippet(announcementDescription),
+    );
   }
 
   Future<List<AnnouncementRequest>> getRequestsForAnnouncement({

@@ -16,7 +16,7 @@ class FreelancerRequestsController {
     final snapshot = await _firestore
         .collection('requests')
         .where('freelancerId', isEqualTo: user.uid)
-        .where('status', isEqualTo: 'pending')
+        .where('status', whereIn: ['pending', 'accepted'])
         .get();
 
     return snapshot.docs;

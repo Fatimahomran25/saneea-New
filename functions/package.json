@@ -1,0 +1,11 @@
+{
+  "name": "saneea-functions",
+  "private": true,
+  "engines": {
+    "node": "20"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.10.0",
+    "firebase-functions": "^4.5.0"
+  }
+}

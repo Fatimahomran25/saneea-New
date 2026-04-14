@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../controlles/freelancer_requests_controller.dart';
 import 'freelancer_client_profile_view.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../controlles/chat_controller.dart';
+import 'chat_view.dart';
 
 class FreelancerIncomingRequestsView extends StatefulWidget {
-  const FreelancerIncomingRequestsView({super.key});
+  final String? initialRequestId;
+
+  const FreelancerIncomingRequestsView({super.key, this.initialRequestId});
 
   @override
   State<FreelancerIncomingRequestsView> createState() =>
@@ -63,6 +68,17 @@ class _FreelancerIncomingRequestsViewState
     return text;
   }
 
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _visibleRequests(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> requests,
+  ) {
+    final requestId = widget.initialRequestId;
+    if (requestId == null || requestId.isEmpty) {
+      return requests;
+    }
+
+    return requests.where((doc) => doc.id == requestId).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -91,11 +107,12 @@ class _FreelancerIncomingRequestsViewState
           }
 
           final requests = snapshot.data ?? [];
+          final visibleRequests = _visibleRequests(requests);
 
-          if (requests.isEmpty) {
+          if (visibleRequests.isEmpty) {
             return const Center(
               child: Text(
-                'No incoming requests yet',
+                'This request is no longer available.',
                 style: TextStyle(fontSize: 16),
               ),
             );
@@ -105,10 +122,10 @@ class _FreelancerIncomingRequestsViewState
             onRefresh: _reload,
             child: ListView.separated(
               padding: const EdgeInsets.all(16),
-              itemCount: requests.length,
+              itemCount: visibleRequests.length,
               separatorBuilder: (_, __) => const SizedBox(height: 14),
               itemBuilder: (context, index) {
-                final doc = requests[index];
+                final doc = visibleRequests[index];
                 final data = doc.data();
 
                 final clientName = (data['clientName'] ?? 'Client').toString();
@@ -206,13 +223,19 @@ class _FreelancerIncomingRequestsViewState
                                       vertical: 6,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFF6E7D8),
+                                      color: status == 'accepted'
+                                          ? Colors.green.withOpacity(0.12)
+                                          : const Color(0xFFF6E7D8),
                                       borderRadius: BorderRadius.circular(14),
                                     ),
-                                    child: const Text(
-                                      'Pending',
+                                    child: Text(
+                                      status == 'accepted'
+                                          ? 'Accepted'
+                                          : 'Pending',
                                       style: TextStyle(
-                                        color: Colors.orange,
+                                        color: status == 'accepted'
+                                            ? Colors.green
+                                            : Colors.orange,
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
                                       ),
@@ -358,62 +381,116 @@ class _FreelancerIncomingRequestsViewState
 
                           const SizedBox(height: 18),
 
-                          Row(
-                            children: [
-                              Expanded(
-                                child: SizedBox(
-                                  height: 40,
-                                  child: FilledButton(
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: primary,
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
+                          const SizedBox(height: 18),
+
+                          if (status == 'pending') ...[
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: SizedBox(
+                                    height: 40,
+                                    child: FilledButton(
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: primary,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 10,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            24,
+                                          ),
+                                        ),
                                       ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(24),
-                                      ),
-                                    ),
-                                    onPressed: () async {
-                                      await controller.acceptRequest(doc.id);
-                                      await _reload();
-                                    },
-                                    child: const Text(
-                                      'Accept',
-                                      style: TextStyle(fontSize: 13),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: SizedBox(
-                                  height: 40,
-                                  child: OutlinedButton(
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
-                                      ),
-                                      side: const BorderSide(color: Colors.red),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(24),
-                                      ),
-                                    ),
-                                    onPressed: () async {
-                                      await controller.rejectRequest(doc.id);
-                                      await _reload();
-                                    },
-                                    child: const Text(
-                                      'Reject',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: Colors.red,
+                                      onPressed: () async {
+                                        await controller.acceptRequest(doc.id);
+                                        await _reload();
+                                      },
+                                      child: const Text(
+                                        'Accept',
+                                        style: TextStyle(fontSize: 13),
                                       ),
                                     ),
                                   ),
                                 ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: SizedBox(
+                                    height: 40,
+                                    child: OutlinedButton(
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 10,
+                                        ),
+                                        side: const BorderSide(
+                                          color: Colors.red,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            24,
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: () async {
+                                        await controller.rejectRequest(doc.id);
+                                        await _reload();
+                                      },
+                                      child: const Text(
+                                        'Reject',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.red,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+
+                          if (status == 'accepted') ...[
+                            SizedBox(
+                              width: double.infinity,
+                              height: 42,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primary,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                ),
+                                onPressed: () async {
+                                  final chatController = ChatController();
+
+                                  final chatId = await chatController
+                                      .createOrGetChat(
+                                        requestId: doc.id,
+                                        clientId: clientId,
+                                        freelancerId: FirebaseAuth
+                                            .instance
+                                            .currentUser!
+                                            .uid,
+                                      );
+
+                                  if (!context.mounted) return;
+
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ChatView(
+                                        chatId: chatId,
+                                        otherUserName: latestName,
+                                        otherUserId: clientId,
+                                        otherUserRole: 'client',
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: const Text('Chat'),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ],
                       );
                     },

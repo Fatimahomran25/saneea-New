@@ -1,0 +1,34 @@
+CONTRACT AGREEMENT
+
+Contract Date: 12/04/2026
+Contract Status: draft
+
+This agreement is made between:
+
+First Party (Client): Manar alrazin
+Second Party (Freelancer): Ghaida Alyousef
+
+1. Service Description
+The second party agrees to provide the following service:
+I want a sketch
+
+2. Payment
+The first party agrees to pay a total amount of:
+55.0 SAR
+
+3. Deadline
+The service must be completed before:
+17/4/2026
+
+4. Agreement Basis
+This contract is based on the accepted request details agreed upon by both parties.
+
+5. Amendments
+Any future changes to this agreement must be accepted by both parties.
+
+6. Approval Status
+Client Approved: False
+Freelancer Approved: False
+
+7. Agreement
+Both parties agree to the terms stated above.

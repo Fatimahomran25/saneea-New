@@ -96,3 +96,5 @@ app.*.symbols
 app.*.map.json
 
 .venv/
+
+backend/serviceAccountKey.json

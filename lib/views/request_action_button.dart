@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../controlles/recommendation_controller.dart';
 import 'anouncment_view.dart';
 import 'my_requests_view.dart';
+import '../views/chat_view.dart';
+import '../controlles/chat_controller.dart';
 
 class SendRequestButton extends StatefulWidget {
   final String freelancerId;
@@ -30,7 +32,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
 
   bool _isLoading = true;
   String? _pendingRequestId;
-
+  String? _status;
   @override
   void initState() {
     super.initState();
@@ -39,14 +41,15 @@ class _SendRequestButtonState extends State<SendRequestButton> {
 
   Future<void> _loadRequestState() async {
     try {
-      final requestId = await _controller.getExistingRequestId(
+      final request = await _controller.getExistingRequest(
         freelancerId: widget.freelancerId,
       );
 
       if (!mounted) return;
 
       setState(() {
-        _pendingRequestId = requestId;
+        _pendingRequestId = request?['id'] as String?;
+        _status = request?['status'] as String?;
         _isLoading = false;
       });
     } catch (_) {
@@ -54,6 +57,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
 
       setState(() {
         _pendingRequestId = null;
+        _status = null;
         _isLoading = false;
       });
     }
@@ -88,15 +92,16 @@ class _SendRequestButtonState extends State<SendRequestButton> {
   }
 
   Future<void> _openRequestForm() async {
-    final latestRequestId = await _controller.getExistingRequestId(
+    final request = await _controller.getExistingRequest(
       freelancerId: widget.freelancerId,
     );
 
     if (!mounted) return;
 
-    if (latestRequestId != null) {
+    if (request != null) {
       setState(() {
-        _pendingRequestId = latestRequestId;
+        _pendingRequestId = request['id'] as String?;
+        _status = request['status'] as String?;
       });
 
       _showAlreadyRequestedDialog();
@@ -194,6 +199,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const SizedBox(
@@ -203,9 +209,49 @@ class _SendRequestButtonState extends State<SendRequestButton> {
       );
     }
 
-    final hasPendingRequest = _pendingRequestId != null;
+    final hasRequest = _pendingRequestId != null;
+    final status = (_status ?? '').toLowerCase();
 
-    if (!hasPendingRequest) {
+    // ✅ accepted → Chat فقط
+    if (hasRequest && status == 'accepted') {
+      return SizedBox(
+        width: double.infinity,
+        height: 40,
+        child: ElevatedButton(
+          onPressed: () async {
+            final chatController = ChatController();
+
+            final chatId = await chatController.createOrGetChat(
+              requestId: _pendingRequestId!,
+              clientId: chatController.currentUserId!,
+              freelancerId: widget.freelancerId,
+            );
+
+            if (!context.mounted) return;
+
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ChatView(
+                  chatId: chatId,
+                  otherUserName: widget.freelancerName ?? 'Freelancer',
+                  otherUserId: widget.freelancerId,
+                  otherUserRole: 'freelancer',
+                ),
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: primary),
+          child: const Text(
+            'Chat',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    }
+
+    // ✅ no request → Send Request
+    if (!hasRequest) {
       return InkWell(
         onTap: _openRequestForm,
         borderRadius: BorderRadius.circular(14),
@@ -250,7 +296,8 @@ class _SendRequestButtonState extends State<SendRequestButton> {
       );
     }
 
-    if (widget.iconOnly) {
+    // ✅ pending + iconOnly
+    if (hasRequest && status == 'pending' && widget.iconOnly) {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -260,14 +307,12 @@ class _SendRequestButtonState extends State<SendRequestButton> {
             child: Container(
               padding: const EdgeInsets.all(11),
               decoration: BoxDecoration(
-                color: const Color(
-                  0xFF5A3E9E,
-                ).withOpacity(0.12), // 👈 نفس البادج
+                color: const Color(0xFF5A3E9E).withOpacity(0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
                 Icons.check_circle,
-                color: Color(0xFF5A3E9E), // 👈 بنفسجي
+                color: Color(0xFF5A3E9E),
                 size: 18,
               ),
             ),
@@ -300,83 +345,45 @@ class _SendRequestButtonState extends State<SendRequestButton> {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        // Requested badge
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: const Color(0xFF5A3E9E).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.check_circle, size: 14, color: Color(0xFF5A3E9E)),
-              SizedBox(width: 4),
-              Text(
-                'Requested',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF5A3E9E),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        // Buttons row
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // My Requests (يسار)
-            SizedBox(
-              height: 32,
-              child: ElevatedButton(
-                onPressed: _goToMyRequests,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5A3E9E),
-                  foregroundColor: Colors.white,
-                  elevation: 1,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                ),
-                child: const Text(
-                  'My Requests',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-                ),
-              ),
+    // ✅ pending + full button
+    if (hasRequest && status == 'pending') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: const Color(0xFF5A3E9E).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
             ),
-
-            const SizedBox(width: 8),
-
-            // Cancel (يمين + ظل أحمر خفيف)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.red.withOpacity(0.30), // 👈 ظل خفيف
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, size: 14, color: Color(0xFF5A3E9E)),
+                SizedBox(width: 4),
+                Text(
+                  'Requested',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF5A3E9E),
                   ),
-                ],
-              ),
-              child: SizedBox(
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
                 height: 32,
-                child: OutlinedButton(
-                  onPressed: _cancelRequest,
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.red),
+                child: ElevatedButton(
+                  onPressed: _goToMyRequests,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5A3E9E),
+                    foregroundColor: Colors.white,
+                    elevation: 1,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -385,19 +392,93 @@ class _SendRequestButtonState extends State<SendRequestButton> {
                     visualDensity: VisualDensity.compact,
                   ),
                   child: const Text(
-                    'Cancel',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.red,
+                    'My Requests',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.30),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: SizedBox(
+                  height: 32,
+                  child: OutlinedButton(
+                    onPressed: _cancelRequest,
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.red),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red,
+                      ),
                     ),
                   ),
                 ),
               ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    // ✅ rejected / cancelled / أي حالة ثانية → Send Request
+    return InkWell(
+      onTap: _openRequestForm,
+      borderRadius: BorderRadius.circular(14),
+      child: widget.iconOnly
+          ? Container(
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: primary,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.send_outlined,
+                color: Colors.white,
+                size: 18,
+              ),
+            )
+          : Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: primary,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.send_outlined, color: Colors.white, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    'Send Service Request',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-      ],
     );
   }
 }

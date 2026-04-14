@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/client_profile_model.dart';
+import 'messaging_controller.dart';
 
 class ClientProfileController extends ChangeNotifier {
   final _auth = FirebaseAuth.instance;
@@ -269,6 +270,8 @@ class ClientProfileController extends ChangeNotifier {
   }
 
   Future<void> logout(BuildContext context) async {
+    final messagingController = MessagingController();
+    await messagingController.clearToken();
     await _auth.signOut();
     if (!context.mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../views/chat_view.dart';
+import '../controlles/chat_controller.dart';
 
 class MyRequestsView extends StatefulWidget {
   const MyRequestsView({super.key});
@@ -243,6 +246,7 @@ class _MyRequestsViewState extends State<MyRequestsView> {
               ),
             ],
           ),
+
           if (request.status.toLowerCase() == 'pending') ...[
             const SizedBox(height: 12),
             GestureDetector(
@@ -264,6 +268,46 @@ class _MyRequestsViewState extends State<MyRequestsView> {
                     ),
                   ),
                 ),
+              ),
+            ),
+          ],
+          if (request.status.toLowerCase() == 'accepted') ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5A3E9E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () async {
+                  final chatController = ChatController();
+
+                  final chatId = await chatController.createOrGetChat(
+                    requestId: request.id,
+                    clientId: FirebaseAuth.instance.currentUser!.uid,
+                    freelancerId: request.freelancerId,
+                  );
+
+                  if (!mounted) return;
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ChatView(
+                        chatId: chatId,
+                        otherUserName: request.freelancerName,
+                        otherUserId: request.freelancerId,
+                        otherUserRole: 'freelancer',
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Chat'),
               ),
             ),
           ],

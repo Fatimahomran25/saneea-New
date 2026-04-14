@@ -7,6 +7,11 @@ import 'freelancer_incoming_requests_view.dart';
 import 'browse_announcements_view.dart';
 import 'my_announcement_requests_view.dart';
 import '../controlles/freelancer_profile_controller.dart';
+import 'chat_list_view.dart';
+import '../controlles/chat_controller.dart';
+import '../controlles/request_notifications_controller.dart';
+import 'request_notifications_sheet.dart';
+import 'announcement_requests_view.dart';
 
 class FreelancerHomeView extends StatefulWidget {
   const FreelancerHomeView({super.key});
@@ -21,6 +26,8 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
   final TextEditingController _searchController = TextEditingController();
   final FreelancerProfileController _profileController =
       FreelancerProfileController();
+  final RequestNotificationsController _notificationsController =
+      RequestNotificationsController();
 
   Future<void> _openProfile() async {
     await Navigator.push(
@@ -58,6 +65,108 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('$title coming soon')));
+  }
+
+  Future<void> _openNotificationTarget(RequestNotificationItem item) async {
+    if (!mounted) return;
+    Navigator.pop(context);
+
+    if (item.type == 'service_request' &&
+        item.requestId != null &&
+        item.requestId!.isNotEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              FreelancerIncomingRequestsView(initialRequestId: item.requestId),
+        ),
+      );
+      return;
+    }
+
+    if (item.type == 'announcement_request' &&
+        item.announcementId != null &&
+        item.announcementId!.isNotEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AnnouncementRequestsView(
+            announcementId: item.announcementId!,
+            announcementDescription: item.announcementDescription ?? '',
+          ),
+        ),
+      );
+      return;
+    }
+  }
+
+  void _openNotificationsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.8,
+        child: RequestNotificationsSheet(
+          controller: _notificationsController,
+          onOpen: _openNotificationTarget,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationBell() {
+    return StreamBuilder<int>(
+      stream: _notificationsController.unreadCountStream(),
+      builder: (context, snapshot) {
+        final unreadCount = snapshot.data ?? 0;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton(
+              onPressed: _openNotificationsSheet,
+              icon: const Icon(
+                Icons.notifications_none,
+                color: primary,
+                size: 26,
+              ),
+            ),
+            if (unreadCount > 0)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  constraints: const BoxConstraints(
+                    minWidth: 18,
+                    minHeight: 16,
+                  ),
+                  child: Text(
+                    unreadCount > 99 ? '99+' : unreadCount.toString(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _filterChip(String label) {
@@ -183,14 +292,7 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
                             ],
                           ),
 
-                          IconButton(
-                            onPressed: () => _comingSoon('Notifications'),
-                            icon: const Icon(
-                              Icons.notifications_none,
-                              color: primary,
-                              size: 26,
-                            ),
-                          ),
+                          _buildNotificationBell(),
                         ],
                       ),
 
@@ -664,9 +766,54 @@ class _FreelancerBottomNavigationBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          GestureDetector(
-            onTap: onChatsTap,
-            child: Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+          StreamBuilder<int>(
+            stream: ChatController().getTotalUnreadCount(),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ChatListView()),
+                  );
+                },
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+                    if (unreadCount > 0)
+                      Positioned(
+                        right: -8,
+                        top: -6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 18,
+                            minHeight: 18,
+                          ),
+                          child: Text(
+                            unreadCount > 99 ? '99+' : unreadCount.toString(),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
           GestureDetector(
             onTap: onHomeTap,
