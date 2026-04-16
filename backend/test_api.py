@@ -1,6 +1,6 @@
 import requests
 
-url = "http://127.0.0.1:5000/approve-contract"
+url = "http://10.0.2.2:5001/approve-contract"
 
 data = {
     "requestId": "Hs4QeooY6zUt1Lc32gNDjrhuTcA3_SjALgOs30cYueSp8penIpeJfqQv2",

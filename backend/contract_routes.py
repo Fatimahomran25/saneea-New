@@ -1,4 +1,6 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
+from firebase_service import get_request_by_id
+from pdf_service import generate_contract_pdf
 
 from contract_controller import (
     approve_contract,
@@ -179,6 +181,49 @@ def delete_contract_api():
         result = delete_contract(request_id)
         status_code = 200 if result.get("success") else 404
         return jsonify(result), status_code
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
+
+
+@contract_routes.route("/download-contract-pdf", methods=["GET"])
+def download_contract_pdf_api():
+    try:
+        request_id = request.args.get("requestId", "").strip()
+
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        request_data = get_request_by_id(request_id)
+
+        if not request_data:
+            return jsonify({
+                "success": False,
+                "error": "Request not found"
+            }), 404
+
+        contract_data = request_data.get("contractData")
+
+        if not isinstance(contract_data, dict):
+            return jsonify({
+                "success": False,
+                "error": "No contract found"
+            }), 404
+
+        pdf_buffer = generate_contract_pdf(contract_data)
+
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name=f"contract_{request_id}.pdf",
+            mimetype="application/pdf"
+        )
 
     except Exception as error:
         return jsonify({

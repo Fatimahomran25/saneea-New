@@ -9,7 +9,7 @@ import '../controlles/chat_controller.dart';
 import '../models/message_model.dart';
 import 'freelancer_client_profile_view.dart';
 import 'freelancer_profile.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 class ChatView extends StatefulWidget {
   final String chatId;
   final String otherUserName;
@@ -40,6 +40,7 @@ class _ChatViewState extends State<ChatView> {
   bool _isGeneratingContract = false;
   bool _isSavingContract = false;
   bool _isApprovingContract = false;
+  bool _isTerminatingContract = false;
   bool _isEditingContract = false;
   bool _isAddingClause = false;
   String? _contractError;
@@ -431,7 +432,7 @@ class _ChatViewState extends State<ChatView> {
 
             final response = await http.post(
               Uri.parse(
-                'http://10.0.2.2:5000/generate-contract-from-request-id',
+                'http://192.168.100.221:5001/generate-contract-from-request-id',
               ),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode({'requestId': requestId}),
@@ -591,7 +592,7 @@ class _ChatViewState extends State<ChatView> {
         final requestId = _extractRequestId(chatDoc.data());
 
         final response = await http.post(
-          Uri.parse('http://10.0.2.2:5000/update-contract'),
+          Uri.parse('http://192.168.100.221:5001/update-contract'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'requestId': requestId,
@@ -713,7 +714,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5000/approve-contract'),
+        Uri.parse('http://192.168.100.221:5001/approve-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -756,6 +757,132 @@ class _ChatViewState extends State<ChatView> {
       });
     }
   }
+Future<void> _requestTermination() async {
+  setState(() {
+  _isTerminatingContract = true;
+});
+
+  try {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+
+    final requestId = _extractRequestId(chatDoc.data());
+
+    final response = await http.post(
+      Uri.parse('http://192.168.100.221:5001/request-termination'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'requestId': requestId,
+        'role': _currentUserRole(),
+      }),
+    );
+
+    if (!mounted) return;
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final updatedContractData = data['contractData'];
+
+      setState(() {
+        if (updatedContractData is Map) {
+          _contractData = Map<String, dynamic>.from(updatedContractData);
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Termination requested')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to request termination (${response.statusCode})',
+          ),
+        ),
+      );
+    }
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error requesting termination: $e')),
+    );
+  }
+}
+
+Future<void> _approveTermination() async {
+  setState(() {
+    _isTerminatingContract = true;
+  });
+
+  try {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+
+    final requestId = _extractRequestId(chatDoc.data());
+
+    final response = await http.post(
+      Uri.parse('http://192.168.100.221:5001/approve-termination'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'requestId': requestId,
+        'role': _currentUserRole(),
+      }),
+    );
+
+    if (!mounted) return;
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final updatedContractData = data['contractData'];
+
+      setState(() {
+        if (updatedContractData is Map) {
+          _contractData = Map<String, dynamic>.from(updatedContractData);
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contract terminated successfully')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to approve termination (${response.statusCode})',
+          ),
+        ),
+      );
+    }
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error approving termination: $e')),
+    );
+  }
+}
+
+
+
+Future<void> downloadContract(String requestId) async {
+  final url = Uri.parse(
+    "http://192.168.100.221:5001/download-contract-pdf?requestId=$requestId",
+  );
+
+  final opened = await launchUrl(url);
+
+  if (!opened) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open PDF')),
+    );
+  }
+}
+  
+  
 
   Future<void> _callCancelApproval() async {
     final contractData = _contractData;
@@ -774,7 +901,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5000/cancel-approval'),
+        Uri.parse('http://192.168.100.221:5001/cancel-approval'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -851,7 +978,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5000/disapprove-contract'),
+        Uri.parse('http://192.168.100.221:5001/disapprove-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -928,7 +1055,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5000/delete-contract'),
+        Uri.parse('http://192.168.100.221:5001/delete-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId}),
       );
@@ -1021,7 +1148,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5000/update-contract'),
+        Uri.parse('http://192.168.100.221:5001/update-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'requestId': requestId,
@@ -1083,34 +1210,74 @@ class _ChatViewState extends State<ChatView> {
     final timeline =
         (contractData['timeline'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
-    final approval =
-        (contractData['approval'] as Map<String, dynamic>?) ??
-        const <String, dynamic>{};
+  
+
+    
+final approval =
+    (contractData['approval'] as Map<String, dynamic>?) ??
+    const <String, dynamic>{};
+
+final termination =
+    (approval['termination'] as Map<String, dynamic>?) ??
+    const <String, dynamic>{};
+
+final terminationRequested = termination['requested'] == true;
+final terminationRequestedBy =
+    (termination['requestedBy'] ?? '').toString().trim().toLowerCase();
+
+final currentUserRole = _currentUserRole();
+final currentUserRequestedTermination =
+    terminationRequestedBy == currentUserRole;
+
+final contractStatus = (approval['contractStatus'] ?? '')
+    .toString()
+    .trim()
+    .toLowerCase();
+
+final showTerminateButton =
+    contractStatus == 'approved' && !terminationRequested;
+
+final showApproveTerminationButton =
+    contractStatus == 'termination_pending' &&
+    terminationRequested &&
+    !currentUserRequestedTermination;
+
+
     final customClauses = (contractData['customClauses'] as List?) ?? const [];
-    final contractStatus = (approval['contractStatus'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
+    final meta =
+    (contractData['meta'] as Map<String, dynamic>?) ??
+    const <String, dynamic>{};
+    final summary = (meta['summary'] as List?) ?? const [];
+    final contractTitle = (meta['title'] ?? '').toString();
+
+    
     final clientApproved = approval['clientApproved'] == true;
     final freelancerApproved = approval['freelancerApproved'] == true;
-    final currentUserRole = _currentUserRole();
+    
     final currentUserApproved = currentUserRole == 'client'
         ? clientApproved
         : freelancerApproved;
     final otherPartyApproved = currentUserRole == 'client'
         ? freelancerApproved
         : clientApproved;
-    final showApproveActions =
-        !_isEditingContract &&
-        !currentUserApproved &&
-        contractStatus != 'approved' &&
-        contractStatus != 'rejected';
-    final showCancelApproval =
-        !_isEditingContract &&
-        currentUserApproved &&
-        !otherPartyApproved &&
-        contractStatus != 'approved' &&
-        contractStatus != 'rejected';
+   final showApproveActions =
+    !_isEditingContract &&
+    !currentUserApproved &&
+    contractStatus != 'approved' &&
+    contractStatus != 'rejected' &&
+    contractStatus != 'termination_pending' &&
+    contractStatus != 'terminated';
+
+final showCancelApproval =
+    !_isEditingContract &&
+    currentUserApproved &&
+    !otherPartyApproved &&
+    contractStatus != 'approved' &&
+    contractStatus != 'rejected' &&
+    contractStatus != 'termination_pending' &&
+    contractStatus != 'terminated';
+
+
     final canEditContract =
         contractStatus == 'draft' ||
         contractStatus == 'edited' ||
@@ -1125,34 +1292,56 @@ class _ChatViewState extends State<ChatView> {
         ? 'Edited'
         : contractStatus == 'pending_approval'
         ? 'Waiting'
-        : 'Draft';
-    final statusChipBackgroundColor = contractStatus == 'approved'
+        : contractStatus == 'termination_pending'
+        ? 'Termination Pending'
+        : contractStatus == 'terminated'
+                        ? 'Terminated'
+                        : 'Draft';
+    final statusChipBackgroundColor =
+    contractStatus == 'approved'
         ? const Color(0xFFE8F5E9)
         : contractStatus == 'rejected'
-        ? const Color(0xFFFFEBEE)
-        : contractStatus == 'edited'
-        ? const Color(0xFFEEE8FB)
-        : contractStatus == 'pending_approval'
-        ? const Color(0xFFFFF4E5)
-        : const Color(0xFFF1F3F4);
-    final statusChipTextColor = contractStatus == 'approved'
+            ? const Color(0xFFFFEBEE)
+            : contractStatus == 'edited'
+                ? const Color(0xFFEEE8FB)
+                : contractStatus == 'pending_approval'
+                    ? const Color(0xFFFFF4E5)
+                    : contractStatus == 'termination_pending'
+                        ? const Color(0xFFFFF4E5)
+                        : contractStatus == 'terminated'
+                            ? const Color(0xFFF3E5F5)
+                            : const Color(0xFFF1F3F4);
+ 
+    final statusChipTextColor =
+    contractStatus == 'approved'
         ? const Color(0xFF2E7D32)
         : contractStatus == 'rejected'
-        ? Colors.redAccent
-        : contractStatus == 'edited'
-        ? primary
-        : contractStatus == 'pending_approval'
-        ? const Color(0xFFEF6C00)
-        : Colors.black54;
-    final statusChipIcon = contractStatus == 'approved'
+            ? Colors.redAccent
+            : contractStatus == 'edited'
+                ? primary
+                : contractStatus == 'pending_approval'
+                    ? const Color(0xFFEF6C00)
+                    : contractStatus == 'termination_pending'
+                        ? const Color(0xFFEF6C00)
+                        : contractStatus == 'terminated'
+                            ? const Color(0xFF6A1B9A)
+                            : Colors.black54;
+    final statusChipIcon =
+    contractStatus == 'approved'
         ? Icons.check_circle_rounded
         : contractStatus == 'rejected'
-        ? Icons.cancel_rounded
-        : contractStatus == 'edited'
-        ? Icons.edit_note_rounded
-        : contractStatus == 'pending_approval'
-        ? Icons.hourglass_top_rounded
-        : Icons.description_outlined;
+            ? Icons.cancel_rounded
+            : contractStatus == 'edited'
+                ? Icons.edit_note_rounded
+                : contractStatus == 'pending_approval'
+                    ? Icons.hourglass_top_rounded
+                    : contractStatus == 'termination_pending'
+                        ? Icons.warning_amber_rounded
+                        : contractStatus == 'terminated'
+                            ? Icons.block_rounded
+                            : Icons.description_outlined;
+
+
 
     final amount = (payment['amount'] ?? '').toString();
     final currency = (payment['currency'] ?? '').toString();
@@ -1192,16 +1381,18 @@ class _ChatViewState extends State<ChatView> {
                       children: [
                         Row(
                           children: [
-                            const Expanded(
-                              child: Text(
-                                'Generated Contract',
-                                style: TextStyle(
-                                  color: primary,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ),
+                          
+
+         Expanded(
+  child: Text(
+    contractTitle.trim().isEmpty ? 'Generated Contract' : contractTitle,
+    style: const TextStyle(
+      color: primary,
+      fontWeight: FontWeight.w700,
+      fontSize: 15,
+    ),
+  ),
+),
                             if (canEditContract &&
                                 contractStatus != 'draft') ...[
                               Container(
@@ -1360,6 +1551,27 @@ class _ChatViewState extends State<ChatView> {
                                   ),
                           ],
                         ),
+                        if (summary.isNotEmpty) ...[
+  const SizedBox(height: 10),
+  _buildContractSection(
+    title: 'Summary',
+    children: [
+      ...summary.map<Widget>((item) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            "• ${item.toString()}",
+            style: const TextStyle(
+              color: Colors.black87,
+              height: 1.4,
+            ),
+          ),
+        );
+      }).toList(),
+    ],
+  ),
+],
+
                         const SizedBox(height: 10),
                         _buildContractSection(
                           title: 'Amount',
@@ -1674,6 +1886,102 @@ class _ChatViewState extends State<ChatView> {
                             ),
                           ),
                         ],
+                       
+if (!_isEditingContract) ...[
+  const SizedBox(height: 12),
+  SizedBox(
+    width: double.infinity,
+    child: OutlinedButton.icon(
+      onPressed: () async {
+        final chatDoc = await FirebaseFirestore.instance
+            .collection('chat')
+            .doc(widget.chatId)
+            .get();
+
+        final requestId = _extractRequestId(chatDoc.data());
+        downloadContract(requestId);
+      },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: primary,
+        side: BorderSide(color: primary.withOpacity(0.22), width: 1),
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      icon: const Icon(Icons.download_rounded),
+      label: const Text('Download Contract'),
+    ),
+  ),
+],
+if (showTerminateButton) ...[
+  const SizedBox(height: 12),
+  SizedBox(
+    width: double.infinity,
+    child: ElevatedButton.icon(
+      onPressed: _isTerminatingContract ? null : _requestTermination,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFFC75A5A),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      icon: const Icon(Icons.gpp_bad_rounded),
+      label: const Text('Request Termination'),
+    ),
+  ),
+],
+
+if (showApproveTerminationButton) ...[
+  const SizedBox(height: 12),
+  SizedBox(
+    width: double.infinity,
+    child: ElevatedButton.icon(
+      onPressed: _isTerminatingContract ? null : _approveTermination,
+
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFFC75A5A),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      icon: const Icon(Icons.check_circle_outline),
+      label: const Text('Approve Termination'),
+    ),
+  ),
+],
+
+if (contractStatus == 'termination_pending' && currentUserRequestedTermination) ...[
+  const SizedBox(height: 8),
+  const Text(
+    'Termination request sent. Waiting for the other party to approve.',
+    style: TextStyle(
+      color: Colors.black54,
+      fontSize: 12.5,
+      height: 1.35,
+    ),
+  ),
+],
+
+if (contractStatus == 'terminated') ...[
+  const SizedBox(height: 8),
+  const Text(
+    'This contract has been terminated.',
+    style: TextStyle(
+      color: Colors.black54,
+      fontSize: 12.5,
+      height: 1.35,
+    ),
+  ),
+],
+
+
+
                         if (showApproveActions) ...[
                           const SizedBox(height: 12),
                           Row(
@@ -1745,6 +2053,7 @@ class _ChatViewState extends State<ChatView> {
                             ],
                           ),
                         ],
+     
                       ],
                     ),
                   ),
