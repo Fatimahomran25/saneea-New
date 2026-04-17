@@ -7,6 +7,11 @@ class MessageModel {
   final String type;
   final String imageUrl;
   final List<String> imageUrls;
+  final String requestId;
+  final String contractStatus;
+  final String contractTitle;
+  final String contractText;
+  final List<String> contractSummary;
   final DateTime timestamp;
   final bool isRead;
 
@@ -17,6 +22,11 @@ class MessageModel {
     required this.type,
     required this.imageUrl,
     required this.imageUrls,
+    required this.requestId,
+    required this.contractStatus,
+    required this.contractTitle,
+    required this.contractText,
+    required this.contractSummary,
     required this.timestamp,
     required this.isRead,
   });
@@ -30,6 +40,13 @@ class MessageModel {
       imageUrl: map['imageUrl'] ?? '',
       imageUrls: map['imageUrls'] != null
           ? List<String>.from(map['imageUrls'])
+          : [],
+      requestId: map['requestId'] ?? '',
+      contractStatus: map['contractStatus'] ?? map['status'] ?? '',
+      contractTitle: map['contractTitle'] ?? '',
+      contractText: map['contractText'] ?? '',
+      contractSummary: map['contractSummary'] != null
+          ? List<String>.from(map['contractSummary'])
           : [],
       timestamp: map['timestamp'] != null
           ? (map['timestamp'] as Timestamp).toDate()
@@ -45,6 +62,12 @@ class MessageModel {
       'type': type,
       'imageUrl': imageUrl,
       'imageUrls': imageUrls,
+      'requestId': requestId,
+      'status': contractStatus,
+      'contractStatus': contractStatus,
+      'contractTitle': contractTitle,
+      'contractText': contractText,
+      'contractSummary': contractSummary,
       'timestamp': FieldValue.serverTimestamp(),
       'isRead': false,
     };

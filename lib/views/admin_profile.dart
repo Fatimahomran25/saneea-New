@@ -32,11 +32,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: IconButton(
-              icon: const Icon(
-                Icons.logout,
-                color: Colors.red,
-                size: 28,
-              ),
+              icon: const Icon(Icons.logout, color: Colors.red, size: 28),
               onPressed: () => c.logout(context),
             ),
           ),
@@ -54,7 +50,6 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
 
           return Column(
             children: [
-
               const SizedBox(height: 10),
 
               /// ✅ Header Box (سادة + إطار خفيف)
@@ -91,10 +86,10 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                                       backgroundColor: _headerBg,
                                       backgroundImage:
                                           (admin.photoUrl != null &&
-                                                  admin.photoUrl!.isNotEmpty)
-                                              ? NetworkImage(admin.photoUrl!)
-                                              : AssetImage(admin.photoAssetPath)
-                                                  as ImageProvider,
+                                              admin.photoUrl!.isNotEmpty)
+                                          ? NetworkImage(admin.photoUrl!)
+                                          : AssetImage(admin.photoAssetPath)
+                                                as ImageProvider,
                                     ),
                                   ),
                                 ),
@@ -113,7 +108,9 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                                         color: _primaryPurple,
                                         shape: BoxShape.circle,
                                         border: Border.all(
-                                            color: Colors.white, width: 2),
+                                          color: Colors.white,
+                                          width: 2,
+                                        ),
                                       ),
                                       child: const Icon(
                                         Icons.add,
@@ -168,7 +165,6 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-
                         Text(
                           "National ID / Iqama",
                           style: TextStyle(

@@ -4,6 +4,7 @@ from openai import OpenAI
 from datetime import datetime
 
 from firebase_service import (
+    create_approved_contract_chat_message,
     delete_request_contract_data,
     get_request_by_id,
     update_request_contract_data,
@@ -151,6 +152,10 @@ def generate_contract_from_data(request_data):
             "contractStatus": "draft",
             "edited": False,
         },
+        "signatures": {
+            "clientSignature": None,
+            "freelancerSignature": None,
+        },
         "service": {
             "description": request_data.get("description"),
             "aiText": ai_result["contractText"],
@@ -168,6 +173,7 @@ def generate_contract_from_data(request_data):
                 "content": clause.get("text", ""),
                 "category": clause.get("category", "other"),
                 "optional": clause.get("optional", False),
+                "source": "ai",
             }
             for clause in ai_result.get("clauses", [])
             if isinstance(clause, dict)
@@ -197,11 +203,82 @@ def generate_contract_from_request_id(request_id):
     return result
 
 
-def approve_contract(request_id, role):
+def _normalize_signatures(signatures):
+    raw_signatures = dict(signatures) if isinstance(signatures, dict) else {}
+    return {
+        "clientSignature": raw_signatures.get("clientSignature"),
+        "freelancerSignature": raw_signatures.get("freelancerSignature"),
+    }
+
+
+def _normalize_clause_identity(clause):
+    if not isinstance(clause, dict):
+        return None
+
+    return (
+        str(clause.get("title", "")).strip(),
+        str(clause.get("content", clause.get("text", ""))).strip(),
+        str(clause.get("category", "")).strip(),
+        bool(clause.get("optional", False)),
+    )
+
+
+def _normalize_custom_clauses(raw_clauses, existing_clauses):
+    existing_source_by_identity = {}
+
+    for clause in existing_clauses if isinstance(existing_clauses, list) else []:
+        if not isinstance(clause, dict):
+            continue
+
+        identity = _normalize_clause_identity(clause)
+        if identity is None:
+            continue
+
+        source = str(clause.get("source", "")).strip().lower()
+        if source not in ("ai", "user"):
+            if "category" in clause or "optional" in clause:
+                source = "ai"
+            else:
+                source = "user"
+
+        existing_source_by_identity[identity] = source
+
+    normalized_clauses = []
+
+    for clause in raw_clauses if isinstance(raw_clauses, list) else []:
+        if not isinstance(clause, dict):
+            continue
+
+        normalized_clause = dict(clause)
+        source = str(normalized_clause.get("source", "")).strip().lower()
+
+        if source not in ("ai", "user"):
+            identity = _normalize_clause_identity(normalized_clause)
+            source = existing_source_by_identity.get(identity)
+
+            if source not in ("ai", "user"):
+                if "category" in normalized_clause or "optional" in normalized_clause:
+                    source = "ai"
+                else:
+                    source = "user"
+
+        normalized_clause["source"] = source
+        normalized_clauses.append(normalized_clause)
+
+    return normalized_clauses
+
+
+def approve_contract(request_id, role, signature_data):
     normalized_role = (role or "").strip().lower()
+    normalized_signature_data = (
+        signature_data.strip() if isinstance(signature_data, str) else ""
+    )
 
     if normalized_role not in ("client", "freelancer"):
         raise ValueError("role must be either 'client' or 'freelancer'")
+
+    if not normalized_signature_data:
+        raise ValueError("signatureData is required")
 
     print("🔥 APPROVE HIT", request_id, normalized_role)
 
@@ -219,13 +296,18 @@ def approve_contract(request_id, role):
         contract_data = generated["contractData"]
 
     approval = contract_data.get("approval", {})
+    previous_contract_status = str(
+        approval.get("contractStatus", "")
+    ).strip().lower()
+    signatures = _normalize_signatures(contract_data.get("signatures"))
 
-    approval["clientApproved"] = (
-        True if normalized_role == "client" else approval.get("clientApproved", False)
-    )
-    approval["freelancerApproved"] = (
-        True if normalized_role == "freelancer" else approval.get("freelancerApproved", False)
-    )
+    if normalized_role == "client":
+        signatures["clientSignature"] = normalized_signature_data
+    else:
+        signatures["freelancerSignature"] = normalized_signature_data
+
+    approval["clientApproved"] = bool(signatures.get("clientSignature"))
+    approval["freelancerApproved"] = bool(signatures.get("freelancerSignature"))
 
     if approval.get("clientApproved") and approval.get("freelancerApproved"):
         approval["contractStatus"] = "approved"
@@ -233,17 +315,34 @@ def approve_contract(request_id, role):
         approval["contractStatus"] = "pending_approval"
 
     contract_data["approval"] = approval
+    contract_data["signatures"] = signatures
     update_request_contract_data(request_id, contract_data)
+
+    contract_text = render_contract_text(contract_data)
+
+    if (
+        approval.get("contractStatus") == "approved" and
+        previous_contract_status != "approved"
+    ):
+        create_approved_contract_chat_message(
+            request_id=request_id,
+            request_data=request_data,
+            contract_data=contract_data,
+            sender_role=normalized_role,
+            contract_text=contract_text,
+        )
 
     return {
         "success": True,
         "contractData": contract_data,
         "contractStatus": approval["contractStatus"],
-        "contractText": render_contract_text(contract_data),
+        "contractText": contract_text,
     }
 
 
 def cancel_approval(request_id, role):
+    normalized_role = (role or "").strip().lower()
+
     request_data = get_request_by_id(request_id)
 
     if not request_data:
@@ -260,16 +359,20 @@ def cancel_approval(request_id, role):
         }
 
     approval = contract_data.get("approval", {})
+    signatures = _normalize_signatures(contract_data.get("signatures"))
 
-    if role == "client":
-        approval["clientApproved"] = False
-    elif role == "freelancer":
-        approval["freelancerApproved"] = False
+    if normalized_role == "client":
+        signatures["clientSignature"] = None
+    elif normalized_role == "freelancer":
+        signatures["freelancerSignature"] = None
     else:
         return {
             "success": False,
             "error": "Invalid role"
         }
+
+    approval["clientApproved"] = bool(signatures.get("clientSignature"))
+    approval["freelancerApproved"] = bool(signatures.get("freelancerSignature"))
 
     if approval.get("clientApproved") and approval.get("freelancerApproved"):
         approval["contractStatus"] = "approved"
@@ -279,6 +382,7 @@ def cancel_approval(request_id, role):
         approval["contractStatus"] = "draft"
 
     contract_data["approval"] = approval
+    contract_data["signatures"] = signatures
     update_request_contract_data(request_id, contract_data)
 
     return {
@@ -323,6 +427,191 @@ def disapprove_contract(request_id, role):
     }
 
 
+def request_termination(request_id, role):
+    normalized_role = (role or "").strip().lower()
+
+    if normalized_role not in ("client", "freelancer"):
+        raise ValueError("role must be either 'client' or 'freelancer'")
+
+    request_data = get_request_by_id(request_id)
+
+    if not request_data:
+        return {
+            "success": False,
+            "error": "Request not found"
+        }
+
+    contract_data = request_data.get("contractData")
+    if not isinstance(contract_data, dict):
+        return {
+            "success": False,
+            "error": "No contract found"
+        }
+
+    approval = contract_data.get("approval")
+    if not isinstance(approval, dict):
+        approval = {}
+
+    contract_status = str(approval.get("contractStatus", "")).strip().lower()
+    if contract_status != "approved":
+        return {
+            "success": False,
+            "error": "Only approved contracts can be terminated"
+        }
+
+    termination = approval.get("termination")
+    if not isinstance(termination, dict):
+        termination = {}
+
+    approval["termination"] = {
+        **termination,
+        "requested": True,
+        "requestedBy": normalized_role,
+        "requestedAt": datetime.now().isoformat(),
+        "approved": False,
+        "approvedBy": "",
+        "approvedAt": "",
+    }
+    approval["contractStatus"] = "termination_pending"
+
+    contract_data["approval"] = approval
+    update_request_contract_data(request_id, contract_data)
+
+    return {
+        "success": True,
+        "contractData": contract_data,
+        "contractStatus": approval["contractStatus"],
+        "contractText": render_contract_text(contract_data),
+    }
+
+
+def approve_termination(request_id, role):
+    normalized_role = (role or "").strip().lower()
+
+    if normalized_role not in ("client", "freelancer"):
+        raise ValueError("role must be either 'client' or 'freelancer'")
+
+    request_data = get_request_by_id(request_id)
+
+    if not request_data:
+        return {
+            "success": False,
+            "error": "Request not found"
+        }
+
+    contract_data = request_data.get("contractData")
+    if not isinstance(contract_data, dict):
+        return {
+            "success": False,
+            "error": "No contract found"
+        }
+
+    approval = contract_data.get("approval")
+    if not isinstance(approval, dict):
+        approval = {}
+
+    contract_status = str(approval.get("contractStatus", "")).strip().lower()
+    if contract_status != "termination_pending":
+        return {
+            "success": False,
+            "error": "No termination request is pending"
+        }
+
+    termination = approval.get("termination")
+    if not isinstance(termination, dict) or termination.get("requested") is not True:
+        return {
+            "success": False,
+            "error": "No termination request found"
+        }
+
+    requested_by = str(termination.get("requestedBy", "")).strip().lower()
+    if requested_by == normalized_role:
+        return {
+            "success": False,
+            "error": "The requester cannot approve their own termination request"
+        }
+
+    approval["termination"] = {
+        **termination,
+        "approved": True,
+        "approvedBy": normalized_role,
+        "approvedAt": datetime.now().isoformat(),
+    }
+    approval["contractStatus"] = "terminated"
+
+    contract_data["approval"] = approval
+    update_request_contract_data(request_id, contract_data)
+
+    return {
+        "success": True,
+        "contractData": contract_data,
+        "contractStatus": approval["contractStatus"],
+        "contractText": render_contract_text(contract_data),
+    }
+
+
+def cancel_termination(request_id, role):
+    normalized_role = (role or "").strip().lower()
+
+    if normalized_role not in ("client", "freelancer"):
+        raise ValueError("role must be either 'client' or 'freelancer'")
+
+    request_data = get_request_by_id(request_id)
+
+    if not request_data:
+        return {
+            "success": False,
+            "error": "Request not found"
+        }
+
+    contract_data = request_data.get("contractData")
+    if not isinstance(contract_data, dict):
+        return {
+            "success": False,
+            "error": "No contract found"
+        }
+
+    approval = contract_data.get("approval")
+    if not isinstance(approval, dict):
+        approval = {}
+
+    contract_status = str(approval.get("contractStatus", "")).strip().lower()
+    if contract_status != "termination_pending":
+        return {
+            "success": False,
+            "error": "No termination request is pending"
+        }
+
+    termination = approval.get("termination")
+    if not isinstance(termination, dict) or termination.get("requested") is not True:
+        return {
+            "success": False,
+            "error": "No termination request found"
+        }
+
+    approval["termination"] = {
+        "requested": False,
+        "requestedBy": "",
+        "requestedAt": "",
+        "approved": False,
+        "approvedBy": "",
+        "approvedAt": "",
+        "cancelledBy": normalized_role,
+        "cancelledAt": datetime.now().isoformat(),
+    }
+    approval["contractStatus"] = "approved"
+
+    contract_data["approval"] = approval
+    update_request_contract_data(request_id, contract_data)
+
+    return {
+        "success": True,
+        "contractData": contract_data,
+        "contractStatus": approval["contractStatus"],
+        "contractText": render_contract_text(contract_data),
+    }
+
+
 def update_contract(request_id, contract_data, role=""):
     request_data = get_request_by_id(request_id)
 
@@ -340,6 +629,7 @@ def update_contract(request_id, contract_data, role=""):
     existing_parties = existing_contract_data.get("parties")
     existing_meta = existing_contract_data.get("meta")
     existing_approval = existing_contract_data.get("approval")
+    existing_signatures = existing_contract_data.get("signatures")
     existing_service = existing_contract_data.get("service")
     existing_payment = existing_contract_data.get("payment")
     existing_timeline = existing_contract_data.get("timeline")
@@ -349,6 +639,7 @@ def update_contract(request_id, contract_data, role=""):
         "parties": dict(existing_parties) if isinstance(existing_parties, dict) else {},
         "meta": dict(existing_meta) if isinstance(existing_meta, dict) else {},
         "approval": dict(existing_approval) if isinstance(existing_approval, dict) else {},
+        "signatures": _normalize_signatures(existing_signatures),
         "service": dict(existing_service) if isinstance(existing_service, dict) else {},
         "payment": dict(existing_payment) if isinstance(existing_payment, dict) else {},
         "timeline": dict(existing_timeline) if isinstance(existing_timeline, dict) else {},
@@ -370,9 +661,10 @@ def update_contract(request_id, contract_data, role=""):
     if "customClauses" in contract_data:
         raw_clauses = contract_data.get("customClauses")
         if isinstance(raw_clauses, list):
-            updated_contract_data["customClauses"] = [
-                dict(clause) for clause in raw_clauses if isinstance(clause, dict)
-            ]
+            updated_contract_data["customClauses"] = _normalize_custom_clauses(
+                raw_clauses,
+                existing_custom_clauses,
+            )
         else:
             updated_contract_data["customClauses"] = []
 
@@ -392,6 +684,10 @@ def update_contract(request_id, contract_data, role=""):
         updated_approval["edited"] = True
         updated_approval["lastEditedBy"] = normalized_role
         updated_approval["lastEditedAt"] = datetime.now().isoformat()
+        updated_contract_data["signatures"] = {
+            "clientSignature": None,
+            "freelancerSignature": None,
+        }
     else:
         updated_approval["contractStatus"] = (
             updated_approval.get("contractStatus") or "draft"

@@ -24,6 +24,10 @@ def build_contract_data(request):
             "clientApproved": False,
             "freelancerApproved": False,
             "contractStatus": "draft"
+        },
+        "signatures": {
+            "clientSignature": None,
+            "freelancerSignature": None
         }
     }
 

@@ -3,12 +3,15 @@ from firebase_service import get_request_by_id
 from pdf_service import generate_contract_pdf
 
 from contract_controller import (
+    approve_termination,
     approve_contract,
+    cancel_termination,
     cancel_approval,
     delete_contract,
     disapprove_contract,
     generate_contract_from_data,
     generate_contract_from_request_id,
+    request_termination,
     update_contract,
 )
 
@@ -59,6 +62,7 @@ def approve_contract_api():
         data = request.get_json(force=True)
         request_id = data.get("requestId", "")
         role = data.get("role", "")
+        signature_data = data.get("signatureData", "")
 
         if not request_id:
             return jsonify({
@@ -72,8 +76,116 @@ def approve_contract_api():
                 "error": "role is required"
             }), 400
 
-        result = approve_contract(request_id, role)
+        result = approve_contract(request_id, role, signature_data)
         status_code = 200 if result.get("success") else 404
+        return jsonify(result), status_code
+
+    except ValueError as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 400
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
+
+
+@contract_routes.route("/request-termination", methods=["POST"])
+def request_termination_api():
+    try:
+        data = request.get_json(force=True)
+        request_id = data.get("requestId", "")
+        role = data.get("role", "")
+
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        if not role:
+            return jsonify({
+                "success": False,
+                "error": "role is required"
+            }), 400
+
+        result = request_termination(request_id, role)
+        status_code = 200 if result.get("success") else 400
+        return jsonify(result), status_code
+
+    except ValueError as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 400
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
+
+
+@contract_routes.route("/approve-termination", methods=["POST"])
+def approve_termination_api():
+    try:
+        data = request.get_json(force=True)
+        request_id = data.get("requestId", "")
+        role = data.get("role", "")
+
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        if not role:
+            return jsonify({
+                "success": False,
+                "error": "role is required"
+            }), 400
+
+        result = approve_termination(request_id, role)
+        status_code = 200 if result.get("success") else 400
+        return jsonify(result), status_code
+
+    except ValueError as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 400
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
+
+
+@contract_routes.route("/cancel-termination", methods=["POST"])
+def cancel_termination_api():
+    try:
+        data = request.get_json(force=True)
+        request_id = data.get("requestId", "")
+        role = data.get("role", "")
+
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        if not role:
+            return jsonify({
+                "success": False,
+                "error": "role is required"
+            }), 400
+
+        result = cancel_termination(request_id, role)
+        status_code = 200 if result.get("success") else 400
         return jsonify(result), status_code
 
     except ValueError as error:
@@ -91,12 +203,32 @@ def approve_contract_api():
 
 @contract_routes.route("/cancel-approval", methods=["POST"])
 def cancel_approval_api():
-    data = request.get_json(force=True)
-    request_id = data.get("requestId", "")
-    role = data.get("role", "")
+    try:
+        data = request.get_json(force=True)
+        request_id = data.get("requestId", "")
+        role = data.get("role", "")
 
-    result = cancel_approval(request_id, role)
-    return jsonify(result), 200
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        if not role:
+            return jsonify({
+                "success": False,
+                "error": "role is required"
+            }), 400
+
+        result = cancel_approval(request_id, role)
+        status_code = 200 if result.get("success") else 400
+        return jsonify(result), status_code
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
 
 
 @contract_routes.route("/disapprove-contract", methods=["POST"])
@@ -215,6 +347,21 @@ def download_contract_pdf_api():
                 "success": False,
                 "error": "No contract found"
             }), 404
+
+        approval = contract_data.get("approval", {})
+        contract_status = str(approval.get("contractStatus", "")).strip().lower()
+        client_approved = approval.get("clientApproved") is True
+        freelancer_approved = approval.get("freelancerApproved") is True
+
+        if (
+            contract_status != "approved"
+            or not client_approved
+            or not freelancer_approved
+        ):
+            return jsonify({
+                "success": False,
+                "error": "Final contract PDF is only available after both parties approve"
+            }), 400
 
         pdf_buffer = generate_contract_pdf(contract_data)
 

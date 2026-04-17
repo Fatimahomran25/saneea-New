@@ -1,4 +1,5 @@
 
+import base64
 import os
 from io import BytesIO
 
@@ -21,19 +22,20 @@ def generate_contract_pdf(contract_data):
     timeline = contract_data.get("timeline", {})
     meta = contract_data.get("meta", {})
     approval = contract_data.get("approval", {})
+    signatures = contract_data.get("signatures", {})
     custom_clauses = contract_data.get("customClauses", [])
 
     status_raw = str(approval.get("contractStatus", "draft")).strip().lower()
     status = status_raw.replace("_", " ").title()
-
-    client_approval = "Approved" if approval.get("clientApproved") else "Pending"
-    freelancer_approval = "Approved" if approval.get("freelancerApproved") else "Pending"
 
     base_dir = os.path.dirname(__file__)
     logo_path = os.path.join(base_dir, "assets", "LOGO.png")
 
     print("LOGO PATH:", logo_path)
     print("LOGO EXISTS:", os.path.exists(logo_path))
+
+    def normalize_text(value):
+        return " ".join(str(value or "").strip().lower().split())
 
     def get_status_color():
         if status_raw == "approved":
@@ -55,6 +57,11 @@ def generate_contract_pdf(contract_data):
     def ensure_space(lines=3):
         nonlocal y
         if y < 90 + (lines * 22):
+            new_page()
+
+    def ensure_height(required_height):
+        nonlocal y
+        if y - required_height < 70:
             new_page()
 
     def draw_header():
@@ -167,6 +174,107 @@ def generate_contract_pdf(contract_data):
 
         y = box_y - 20
 
+    def decode_signature_image(signature_data):
+        if not isinstance(signature_data, str):
+            return None
+
+        cleaned_signature = signature_data.strip()
+        if not cleaned_signature:
+            return None
+
+        if cleaned_signature.startswith("data:") and "," in cleaned_signature:
+            cleaned_signature = cleaned_signature.split(",", 1)[1]
+
+        try:
+            signature_bytes = base64.b64decode(cleaned_signature)
+            return ImageReader(BytesIO(signature_bytes))
+        except Exception as error:
+            print("ERROR DECODING SIGNATURE:", error)
+            return None
+
+    def draw_signature_card(label, signature_data, x, top_y, card_width, card_height):
+        pdf.setFillColor(colors.HexColor("#FBFAFE"))
+        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
+        pdf.roundRect(x, top_y - card_height, card_width, card_height, 12, fill=1, stroke=1)
+
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(colors.HexColor("#2A223A"))
+        pdf.drawString(x + 14, top_y - 18, label)
+
+        signature_image = decode_signature_image(signature_data)
+
+        image_area_width = card_width - 28
+        image_area_height = card_height - 46
+        image_x = x + 14
+        image_y = top_y - card_height + 14
+
+        if signature_image is None:
+            pdf.setFont("Helvetica-Oblique", 10)
+            pdf.setFillColor(colors.grey)
+            pdf.drawString(image_x, image_y + (image_area_height / 2), "Signature unavailable")
+            return
+
+        try:
+            image_width, image_height = signature_image.getSize()
+
+            if image_width <= 0 or image_height <= 0:
+                raise ValueError("Invalid signature image size")
+
+            scale = min(image_area_width / image_width, image_area_height / image_height)
+            draw_width = image_width * scale
+            draw_height = image_height * scale
+            draw_x = image_x + ((image_area_width - draw_width) / 2)
+            draw_y = image_y + ((image_area_height - draw_height) / 2)
+
+            pdf.drawImage(
+                signature_image,
+                draw_x,
+                draw_y,
+                width=draw_width,
+                height=draw_height,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        except Exception as error:
+            print("ERROR DRAWING SIGNATURE:", error)
+            pdf.setFont("Helvetica-Oblique", 10)
+            pdf.setFillColor(colors.grey)
+            pdf.drawString(image_x, image_y + (image_area_height / 2), "Signature unavailable")
+
+    def draw_signatures_section():
+        nonlocal y
+
+        ensure_height(170)
+        y -= 2
+        draw_section("Signatures")
+
+        card_width = (width - 126) / 2
+        gap = 16
+        card_height = 96
+        top_y = y
+
+        client_signature = signatures.get("clientSignature") if isinstance(signatures, dict) else None
+        freelancer_signature = signatures.get("freelancerSignature") if isinstance(signatures, dict) else None
+
+        draw_signature_card(
+            "Client Signature",
+            client_signature,
+            55,
+            top_y,
+            card_width,
+            card_height,
+        )
+        draw_signature_card(
+            "Freelancer Signature",
+            freelancer_signature,
+            55 + card_width + gap,
+            top_y,
+            card_width,
+            card_height,
+        )
+
+        y = top_y - card_height - 18
+
     draw_header()
     draw_status_box()
 
@@ -179,7 +287,7 @@ def generate_contract_pdf(contract_data):
     draw_paragraph(service.get("description", "-"))
 
     y -= 2
-    draw_section("Payment")
+    draw_section("Amount")
     amount = payment.get("amount", "-")
     currency = payment.get("currency", "")
     payment_text = f"{amount} {currency}".strip()
@@ -189,36 +297,58 @@ def generate_contract_pdf(contract_data):
     draw_section("Deadline")
     draw_paragraph(timeline.get("deadline", "-"))
 
-    y -= 2
-    draw_section("Approval Status")
-    draw_label_value("Client Approval", client_approval)
-    draw_label_value("Freelancer Approval", freelancer_approval)
+    allowed_generated_section_titles = {
+        "services": "Services",
+        "payment terms": "Payment Terms",
+        "revisions": "Revisions",
+        "delivery": "Delivery",
+        "confidentiality": "Confidentiality",
+    }
+    allowed_section_order = [
+        "Services",
+        "Payment Terms",
+        "Revisions",
+        "Delivery",
+        "Confidentiality",
+    ]
+    generated_section_contents = {
+        section_title: [] for section_title in allowed_section_order
+    }
 
-    if custom_clauses:
-        y -= 2
-        draw_section("Additional Clauses")
-        for i, clause in enumerate(custom_clauses, start=1):
-            ensure_space(4)
+    for clause in custom_clauses:
+        if not isinstance(clause, dict):
+            continue
 
-            title = clause.get("title", f"Clause {i}")
-            content = clause.get("content", "-")
+        title = normalize_text(clause.get("title"))
+        content = str(clause.get("content") or clause.get("text") or "").strip()
+        source = normalize_text(clause.get("source"))
 
-            pdf.setFillColor(colors.HexColor("#FBFAFE"))
-            pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
-            card_height = 60
-            card_y = y - card_height + 18
-            pdf.roundRect(55, card_y, width - 110, card_height, 12, fill=1, stroke=1)
+        if not content or title == "deadline":
+            continue
 
-            pdf.setFont("Helvetica-Bold", 12)
-            pdf.setFillColor(colors.HexColor("#2A223A"))
-            pdf.drawString(68, y, f"{i}. {title}")
+        is_ai_clause = source == "ai" or (
+            not source and ("category" in clause or "optional" in clause)
+        )
 
-            y -= 22
-            pdf.setFont("Helvetica", 11)
-            pdf.setFillColor(colors.black)
-            pdf.drawString(68, y, str(content)[:85])
+        if not is_ai_clause:
+            continue
 
-            y = card_y - 18
+        section_title = allowed_generated_section_titles.get(title)
+        if not section_title:
+            continue
+
+        if content not in generated_section_contents[section_title]:
+            generated_section_contents[section_title].append(content)
+
+    for section_title in allowed_section_order:
+        section_contents = generated_section_contents[section_title]
+        if section_contents:
+            y -= 2
+            draw_section(section_title)
+            draw_paragraph("\n\n".join(section_contents))
+
+    if status_raw == "approved":
+        draw_signatures_section()
 
     ensure_space(3)
     pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
