@@ -118,7 +118,7 @@ Instructions:
 
 
 def generate_contract_from_data(request_data):
-    print("🔥 AI شغال")
+    print("AI working")
 
     ai_result = generate_contract_ai({
         "client": request_data.get("clientName") or request_data.get("client"),
@@ -423,6 +423,72 @@ def disapprove_contract(request_id, role):
         "success": True,
         "contractData": contract_data,
         "contractStatus": "rejected",
+        "contractText": render_contract_text(contract_data),
+    }
+
+
+def cancel_contract(request_id, role=""):
+    normalized_role = (role or "").strip().lower()
+
+    request_data = get_request_by_id(request_id)
+
+    if not request_data:
+        return {
+            "success": False,
+            "error": "Request not found"
+        }
+
+    contract_data = request_data.get("contractData")
+    if not isinstance(contract_data, dict):
+        return {
+            "success": False,
+            "error": "No contract found"
+        }
+
+    approval = contract_data.get("approval")
+    if not isinstance(approval, dict):
+        approval = {}
+
+    contract_status = str(approval.get("contractStatus", "")).strip().lower()
+    if contract_status in (
+        "approved",
+        "terminated",
+        "termination_pending",
+        "rejected",
+        "cancelled",
+        "canceled",
+    ):
+        return {
+            "success": False,
+            "error": "This contract can no longer be cancelled"
+        }
+
+    if approval.get("clientApproved") is True and approval.get("freelancerApproved") is True:
+        return {
+            "success": False,
+            "error": "Approved contracts cannot be cancelled"
+        }
+
+    approval["clientApproved"] = False
+    approval["freelancerApproved"] = False
+    approval["contractStatus"] = "cancelled"
+    approval["cancelled"] = True
+    approval["cancelledBy"] = normalized_role
+    approval["cancelledAt"] = datetime.now().isoformat()
+    approval["edited"] = False
+
+    contract_data["approval"] = approval
+    contract_data["signatures"] = {
+        "clientSignature": None,
+        "freelancerSignature": None,
+    }
+
+    update_request_contract_data(request_id, contract_data)
+
+    return {
+        "success": True,
+        "contractData": contract_data,
+        "contractStatus": approval["contractStatus"],
         "contractText": render_contract_text(contract_data),
     }
 

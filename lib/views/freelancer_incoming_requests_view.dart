@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../controlles/freelancer_requests_controller.dart';
 import 'freelancer_client_profile_view.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../controlles/chat_controller.dart';
 import 'chat_view.dart';
 
@@ -20,6 +20,7 @@ class _FreelancerIncomingRequestsViewState
     extends State<FreelancerIncomingRequestsView> {
   final FreelancerRequestsController controller =
       FreelancerRequestsController();
+  final ChatController _chatController = ChatController();
 
   late Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
   _futureRequests;
@@ -77,6 +78,142 @@ class _FreelancerIncomingRequestsViewState
     }
 
     return requests.where((doc) => doc.id == requestId).toList();
+  }
+
+  Future<void> _openExistingChat({
+    required String requestId,
+    required String clientId,
+    required String clientName,
+  }) async {
+    final freelancerId = FirebaseAuth.instance.currentUser?.uid;
+    if (freelancerId == null || freelancerId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open chat right now.')),
+      );
+      return;
+    }
+
+    final chatId = await _chatController.createOrGetChat(
+      requestId: requestId,
+      clientId: clientId,
+      freelancerId: freelancerId,
+    );
+
+    if (!mounted || chatId.isEmpty) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatView(
+          chatId: chatId,
+          otherUserName: clientName,
+          otherUserId: clientId,
+          otherUserRole: 'client',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAcceptedChatAction({
+    required String requestId,
+    required String clientId,
+    required String clientName,
+    String? initialChatId,
+  }) {
+    final storedChatId = (initialChatId ?? '').trim();
+    if (storedChatId.isNotEmpty) {
+      return SizedBox(
+        width: double.infinity,
+        height: 42,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primary,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+          ),
+          onPressed: () => _openExistingChat(
+            requestId: requestId,
+            clientId: clientId,
+            clientName: clientName,
+          ),
+          child: const Icon(Icons.chat_bubble_outline, size: 18),
+        ),
+      );
+    }
+
+    return StreamBuilder<String?>(
+      stream: _chatController.watchChatIdForRequest(requestId),
+      builder: (context, snapshot) {
+        final resolvedChatId = (snapshot.data ?? '').trim();
+        final hasChat = storedChatId.isNotEmpty || resolvedChatId.isNotEmpty;
+        final isLoading =
+            snapshot.connectionState == ConnectionState.waiting && !hasChat;
+
+        return SizedBox(
+          width: double.infinity,
+          height: 42,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
+            onPressed: () => _openExistingChat(
+              requestId: requestId,
+              clientId: clientId,
+              clientName: clientName,
+            ),
+            child: hasChat
+                ? const Icon(Icons.chat_bubble_outline, size: 18)
+                : isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.chat_bubble_outline, size: 18),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _acceptRequestAndPrepareChat({
+    required String requestId,
+    required String clientId,
+  }) async {
+    final freelancerId = FirebaseAuth.instance.currentUser?.uid;
+    if (freelancerId == null || freelancerId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to accept request right now.')),
+      );
+      return;
+    }
+
+    await controller.acceptRequest(requestId);
+
+    String? chatId = await _chatController.getExistingChatIdForRequest(
+      requestId,
+    );
+
+    if (chatId == null || chatId.isEmpty) {
+      await _chatController.createChatForRequest(
+        requestId: requestId,
+        clientId: clientId,
+        freelancerId: freelancerId,
+      );
+    }
+
+    await _reload();
   }
 
   @override
@@ -380,7 +517,6 @@ class _FreelancerIncomingRequestsViewState
                           ),
 
                           const SizedBox(height: 18),
-
                           const SizedBox(height: 18),
 
                           if (status == 'pending') ...[
@@ -402,8 +538,10 @@ class _FreelancerIncomingRequestsViewState
                                         ),
                                       ),
                                       onPressed: () async {
-                                        await controller.acceptRequest(doc.id);
-                                        await _reload();
+                                        await _acceptRequestAndPrepareChat(
+                                          requestId: doc.id,
+                                          clientId: clientId,
+                                        );
                                       },
                                       child: const Text(
                                         'Accept',
@@ -432,6 +570,7 @@ class _FreelancerIncomingRequestsViewState
                                       ),
                                       onPressed: () async {
                                         await controller.rejectRequest(doc.id);
+
                                         await _reload();
                                       },
                                       child: const Text(
@@ -449,46 +588,11 @@ class _FreelancerIncomingRequestsViewState
                           ],
 
                           if (status == 'accepted') ...[
-                            SizedBox(
-                              width: double.infinity,
-                              height: 42,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primary,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(24),
-                                  ),
-                                ),
-                                onPressed: () async {
-                                  final chatController = ChatController();
-
-                                  final chatId = await chatController
-                                      .createOrGetChat(
-                                        requestId: doc.id,
-                                        clientId: clientId,
-                                        freelancerId: FirebaseAuth
-                                            .instance
-                                            .currentUser!
-                                            .uid,
-                                      );
-
-                                  if (!context.mounted) return;
-
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => ChatView(
-                                        chatId: chatId,
-                                        otherUserName: latestName,
-                                        otherUserId: clientId,
-                                        otherUserRole: 'client',
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child: const Text('Chat'),
-                              ),
+                            _buildAcceptedChatAction(
+                              requestId: doc.id,
+                              clientId: clientId,
+                              clientName: latestName,
+                              initialChatId: (data['chatId'] ?? '').toString(),
                             ),
                           ],
                         ],

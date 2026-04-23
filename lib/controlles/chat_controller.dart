@@ -13,6 +13,7 @@ class ChatController {
   String? get currentUserId => _auth.currentUser?.uid;
 
   final FirebaseStorage _storage = FirebaseStorage.instance;
+
   Future<void> sendImageMessage({
     required String chatId,
     required File imageFile,
@@ -60,19 +61,81 @@ class ChatController {
     }, SetOptions(merge: true));
   }
 
-  Future<String> createOrGetChat({
+  Future<String?> getExistingChatIdForRequest(String requestId) async {
+    final normalizedRequestId = requestId.trim();
+    if (normalizedRequestId.isEmpty) return null;
+
+    final directChatDoc = await _firestore
+        .collection(_chatCollection)
+        .doc(normalizedRequestId)
+        .get();
+
+    if (directChatDoc.exists) {
+      return directChatDoc.id;
+    }
+
+    final chatByRequest = await _firestore
+        .collection(_chatCollection)
+        .where('requestId', isEqualTo: normalizedRequestId)
+        .limit(1)
+        .get();
+
+    if (chatByRequest.docs.isEmpty) return null;
+    return chatByRequest.docs.first.id;
+  }
+
+  Stream<String?> watchChatIdForRequest(String requestId) {
+    final normalizedRequestId = requestId.trim();
+    if (normalizedRequestId.isEmpty) {
+      return Stream.value(null);
+    }
+
+    return _firestore
+        .collection('requests')
+        .doc(normalizedRequestId)
+        .snapshots()
+        .asyncMap((requestDoc) async {
+          final requestData = requestDoc.data() ?? {};
+          final storedChatId = (requestData['chatId'] ?? '').toString().trim();
+
+          if (storedChatId.isNotEmpty) {
+            return storedChatId;
+          }
+
+          return await getExistingChatIdForRequest(normalizedRequestId);
+        });
+  }
+
+  Future<String> createChatForRequest({
     required String requestId,
     required String clientId,
     required String freelancerId,
   }) async {
-    final chatRef = _firestore.collection(_chatCollection).doc(requestId);
+    final normalizedRequestId = requestId.trim();
+    if (normalizedRequestId.isEmpty) {
+      throw Exception('requestId is required to create chat.');
+    }
+
+    final existingChatId = await getExistingChatIdForRequest(
+      normalizedRequestId,
+    );
+    if (existingChatId != null && existingChatId.isNotEmpty) {
+      await _firestore.collection('requests').doc(normalizedRequestId).set({
+        'chatId': existingChatId,
+      }, SetOptions(merge: true));
+      return existingChatId;
+    }
+
+    final chatRef = _firestore
+        .collection(_chatCollection)
+        .doc(normalizedRequestId);
     final chatDoc = await chatRef.get();
 
     if (!chatDoc.exists) {
       await chatRef.set({
         'clientId': clientId,
         'freelancerId': freelancerId,
-        'requestId': requestId,
+        'requestId': normalizedRequestId,
         'lastMessage': '',
         'updatedAt': FieldValue.serverTimestamp(),
         'unreadCountClient': 0,
@@ -80,7 +143,50 @@ class ChatController {
       });
     }
 
-    return requestId;
+    await _firestore.collection('requests').doc(normalizedRequestId).set({
+      'chatId': chatRef.id,
+    }, SetOptions(merge: true));
+
+    return chatRef.id;
+  }
+
+  Future<String> createOrGetChat({
+    required String requestId,
+    required String clientId,
+    required String freelancerId,
+  }) async {
+    final normalizedRequestId = requestId.trim();
+    if (normalizedRequestId.isEmpty) {
+      throw Exception('requestId is required to open chat.');
+    }
+
+    final existingChatId = await getExistingChatIdForRequest(
+      normalizedRequestId,
+    );
+    if (existingChatId != null) return existingChatId;
+
+    final chatRef = _firestore
+        .collection(_chatCollection)
+        .doc(normalizedRequestId);
+    final chatDoc = await chatRef.get();
+
+    if (!chatDoc.exists) {
+      await chatRef.set({
+        'clientId': clientId,
+        'freelancerId': freelancerId,
+        'requestId': normalizedRequestId,
+        'lastMessage': '',
+        'updatedAt': FieldValue.serverTimestamp(),
+        'unreadCountClient': 0,
+        'unreadCountFreelancer': 0,
+      });
+    }
+
+    await _firestore.collection('requests').doc(normalizedRequestId).set({
+      'chatId': chatRef.id,
+    }, SetOptions(merge: true));
+
+    return chatRef.id;
   }
 
   Future<void> sendCombinedMessage({
@@ -231,13 +337,11 @@ class ChatController {
 
     final chatRef = _firestore.collection(_chatCollection).doc(chatId);
 
-    // ✅ 1. نجيب الرسائل غير المقروءة
     final unreadMessages = await chatRef
         .collection('messages')
         .where('isRead', isEqualTo: false)
         .get();
 
-    // ✅ 2. نحدثها كمقروءة (لكن فقط اللي مو من نفس المستخدم)
     for (final doc in unreadMessages.docs) {
       final data = doc.data();
       final senderId = (data['senderId'] ?? '').toString();
@@ -247,7 +351,6 @@ class ChatController {
       }
     }
 
-    // ✅ 3. نجيب بيانات الشات
     final chatDoc = await chatRef.get();
     final chatData = chatDoc.data() ?? {};
 
@@ -384,7 +487,7 @@ class ChatController {
               'updatedAt': data['updatedAt'] != null
                   ? (data['updatedAt'] as Timestamp).toDate()
                   : null,
-                'unreadCount': isClientUser
+              'unreadCount': isClientUser
                   ? (data['unreadCountClient'] ?? 0)
                   : (data['unreadCountFreelancer'] ?? 0),
             });

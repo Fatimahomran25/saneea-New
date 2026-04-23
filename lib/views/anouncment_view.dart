@@ -46,8 +46,22 @@ class HighlightOverflowController extends TextEditingController {
 class AnnouncementView extends StatefulWidget {
   final String? freelancerId;
   final String? freelancerName;
+  final String? requestId;
+  final String? announcementId;
+  final String? initialDescription;
+  final double? initialBudget;
+  final String? initialDeadline;
 
-  const AnnouncementView({super.key, this.freelancerId, this.freelancerName});
+  const AnnouncementView({
+    super.key,
+    this.freelancerId,
+    this.freelancerName,
+    this.requestId,
+    this.announcementId,
+    this.initialDescription,
+    this.initialBudget,
+    this.initialDeadline,
+  });
 
   @override
   State<AnnouncementView> createState() => _AnnouncementViewState();
@@ -86,6 +100,12 @@ class _AnnouncementViewState extends State<AnnouncementView> {
     _descriptionController.addListener(_recalculateState);
     _budgetController.addListener(_refreshPageState);
     _deadlineController.addListener(_refreshPageState);
+
+    if (widget.announcementId != null || widget.requestId != null) {
+      _descriptionController.text = widget.initialDescription ?? '';
+      _budgetController.text = widget.initialBudget?.toString() ?? '';
+      _deadlineController.text = widget.initialDeadline ?? '';
+    }
   }
 
   @override
@@ -167,10 +187,145 @@ class _AnnouncementViewState extends State<AnnouncementView> {
   }
 
   Future<void> _submit() async {
-    if (widget.freelancerId != null) {
+    if (widget.announcementId != null) {
+      await _updateAnnouncement();
+    } else if (widget.requestId != null) {
+      await _updateDirectRequest();
+    } else if (widget.freelancerId != null) {
       await _sendDirectRequest();
     } else {
       await _publishAnnouncement();
+    }
+  }
+
+  Future<void> _updateAnnouncement() async {
+    final description = _descriptionController.text.trim();
+    final budgetText = _budgetController.text.trim();
+    final budget = double.tryParse(budgetText);
+    final deadline = _deadlineController.text.trim();
+    final announcementId = widget.announcementId;
+
+    if (description.isEmpty || _hasLink || _isTooLong) return;
+
+    if (!_containsLetter(description)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Service request must contain at least one letter'),
+        ),
+      );
+      return;
+    }
+
+    if (description.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please describe your request in more details'),
+        ),
+      );
+      return;
+    }
+
+    if (budgetText.isEmpty || budget == null || budget <= 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter a valid budget')));
+      return;
+    }
+
+    if (deadline.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Select a deadline')));
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('You must be logged in')));
+      return;
+    }
+
+    if (announcementId == null || announcementId.isEmpty) return;
+
+    final hasInternet = await _hasInternetConnection();
+    if (!hasInternet) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Please try again.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('announcements')
+          .doc(announcementId)
+          .update({
+            'description': description,
+            'budget': budget,
+            'deadline': deadline,
+            'updatedAt': FieldValue.serverTimestamp(),
+            'isEdited': true,
+          });
+
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.pop(context, true);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Updated successfully ✏️')),
+      );
+    } on FirebaseException catch (e) {
+      final message =
+          (e.code == 'unavailable' || e.code == 'network-request-failed')
+          ? 'No internet connection. Please try again.'
+          : 'Failed to update: ${e.message ?? e.code}';
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } on SocketException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Please try again.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
+    }
+  }
+
+  Future<void> _updateDirectRequest() async {
+    try {
+      final controller = RecommendationController();
+
+      await controller.updateRequest(
+        requestId: widget.requestId!,
+        description: _descriptionController.text.trim(),
+        budget: double.parse(_budgetController.text.trim()),
+        deadline: _deadlineController.text.trim(),
+      );
+
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.pop(context, true);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Request updated ✏️')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
     }
   }
 
@@ -250,6 +405,7 @@ class _AnnouncementViewState extends State<AnnouncementView> {
             'description': description,
             'budget': budget,
             'deadline': deadline,
+            'status': 'pending',
             'createdAt': FieldValue.serverTimestamp(),
             'clientId': user.uid,
             'clientName': clientName,
@@ -397,7 +553,9 @@ class _AnnouncementViewState extends State<AnnouncementView> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
-          widget.freelancerId != null
+          widget.announcementId != null || widget.requestId != null
+              ? 'Edit Service Request'
+              : widget.freelancerId != null
               ? 'Send Service Request'
               : 'Create Service Request',
         ),
@@ -551,7 +709,12 @@ class _AnnouncementViewState extends State<AnnouncementView> {
                           ),
                         ),
                         child: Text(
-                          widget.freelancerId != null ? 'Send' : 'Publish',
+                          widget.announcementId != null ||
+                                  widget.requestId != null
+                              ? 'Save Changes'
+                              : widget.freelancerId != null
+                              ? 'Send'
+                              : 'Publish',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,

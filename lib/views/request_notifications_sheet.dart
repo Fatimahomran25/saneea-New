@@ -57,6 +57,12 @@ class _RequestNotificationsSheetState extends State<RequestNotificationsSheet>
     super.dispose();
   }
 
+  Future<void> _handleNotificationTap(RequestNotificationItem item) async {
+    await widget.controller.markAsRead(item.id);
+    if (!mounted) return;
+    await widget.onOpen(item);
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -127,10 +133,7 @@ class _RequestNotificationsSheetState extends State<RequestNotificationsSheet>
                             widget.controller.deleteNotification(item.id),
                         child: InkWell(
                           borderRadius: BorderRadius.circular(12),
-                          onTap: () async {
-                            await widget.controller.markAsRead(item.id);
-                            await widget.onOpen(item);
-                          },
+                          onTap: () => _handleNotificationTap(item),
                           child: Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(

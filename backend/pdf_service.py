@@ -29,10 +29,8 @@ def generate_contract_pdf(contract_data):
     status = status_raw.replace("_", " ").title()
 
     base_dir = os.path.dirname(__file__)
-    logo_path = os.path.join(base_dir, "assets", "LOGO.png")
-
-    print("LOGO PATH:", logo_path)
-    print("LOGO EXISTS:", os.path.exists(logo_path))
+    project_root = os.path.abspath(os.path.join(base_dir, ".."))
+    logo_path = os.path.join(project_root, "assets", "LOGO.png")
 
     def normalize_text(value):
         return " ".join(str(value or "").strip().lower().split())
@@ -48,6 +46,69 @@ def generate_contract_pdf(contract_data):
             return colors.HexColor("#7E57C2")
         return colors.HexColor("#5A3E9E")
 
+    section_left = 55
+    section_width = width - 110
+    card_radius = 12
+    section_gap = 12
+    card_inner_padding_x = 14
+    card_inner_padding_y = 12
+    body_font = "Helvetica"
+    body_font_size = 11
+    body_line_height = 16
+    section_fill = colors.HexColor("#FCFBFE")
+    section_stroke = colors.HexColor("#E7E0F5")
+    section_title_fill = colors.HexColor("#F1ECFA")
+    section_title_text = colors.HexColor("#5A3E9E")
+    body_text_color = colors.HexColor("#2A223A")
+    label_text_color = colors.HexColor("#5E556F")
+
+    def wrap_text_lines(text, max_width, font_name=body_font, font_size=body_font_size):
+        raw_text = str(text).strip() if text not in [None, ""] else "-"
+        paragraphs = raw_text.splitlines() or ["-"]
+        wrapped_lines = []
+
+        for index, paragraph in enumerate(paragraphs):
+            cleaned = paragraph.strip()
+            if not cleaned:
+                wrapped_lines.append("")
+                continue
+
+            words = cleaned.split()
+            line = ""
+
+            for word in words:
+                candidate = word if not line else f"{line} {word}"
+                if pdf.stringWidth(candidate, font_name, font_size) <= max_width:
+                    line = candidate
+                else:
+                    if line:
+                        wrapped_lines.append(line)
+                    line = word
+
+            if line:
+                wrapped_lines.append(line)
+
+            if index < len(paragraphs) - 1 and cleaned:
+                wrapped_lines.append("")
+
+        return wrapped_lines or ["-"]
+
+    def draw_content_card(x, top_y, card_width, card_height, fill_color=section_fill):
+        bottom_y = top_y - card_height
+        pdf.setFillColor(fill_color)
+        pdf.setStrokeColor(section_stroke)
+        pdf.setLineWidth(1)
+        pdf.roundRect(
+            x,
+            bottom_y,
+            card_width,
+            card_height,
+            card_radius,
+            fill=1,
+            stroke=1,
+        )
+        return bottom_y
+
     def new_page():
         nonlocal y
         pdf.showPage()
@@ -56,123 +117,485 @@ def generate_contract_pdf(contract_data):
 
     def ensure_space(lines=3):
         nonlocal y
-        if y < 90 + (lines * 22):
+        if y < 100 + (lines * body_line_height):
             new_page()
 
     def ensure_height(required_height):
         nonlocal y
-        if y - required_height < 70:
+        if y - required_height < 80:
             new_page()
 
     def draw_header():
         nonlocal y
-        y = height - 55
+        header_x = 40
+        header_y = height - 122
+        header_width = width - 80
+        header_height = 78
+        logo_panel_x = header_x + 14
+        logo_panel_y = header_y + 12
+        logo_panel_size = 54
+        separator_x = header_x + 90
+        meta_width = 112
+        meta_height = 42
+        meta_x = header_x + header_width - meta_width - 14
+        meta_y = header_y + ((header_height - meta_height) / 2)
+        title_x = separator_x + 18
 
-        pdf.setFillColor(colors.HexColor("#F7F4FC"))
-        pdf.roundRect(45, height - 98, width - 90, 58, 12, fill=1, stroke=0)
+        pdf.setFillColor(colors.HexColor("#F8F6FC"))
+        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
+        pdf.setLineWidth(1)
+        pdf.roundRect(
+            header_x,
+            header_y,
+            header_width,
+            header_height,
+            16,
+            fill=1,
+            stroke=1,
+        )
 
-        # خلفية خلف اللوقو عشان يبان
         pdf.setFillColor(colors.HexColor("#EEE8FA"))
-        pdf.roundRect(55, height - 90, 42, 42, 8, fill=1, stroke=0)
+        pdf.roundRect(
+            logo_panel_x,
+            logo_panel_y,
+            logo_panel_size,
+            logo_panel_size,
+            12,
+            fill=1,
+            stroke=0,
+        )
 
         if os.path.exists(logo_path):
             try:
                 logo = ImageReader(logo_path)
                 pdf.drawImage(
                     logo,
-                    59,
-                    height - 86,
-                    width=34,
-                    height=34,
+                    logo_panel_x + 8,
+                    logo_panel_y + 8,
+                    width=logo_panel_size - 16,
+                    height=logo_panel_size - 16,
                     preserveAspectRatio=True,
                     mask="auto",
                 )
-            except Exception as e:
-                print("ERROR DRAWING LOGO:", e)
+            except Exception as error:
+                print("ERROR DRAWING LOGO:", error)
+
+        pdf.setStrokeColor(colors.HexColor("#DDD4EE"))
+        pdf.setLineWidth(1)
+        pdf.line(separator_x, header_y + 12, separator_x, header_y + header_height - 12)
+
+        pdf.setFillColor(colors.white)
+        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
+        pdf.roundRect(meta_x, meta_y, meta_width, meta_height, 12, fill=1, stroke=1)
+
+        pdf.setFont("Helvetica", 8)
+        pdf.setFillColor(colors.HexColor("#7A748C"))
+        pdf.drawString(meta_x + 12, meta_y + meta_height - 14, "Contract Date")
+
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(colors.HexColor("#2A223A"))
+        pdf.drawString(meta_x + 12, meta_y + 12, str(meta.get("createdAt", "-")))
 
         pdf.setFillColor(colors.HexColor("#2A223A"))
         pdf.setFont("Helvetica-Bold", 20)
-        pdf.drawString(105, height - 63, "CONTRACT AGREEMENT")
+        pdf.drawString(title_x, header_y + 47, "CONTRACT AGREEMENT")
 
         pdf.setFont("Helvetica", 10)
         pdf.setFillColor(colors.HexColor("#6B6480"))
-        pdf.drawString(105, height - 79, "Official contract summary")
+        pdf.drawString(title_x, header_y + 28, "Official contract summary")
 
-        y = height - 118
+        y = header_y - 18
 
     def draw_section(title):
         nonlocal y
-        ensure_space(2)
+        ensure_height(44)
 
-        pdf.setFont("Helvetica-Bold", 14)
-        pdf.setFillColor(colors.HexColor("#5A3E9E"))
-        pdf.drawString(55, y, title)
+        badge_padding_x = 12
+        badge_height = 22
+        badge_width = pdf.stringWidth(title, "Helvetica-Bold", 12) + (badge_padding_x * 2)
+        badge_bottom_y = y - 14
 
-        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
-        pdf.setLineWidth(1)
-        pdf.line(55, y - 6, width - 55, y - 6)
-        y -= 24
+        pdf.setFillColor(section_title_fill)
+        pdf.roundRect(
+            section_left,
+            badge_bottom_y,
+            badge_width,
+            badge_height,
+            11,
+            fill=1,
+            stroke=0,
+        )
+
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(section_title_text)
+        pdf.drawString(section_left + badge_padding_x, badge_bottom_y + 6.5, title)
+
+        y = badge_bottom_y - 12
 
     def draw_label_value(label, value, value_x=170, value_color=colors.black):
         nonlocal y
-        ensure_space(1)
-
-        pdf.setFont("Helvetica-Bold", 12)
-        pdf.setFillColor(colors.HexColor("#2A223A"))
-        pdf.drawString(55, y, str(label))
-
-        pdf.setFont("Helvetica", 12)
-        pdf.setFillColor(value_color)
         safe_value = value if value not in [None, ""] else "-"
-        pdf.drawString(value_x, y, str(safe_value))
-        y -= 22
+        label_column_width = 108
+        value_max_width = section_width - (card_inner_padding_x * 2) - label_column_width - 12
+        value_lines = wrap_text_lines(
+            safe_value,
+            value_max_width,
+            font_name=body_font,
+            font_size=body_font_size,
+        )
+        text_block_height = max(body_line_height, len(value_lines) * body_line_height)
+        card_height = max(46, (card_inner_padding_y * 2) + text_block_height)
+
+        ensure_height(card_height + section_gap)
+        top_y = y
+        bottom_y = draw_content_card(section_left, top_y, section_width, card_height)
+        text_top_y = top_y - card_inner_padding_y - 1
+
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.setFillColor(label_text_color)
+        pdf.drawString(section_left + card_inner_padding_x, text_top_y, str(label))
+
+        pdf.setFont(body_font, body_font_size)
+        pdf.setFillColor(value_color if value_color != colors.black else body_text_color)
+        value_x = section_left + card_inner_padding_x + label_column_width
+        current_y = text_top_y
+
+        for line in value_lines:
+            if line:
+                pdf.drawString(value_x, current_y, line)
+            current_y -= body_line_height
+
+        y = bottom_y - section_gap
 
     def draw_paragraph(text):
         nonlocal y
-        ensure_space(2)
+        content_lines = wrap_text_lines(
+            text,
+            section_width - (card_inner_padding_x * 2),
+            font_name=body_font,
+            font_size=body_font_size,
+        )
+        text_block_height = max(body_line_height, len(content_lines) * body_line_height)
+        card_height = max(54, (card_inner_padding_y * 2) + text_block_height)
 
-        text = str(text).strip() if text not in [None, ""] else "-"
-        words = text.split()
-        line = ""
+        ensure_height(card_height + section_gap)
+        top_y = y
+        bottom_y = draw_content_card(section_left, top_y, section_width, card_height)
 
-        pdf.setFont("Helvetica", 12)
-        pdf.setFillColor(colors.black)
+        pdf.setFont(body_font, body_font_size)
+        pdf.setFillColor(body_text_color)
+        text_x = section_left + card_inner_padding_x
+        current_y = top_y - card_inner_padding_y - 1
 
-        for word in words:
-            test_line = word if not line else f"{line} {word}"
-            if len(test_line) <= 72:
-                line = test_line
-            else:
-                pdf.drawString(55, y, line)
-                y -= 20
-                line = word
-                ensure_space(1)
+        for line in content_lines:
+            if line:
+                pdf.drawString(text_x, current_y, line)
+            current_y -= body_line_height
 
-        if line:
-            pdf.drawString(55, y, line)
-            y -= 22
+        y = bottom_y - section_gap
 
     def draw_status_box():
         nonlocal y
-        ensure_space(3)
+        box_height = 72
+        ensure_height(box_height + section_gap)
 
-        box_height = 54
-        box_y = y - box_height + 18
+        top_y = y
+        bottom_y = draw_content_card(
+            section_left,
+            top_y,
+            section_width,
+            box_height,
+            fill_color=colors.HexColor("#FBFAFE"),
+        )
 
-        pdf.setFillColor(colors.HexColor("#FBFAFE"))
-        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
-        pdf.roundRect(55, box_y, width - 110, box_height, 12, fill=1, stroke=1)
+        label_x = section_left + card_inner_padding_x
+        value_x = label_x
+        label_top_y = top_y - 16
+        value_top_y = label_top_y - 16
+        chip_height = 24
+        chip_padding_x = 12
+        status_font = "Helvetica-Bold"
+        status_font_size = 10
+        status_chip_width = pdf.stringWidth(
+            status,
+            status_font,
+            status_font_size,
+        ) + (chip_padding_x * 2)
+        chip_x = section_left + section_width - card_inner_padding_x - status_chip_width
+        chip_y = top_y - 48
 
-        pdf.setFont("Helvetica", 11)
-        pdf.setFillColor(colors.HexColor("#2A223A"))
-        pdf.drawString(70, y, f"Contract Date: {meta.get('createdAt', '-')}")
-        pdf.drawString(70, y - 20, "Contract Status:")
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(label_text_color)
+        pdf.drawString(label_x, label_top_y, "Contract Date")
+        pdf.drawString(label_x, chip_y + 7, "Contract Status")
+
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.setFillColor(body_text_color)
+        pdf.drawString(value_x, value_top_y, str(meta.get("createdAt", "-")))
+
+        pdf.setFillColor(get_status_color())
+        pdf.roundRect(
+            chip_x,
+            chip_y,
+            status_chip_width,
+            chip_height,
+            12,
+            fill=1,
+            stroke=0,
+        )
+
+        pdf.setFont(status_font, status_font_size)
+        pdf.setFillColor(colors.white)
+        pdf.drawString(chip_x + chip_padding_x, chip_y + 7, status)
+
+        pdf.setStrokeColor(section_stroke)
+        pdf.setLineWidth(1)
+        pdf.line(
+            section_left + card_inner_padding_x,
+            bottom_y + 34,
+            section_left + section_width - card_inner_padding_x,
+            bottom_y + 34,
+        )
+
+        pdf.setFont(body_font, 9)
+        pdf.setFillColor(label_text_color)
+        pdf.drawString(
+            section_left + card_inner_padding_x,
+            bottom_y + 14,
+            "This is the current contract approval state.",
+        )
 
         pdf.setFont("Helvetica-Bold", 11)
         pdf.setFillColor(get_status_color())
-        pdf.drawString(170, y - 20, status)
 
-        y = box_y - 20
+        y = bottom_y - section_gap
+
+    def draw_parties_section():
+        nonlocal y
+
+        draw_section("Contract Parties")
+
+        card_gap = 12
+        party_card_width = (section_width - card_gap) / 2
+        party_card_height = 58
+
+        ensure_height(party_card_height + section_gap)
+        top_y = y
+
+        def draw_party_card(x, label, value):
+            safe_value = value if value not in [None, ""] else "-"
+            bottom_y = draw_content_card(
+                x,
+                top_y,
+                party_card_width,
+                party_card_height,
+                fill_color=colors.HexColor("#FBFAFE"),
+            )
+            text_x = x + card_inner_padding_x
+            label_y = top_y - 16
+            value_y = top_y - 36
+
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.setFillColor(label_text_color)
+            pdf.drawString(text_x, label_y, label)
+
+            pdf.setFont("Helvetica-Bold", 12)
+            pdf.setFillColor(body_text_color)
+            value_lines = wrap_text_lines(
+                safe_value,
+                party_card_width - (card_inner_padding_x * 2),
+                font_name="Helvetica-Bold",
+                font_size=12,
+            )
+
+            current_y = value_y
+            for line in value_lines[:2]:
+                if line:
+                    pdf.drawString(text_x, current_y, line)
+                current_y -= 15
+
+            return bottom_y
+
+        left_x = section_left
+        right_x = section_left + party_card_width + card_gap
+
+        draw_party_card(left_x, "Client", parties.get("clientName", "-"))
+        bottom_y = draw_party_card(
+            right_x,
+            "Freelancer",
+            parties.get("freelancerName", "-"),
+        )
+
+        y = bottom_y - section_gap
+
+    def draw_service_description_section():
+        nonlocal y
+
+        draw_section("Service Description")
+
+        content_lines = wrap_text_lines(
+            service.get("description", "-"),
+            section_width - (card_inner_padding_x * 2),
+            font_name=body_font,
+            font_size=body_font_size,
+        )
+        text_block_height = max(body_line_height, len(content_lines) * body_line_height)
+        card_height = max(72, (card_inner_padding_y * 2) + text_block_height + 6)
+
+        ensure_height(card_height + section_gap)
+        top_y = y
+        bottom_y = draw_content_card(
+            section_left,
+            top_y,
+            section_width,
+            card_height,
+            fill_color=colors.HexColor("#FBFAFE"),
+        )
+
+        text_x = section_left + card_inner_padding_x
+        current_y = top_y - card_inner_padding_y - 2
+
+        pdf.setFont(body_font, body_font_size)
+        pdf.setFillColor(body_text_color)
+
+        for line in content_lines:
+            if line:
+                pdf.drawString(text_x, current_y, line)
+            current_y -= body_line_height
+
+        y = bottom_y - section_gap
+
+    def draw_payment_deadline_section():
+        nonlocal y
+
+        draw_section("Payment & Deadline")
+
+        card_gap = 12
+        info_card_width = (section_width - card_gap) / 2
+
+        amount = payment.get("amount", "-")
+        currency = payment.get("currency", "")
+        payment_text = f"{amount} {currency}".strip()
+        deadline_text = timeline.get("deadline", "-")
+
+        amount_lines = wrap_text_lines(
+            payment_text if payment_text else "-",
+            info_card_width - (card_inner_padding_x * 2),
+            font_name="Helvetica-Bold",
+            font_size=13,
+        )
+        deadline_lines = wrap_text_lines(
+            deadline_text,
+            info_card_width - (card_inner_padding_x * 2),
+            font_name=body_font,
+            font_size=body_font_size,
+        )
+
+        content_height = max(
+            len(amount_lines) * 17,
+            len(deadline_lines) * body_line_height,
+        )
+        card_height = max(72, (card_inner_padding_y * 2) + content_height + 8)
+
+        ensure_height(card_height + section_gap)
+        top_y = y
+
+        def draw_info_card(x, label, lines, value_font, value_size, value_color):
+            bottom_y = draw_content_card(
+                x,
+                top_y,
+                info_card_width,
+                card_height,
+                fill_color=colors.HexColor("#FBFAFE"),
+            )
+            text_x = x + card_inner_padding_x
+            label_y = top_y - 16
+            value_y = top_y - 38
+
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.setFillColor(label_text_color)
+            pdf.drawString(text_x, label_y, label)
+
+            pdf.setFont(value_font, value_size)
+            pdf.setFillColor(value_color)
+            current_y = value_y
+
+            for line in lines:
+                if line:
+                    pdf.drawString(text_x, current_y, line)
+                current_y -= 17 if value_size >= 13 else body_line_height
+
+            return bottom_y
+
+        left_x = section_left
+        right_x = section_left + info_card_width + card_gap
+
+        draw_info_card(
+            left_x,
+            "Amount",
+            amount_lines,
+            "Helvetica-Bold",
+            13,
+            body_text_color,
+        )
+        bottom_y = draw_info_card(
+            right_x,
+            "Deadline",
+            deadline_lines,
+            body_font,
+            body_font_size,
+            body_text_color,
+        )
+
+        y = bottom_y - section_gap
+
+    def draw_clause_group_section(title, contents):
+        nonlocal y
+
+        clean_contents = [str(content).strip() for content in contents if str(content).strip()]
+        if not clean_contents:
+            return
+
+        draw_section(title)
+
+        content_width = section_width - (card_inner_padding_x * 2)
+        clause_card_gap = 8
+
+        for index, content in enumerate(clean_contents):
+            content_lines = wrap_text_lines(
+                content,
+                content_width,
+                font_name=body_font,
+                font_size=body_font_size,
+            )
+            text_block_height = max(
+                body_line_height,
+                len(content_lines) * body_line_height,
+            )
+            card_height = max(64, (card_inner_padding_y * 2) + text_block_height + 4)
+
+            ensure_height(card_height + section_gap)
+            top_y = y
+            bottom_y = draw_content_card(
+                section_left,
+                top_y,
+                section_width,
+                card_height,
+                fill_color=colors.HexColor("#FBFAFE"),
+            )
+
+            text_x = section_left + card_inner_padding_x
+            current_y = top_y - card_inner_padding_y - 2
+
+            pdf.setFont(body_font, body_font_size)
+            pdf.setFillColor(body_text_color)
+
+            for line in content_lines:
+                if line:
+                    pdf.drawString(text_x, current_y, line)
+                current_y -= body_line_height
+
+            y = bottom_y - (section_gap if index == len(clean_contents) - 1 else clause_card_gap)
 
     def decode_signature_image(signature_data):
         if not isinstance(signature_data, str):
@@ -193,25 +616,56 @@ def generate_contract_pdf(contract_data):
             return None
 
     def draw_signature_card(label, signature_data, x, top_y, card_width, card_height):
-        pdf.setFillColor(colors.HexColor("#FBFAFE"))
-        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
-        pdf.roundRect(x, top_y - card_height, card_width, card_height, 12, fill=1, stroke=1)
+        bottom_y = draw_content_card(
+            x,
+            top_y,
+            card_width,
+            card_height,
+            fill_color=colors.HexColor("#FBFAFE"),
+        )
 
-        pdf.setFont("Helvetica-Bold", 12)
-        pdf.setFillColor(colors.HexColor("#2A223A"))
-        pdf.drawString(x + 14, top_y - 18, label)
+        header_x = x + 12
+        header_width = card_width - 24
+        header_height = 22
+        header_y = top_y - 30
+
+        pdf.setFillColor(colors.HexColor("#F2EDFA"))
+        pdf.roundRect(
+            header_x,
+            header_y,
+            header_width,
+            header_height,
+            11,
+            fill=1,
+            stroke=0,
+        )
+
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.setFillColor(section_title_text)
+        label_width = pdf.stringWidth(label, "Helvetica-Bold", 10)
+        pdf.drawString(
+            x + ((card_width - label_width) / 2),
+            header_y + 7,
+            label,
+        )
 
         signature_image = decode_signature_image(signature_data)
 
         image_area_width = card_width - 28
-        image_area_height = card_height - 46
+        image_area_height = card_height - 62
         image_x = x + 14
-        image_y = top_y - card_height + 14
+        image_y = bottom_y + 14
 
         if signature_image is None:
             pdf.setFont("Helvetica-Oblique", 10)
             pdf.setFillColor(colors.grey)
-            pdf.drawString(image_x, image_y + (image_area_height / 2), "Signature unavailable")
+            placeholder = "Signature unavailable"
+            placeholder_width = pdf.stringWidth(placeholder, "Helvetica-Oblique", 10)
+            pdf.drawString(
+                x + ((card_width - placeholder_width) / 2),
+                image_y + (image_area_height / 2),
+                placeholder,
+            )
             return
 
         try:
@@ -239,18 +693,24 @@ def generate_contract_pdf(contract_data):
             print("ERROR DRAWING SIGNATURE:", error)
             pdf.setFont("Helvetica-Oblique", 10)
             pdf.setFillColor(colors.grey)
-            pdf.drawString(image_x, image_y + (image_area_height / 2), "Signature unavailable")
+            placeholder = "Signature unavailable"
+            placeholder_width = pdf.stringWidth(placeholder, "Helvetica-Oblique", 10)
+            pdf.drawString(
+                x + ((card_width - placeholder_width) / 2),
+                image_y + (image_area_height / 2),
+                placeholder,
+            )
 
     def draw_signatures_section():
         nonlocal y
 
-        ensure_height(170)
+        ensure_height(188)
         y -= 2
         draw_section("Signatures")
 
         card_width = (width - 126) / 2
         gap = 16
-        card_height = 96
+        card_height = 112
         top_y = y
 
         client_signature = signatures.get("clientSignature") if isinstance(signatures, dict) else None
@@ -275,27 +735,52 @@ def generate_contract_pdf(contract_data):
 
         y = top_y - card_height - 18
 
+    def draw_footer():
+        nonlocal y
+
+        primary_text = "This document represents the latest contract version stored in the system."
+        secondary_text = "Generated by Saneea Contract System"
+
+        if y < 78:
+            new_page()
+
+        divider_y = min(y - 6, 92)
+        divider_width = section_width - 70
+        divider_x = (width - divider_width) / 2
+
+        pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
+        pdf.setLineWidth(1)
+        pdf.line(divider_x, divider_y, divider_x + divider_width, divider_y)
+
+        primary_y = divider_y - 18
+        secondary_y = primary_y - 14
+
+        pdf.setFont("Helvetica", 9)
+        pdf.setFillColor(colors.HexColor("#4B4659"))
+        primary_width = pdf.stringWidth(primary_text, "Helvetica", 9)
+        pdf.drawString((width - primary_width) / 2, primary_y, primary_text)
+
+        pdf.setFont("Helvetica-Oblique", 8)
+        pdf.setFillColor(colors.HexColor("#7A748C"))
+        secondary_width = pdf.stringWidth(
+            secondary_text,
+            "Helvetica-Oblique",
+            8,
+        )
+        pdf.drawString((width - secondary_width) / 2, secondary_y, secondary_text)
+
+        y = secondary_y - 10
+
     draw_header()
     draw_status_box()
 
-    draw_section("Contract Parties")
-    draw_label_value("Client", parties.get("clientName", "-"))
-    draw_label_value("Freelancer", parties.get("freelancerName", "-"))
+    draw_parties_section()
 
     y -= 4
-    draw_section("Service Description")
-    draw_paragraph(service.get("description", "-"))
+    draw_service_description_section()
 
     y -= 2
-    draw_section("Amount")
-    amount = payment.get("amount", "-")
-    currency = payment.get("currency", "")
-    payment_text = f"{amount} {currency}".strip()
-    draw_paragraph(payment_text if payment_text else "-")
-
-    y -= 2
-    draw_section("Deadline")
-    draw_paragraph(timeline.get("deadline", "-"))
+    draw_payment_deadline_section()
 
     allowed_generated_section_titles = {
         "services": "Services",
@@ -344,29 +829,12 @@ def generate_contract_pdf(contract_data):
         section_contents = generated_section_contents[section_title]
         if section_contents:
             y -= 2
-            draw_section(section_title)
-            draw_paragraph("\n\n".join(section_contents))
+            draw_clause_group_section(section_title, section_contents)
 
     if status_raw == "approved":
         draw_signatures_section()
 
-    ensure_space(3)
-    pdf.setStrokeColor(colors.HexColor("#E7E0F5"))
-    pdf.line(55, y, width - 55, y)
-    y -= 16
-
-    pdf.setFont("Helvetica", 9)
-    pdf.setFillColor(colors.HexColor("#4B4659"))
-    pdf.drawString(
-        55,
-        y,
-        "This document represents the latest contract version stored in the system.",
-    )
-    y -= 12
-
-    pdf.setFont("Helvetica-Oblique", 8)
-    pdf.setFillColor(colors.grey)
-    pdf.drawString(55, y, "Generated by Saneea Contract System")
+    draw_footer()
 
     pdf.save()
     buffer.seek(0)

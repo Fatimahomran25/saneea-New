@@ -78,6 +78,8 @@ class ClientRequest {
   final String freelancerId;
   final String freelancerName;
   final String description;
+  final double? budget;
+  final String deadline;
   final String status;
   final DateTime? createdAt;
 
@@ -86,18 +88,39 @@ class ClientRequest {
     required this.freelancerId,
     required this.freelancerName,
     required this.description,
+    required this.budget,
+    required this.deadline,
     required this.status,
     required this.createdAt,
   });
 
   factory ClientRequest.fromMap(String id, Map<String, dynamic> data) {
     final timestamp = data['createdAt'];
+    final budgetValue = data['budget'] ?? data['amount'];
+    final deadlineValue = data['deadline'] ?? data['deadlineText'];
+
+    double? parsedBudget;
+    if (budgetValue is num) {
+      parsedBudget = budgetValue.toDouble();
+    } else if (budgetValue != null) {
+      parsedBudget = double.tryParse(budgetValue.toString().trim());
+    }
+
+    String parsedDeadline;
+    if (deadlineValue is Timestamp) {
+      final date = deadlineValue.toDate();
+      parsedDeadline = '${date.day}/${date.month}/${date.year}';
+    } else {
+      parsedDeadline = (deadlineValue ?? '').toString();
+    }
 
     return ClientRequest(
       id: id,
       freelancerId: (data['freelancerId'] ?? '').toString(),
       freelancerName: (data['freelancerName'] ?? '').toString(),
       description: (data['description'] ?? '').toString(),
+      budget: parsedBudget,
+      deadline: parsedDeadline,
       status: (data['status'] ?? '').toString(),
       createdAt: timestamp is Timestamp ? timestamp.toDate() : null,
     );

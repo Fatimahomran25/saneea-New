@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../controlles/chat_controller.dart';
 import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
+import 'chat_view.dart';
 
 class AnnouncementRequestsView extends StatefulWidget {
   final String announcementId;
@@ -23,6 +26,7 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
   static const primary = Color(0xFF5A3E9E);
 
   final RecommendationController _controller = RecommendationController();
+  final ChatController _chatController = ChatController();
   bool _isLoading = true;
   List<AnnouncementRequest> _requests = [];
 
@@ -68,6 +72,97 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
       default:
         return primary;
     }
+  }
+
+  Future<void> _openAcceptedProposalChat({
+    required AnnouncementRequest request,
+    required String chatLookupId,
+    String? initialChatId,
+  }) async {
+    final storedChatId = (initialChatId ?? '').trim();
+    final chatId = storedChatId.isNotEmpty
+        ? storedChatId
+        : await _chatController.createOrGetChat(
+            requestId: chatLookupId,
+            clientId: request.clientId,
+            freelancerId: request.freelancerId,
+          );
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatView(
+          chatId: chatId,
+          otherUserName: request.freelancerName.isEmpty
+              ? 'Freelancer'
+              : request.freelancerName,
+          otherUserId: request.freelancerId,
+          otherUserRole: 'freelancer',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAcceptedChatAction(AnnouncementRequest request) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('announcement_requests')
+          .doc(request.id)
+          .snapshots(),
+      builder: (context, proposalSnapshot) {
+        final proposalData = proposalSnapshot.data?.data() ?? {};
+        final proposalChatId = (proposalData['chatId'] ?? '').toString().trim();
+        final chatLookupId = (proposalData['requestId'] ?? '').toString().trim();
+        final effectiveLookupId = chatLookupId.isEmpty ? request.id : chatLookupId;
+
+        return StreamBuilder<String?>(
+          stream: _chatController.watchChatIdForRequest(effectiveLookupId),
+          builder: (context, chatSnapshot) {
+            final resolvedChatId = (chatSnapshot.data ?? '').trim();
+            final hasChat =
+                proposalChatId.isNotEmpty || resolvedChatId.isNotEmpty;
+            final isLoading =
+                proposalSnapshot.connectionState == ConnectionState.waiting &&
+                !hasChat;
+
+            return SizedBox(
+              width: double.infinity,
+              height: 42,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                ),
+                onPressed: () => _openAcceptedProposalChat(
+                  request: request,
+                  chatLookupId: effectiveLookupId,
+                  initialChatId: proposalChatId.isNotEmpty
+                      ? proposalChatId
+                      : resolvedChatId,
+                ),
+                child: hasChat
+                    ? const Icon(Icons.chat_bubble_outline, size: 18)
+                    : isLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.chat_bubble_outline, size: 18),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildCard(AnnouncementRequest request) {
@@ -192,6 +287,10 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
                 ),
               ],
             ),
+          ],
+          if (request.status.toLowerCase() == 'accepted') ...[
+            const SizedBox(height: 12),
+            _buildAcceptedChatAction(request),
           ],
         ],
       ),

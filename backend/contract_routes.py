@@ -5,6 +5,7 @@ from pdf_service import generate_contract_pdf
 from contract_controller import (
     approve_termination,
     approve_contract,
+    cancel_contract,
     cancel_termination,
     cancel_approval,
     delete_contract,
@@ -259,6 +260,30 @@ def disapprove_contract_api():
             "success": False,
             "error": str(error)
         }), 400
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
+
+
+@contract_routes.route("/cancel-contract", methods=["POST"])
+def cancel_contract_api():
+    try:
+        data = request.get_json(force=True)
+        request_id = data.get("requestId", "")
+        role = data.get("role", "")
+
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        result = cancel_contract(request_id, role)
+        status_code = 200 if result.get("success") else 400
+        return jsonify(result), status_code
 
     except Exception as error:
         return jsonify({

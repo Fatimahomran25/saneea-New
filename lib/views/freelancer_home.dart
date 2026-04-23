@@ -8,10 +8,11 @@ import 'browse_announcements_view.dart';
 import 'my_announcement_requests_view.dart';
 import '../controlles/freelancer_profile_controller.dart';
 import 'chat_list_view.dart';
+import 'contracts_list_screen.dart';
 import '../controlles/chat_controller.dart';
+import '../controlles/notification_navigation_service.dart';
 import '../controlles/request_notifications_controller.dart';
 import 'request_notifications_sheet.dart';
-import 'announcement_requests_view.dart';
 
 class FreelancerHomeView extends StatefulWidget {
   const FreelancerHomeView({super.key});
@@ -61,6 +62,15 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
     );
   }
 
+  void _openContracts() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ContractsListScreen(),
+      ),
+    );
+  }
+
   void _comingSoon(String title) {
     ScaffoldMessenger.of(
       context,
@@ -71,33 +81,7 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
     if (!mounted) return;
     Navigator.pop(context);
 
-    if (item.type == 'service_request' &&
-        item.requestId != null &&
-        item.requestId!.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              FreelancerIncomingRequestsView(initialRequestId: item.requestId),
-        ),
-      );
-      return;
-    }
-
-    if (item.type == 'announcement_request' &&
-        item.announcementId != null &&
-        item.announcementId!.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AnnouncementRequestsView(
-            announcementId: item.announcementId!,
-            announcementDescription: item.announcementDescription ?? '',
-          ),
-        ),
-      );
-      return;
-    }
+    await handleNotificationTap(context: context, notification: item);
   }
 
   void _openNotificationsSheet() {
@@ -211,7 +195,7 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
         primary: primary,
         onChatsTap: () => _comingSoon('Chats'),
         onHomeTap: () {},
-        onContractsTap: () => _comingSoon('Contracts'),
+        onContractsTap: _openContracts,
       ),
       body: SafeArea(
         child: LayoutBuilder(

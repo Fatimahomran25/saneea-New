@@ -21,6 +21,8 @@ import 'views/freelancer_profile.dart';
 import 'views/client_profile.dart';
 import 'views/chat_view.dart';
 import 'views/freelancer_incoming_requests_view.dart';
+import 'views/my_announcement_requests_view.dart';
+import 'views/my_requests_view.dart';
 
 final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -246,7 +248,14 @@ class _MyAppState extends State<MyApp> {
   Future<void> _handleNotificationTap(Map<String, dynamic> data) async {
     final type = (data['type'] ?? '').toString().trim().toLowerCase();
 
-    if (type == 'service_request') {
+    if (type == 'request_accepted') {
+      await _handleRequestAcceptedTap(data);
+      return;
+    }
+
+    if (type == 'service_request' ||
+        type == 'request_deleted' ||
+        type == 'request_rejected') {
       await _handleServiceRequestTap(data);
       return;
     }
@@ -256,7 +265,45 @@ class _MyAppState extends State<MyApp> {
       return;
     }
 
+    if (type == 'proposal_accepted' || type == 'proposal_rejected') {
+      await _handleProposalStatusTap(data);
+      return;
+    }
+
     await _handleNotificationTapWithChatData(data);
+  }
+
+  Future<void> _handleRequestAcceptedTap(Map<String, dynamic> data) async {
+    final receiverId = (data['receiverId'] ?? '').toString();
+    final requestId = (data['requestId'] ?? '').toString();
+    final chatId = (data['chatId'] ?? '').toString();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    if (chatId.isNotEmpty) {
+      await _handleNotificationTapWithChatData(data);
+      return;
+    }
+
+    if (requestId.isEmpty) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => MyRequestsView(initialRequestId: requestId),
+      ),
+    );
   }
 
   Future<void> _handleServiceRequestTap(Map<String, dynamic> data) async {
@@ -310,6 +357,30 @@ class _MyAppState extends State<MyApp> {
     navigatorKey.currentState?.push(
       MaterialPageRoute(
         builder: (_) => FreelancerProfileView(userId: senderId),
+      ),
+    );
+  }
+
+  Future<void> _handleProposalStatusTap(Map<String, dynamic> data) async {
+    final receiverId = (data['receiverId'] ?? '').toString();
+    final proposalId = (data['proposalId'] ?? '').toString();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => MyAnnouncementRequestsView(
+          initialProposalId: proposalId.isEmpty ? null : proposalId,
+        ),
       ),
     );
   }

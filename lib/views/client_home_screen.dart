@@ -12,8 +12,10 @@ import 'freelancer_profile.dart';
 import 'my_requests_view.dart';
 import 'recommendation_view.dart';
 import 'anouncment_view.dart';
+import 'contracts_list_screen.dart';
 import '../controlles/chat_controller.dart';
 import 'chat_list_view.dart';
+import '../controlles/notification_navigation_service.dart';
 import '../controlles/request_notifications_controller.dart';
 import 'request_notifications_sheet.dart';
 
@@ -182,6 +184,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
+  void _openContracts() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ContractsListScreen()),
+    );
+  }
+
   void _openCategoryPage(_CategoryModel category) {
     Navigator.push(
       context,
@@ -198,19 +207,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     if (!mounted) return;
     Navigator.pop(context);
 
-    if (item.type == 'announcement_request' && item.senderId.isNotEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => FreelancerProfileView(userId: item.senderId),
-        ),
-      );
-      return;
-    }
-
-    if (item.type == 'service_request') {
-      _openAllServiceRequests();
-    }
+    await handleNotificationTap(context: context, notification: item);
   }
 
   void _openNotificationsSheet() {
@@ -666,9 +663,31 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     const SizedBox(height: 10),
                   ],
                 ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => _deleteAnnouncement(context, doc),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if ((data['status'] ?? 'pending') == 'pending')
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AnnouncementView(
+                                announcementId: doc.id,
+                                initialDescription: data['description'],
+                                initialBudget: data['budget'],
+                                initialDeadline: data['deadline'],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _deleteAnnouncement(context, doc),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -685,6 +704,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       bottomNavigationBar: _BottomNavigationBar(
         primary: _primary,
         onCenterTap: _openAnnouncement,
+        onContractsTap: _openContracts,
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -1100,9 +1120,31 @@ class AllServiceRequestsView extends StatelessWidget {
                         const SizedBox(height: 10),
                       ],
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => _deleteAnnouncement(context, doc),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if ((data['status'] ?? 'pending') == 'pending')
+                          IconButton(
+                            icon: const Icon(Icons.edit_outlined),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => AnnouncementView(
+                                    announcementId: doc.id,
+                                    initialDescription: data['description'],
+                                    initialBudget: data['budget'],
+                                    initialDeadline: data['deadline'],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => _deleteAnnouncement(context, doc),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -1163,10 +1205,12 @@ class _CategoryItem extends StatelessWidget {
 class _BottomNavigationBar extends StatelessWidget {
   final Color primary;
   final VoidCallback onCenterTap;
+  final VoidCallback onContractsTap;
 
   const _BottomNavigationBar({
     required this.primary,
     required this.onCenterTap,
+    required this.onContractsTap,
   });
 
   @override
@@ -1202,7 +1246,7 @@ class _BottomNavigationBar extends StatelessWidget {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+                    Icon(Icons.forum_outlined, color: primary, size: 28),
                     if (unreadCount > 0)
                       Positioned(
                         right: -8,
@@ -1243,7 +1287,7 @@ class _BottomNavigationBar extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const MyRequestsView()),
               );
             },
-            child: Icon(Icons.assignment_outlined, color: primary, size: 26),
+            child: Icon(Icons.inbox_outlined, color: primary, size: 28),
           ),
           GestureDetector(
             onTap: onCenterTap,
@@ -1253,7 +1297,20 @@ class _BottomNavigationBar extends StatelessWidget {
               child: const Icon(Icons.add, size: 34, color: Colors.white),
             ),
           ),
-          Icon(Icons.work_outline, color: primary, size: 26),
+          GestureDetector(
+            onTap: onContractsTap,
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: Icon(
+                  Icons.description_outlined,
+                  color: primary,
+                  size: 27,
+                ),
+              ),
+            ),
+          ),
           const SizedBox(width: 26),
         ],
       ),

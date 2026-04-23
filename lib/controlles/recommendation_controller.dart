@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
+import '../config/api_config.dart';
 import '../models/recommendation_model.dart';
 import 'dart:async';
 
@@ -9,8 +10,7 @@ class RecommendationController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  final String backendBaseUrl =
-      "http://192.168.1.18:5001"; // يتغير حسب الجهاز/المحاكي
+  final String backendBaseUrl = ApiConfig.baseUrl;
 
   String _requestDocId({
     required String clientId,
@@ -25,6 +25,42 @@ class RecommendationController {
     return text;
   }
 
+  String _displayName(Map<String, dynamic> data, String fallback) {
+    final firstName = (data['firstName'] ?? '').toString().trim();
+    final lastName = (data['lastName'] ?? '').toString().trim();
+    final fullName = '$firstName $lastName'.trim();
+    final name = (data['name'] ?? '').toString().trim();
+
+    if (fullName.isNotEmpty) return fullName;
+    if (name.isNotEmpty) return name;
+    return fallback;
+  }
+
+  Future<String> _loadAnnouncementDescription({
+    required String clientId,
+    required String announcementId,
+  }) async {
+    final normalizedClientId = clientId.trim();
+    final normalizedAnnouncementId = announcementId.trim();
+
+    if (normalizedClientId.isEmpty || normalizedAnnouncementId.isEmpty) {
+      return '';
+    }
+
+    try {
+      final announcementDoc = await _firestore
+          .collection('users')
+          .doc(normalizedClientId)
+          .collection('announcements')
+          .doc(normalizedAnnouncementId)
+          .get();
+
+      return (announcementDoc.data()?['description'] ?? '').toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
   Future<void> _createRequestNotification({
     required String receiverId,
     required String senderId,
@@ -34,6 +70,9 @@ class RecommendationController {
     required String type,
     required String snippet,
     String? requestId,
+    String? proposalId,
+    String? contractId,
+    String? chatId,
     String? announcementId,
     String? announcementDescription,
   }) async {
@@ -46,8 +85,12 @@ class RecommendationController {
       'actionText': actionText,
       'snippet': snippet,
       'requestId': requestId,
+      'proposalId': proposalId,
+      'contractId': contractId,
+      'chatId': chatId,
       'announcementId': announcementId,
       'announcementDescription': announcementDescription,
+      'debugSource': 'RECOMMENDATION_CONTROLLER',
       'isRead': false,
       'createdAt': FieldValue.serverTimestamp(),
     };
@@ -303,11 +346,74 @@ class RecommendationController {
     );
   }
 
-  Future<void> cancelRequest({required String requestId}) async {
+  Future<void> updateRequest({
+    required String requestId,
+    required String description,
+    required double budget,
+    required String deadline,
+  }) async {
     await _firestore.collection('requests').doc(requestId).update({
+      'description': description,
+      'budget': budget,
+      'deadline': deadline,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'isEdited': true,
+    });
+  }
+
+  Future<void> cancelRequest({required String requestId}) async {
+    final currentUser = _auth.currentUser;
+    final requestRef = _firestore.collection('requests').doc(requestId);
+    final requestDoc = await requestRef.get();
+    final requestData = requestDoc.data();
+    final previousStatus = (requestData?['status'] ?? '')
+        .toString()
+        .toLowerCase();
+
+    await requestRef.update({
       'status': 'cancelled',
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    if (currentUser == null ||
+        requestData == null ||
+        previousStatus == 'cancelled') {
+      return;
+    }
+
+    final clientId = (requestData['clientId'] ?? '').toString();
+    final freelancerId = (requestData['freelancerId'] ?? '').toString();
+
+    if (clientId.isEmpty ||
+        freelancerId.isEmpty ||
+        currentUser.uid != clientId) {
+      return;
+    }
+
+    final clientDoc = await _firestore
+        .collection('users')
+        .doc(currentUser.uid)
+        .get();
+    final clientData = clientDoc.data() ?? <String, dynamic>{};
+    final senderName = _displayName(
+      clientData,
+      (requestData['clientName'] ?? 'Client').toString(),
+    );
+    final senderProfileUrl =
+        (clientData['photoUrl'] ?? clientData['profile'] ?? '').toString();
+
+    await _createRequestNotification(
+      receiverId: freelancerId,
+      senderId: currentUser.uid,
+      senderName: senderName,
+      senderProfileUrl: senderProfileUrl,
+      actionText: 'deleted a service request',
+      type: 'request_deleted',
+      snippet: _singleLineSnippet(
+        (requestData['description'] ?? '').toString(),
+      ),
+      requestId: requestId,
+    );
   }
 
   Future<Map<String, String>> getPendingRequestsForCurrentClient() async {
@@ -419,13 +525,18 @@ class RecommendationController {
       'createdAt': FieldValue.serverTimestamp(),
     };
 
+    String proposalId;
     if (existing.docs.isNotEmpty) {
+      proposalId = existing.docs.first.id;
       await _firestore
           .collection('announcement_requests')
-          .doc(existing.docs.first.id)
+          .doc(proposalId)
           .update(requestData);
     } else {
-      await _firestore.collection('announcement_requests').add(requestData);
+      final proposalRef = await _firestore
+          .collection('announcement_requests')
+          .add(requestData);
+      proposalId = proposalRef.id;
     }
 
     await _createRequestNotification(
@@ -436,6 +547,7 @@ class RecommendationController {
       actionText: 'sent you a proposal',
       type: 'announcement_request',
       snippet: _singleLineSnippet(proposalText),
+      proposalId: proposalId,
       announcementId: announcementId,
       announcementDescription: _singleLineSnippet(announcementDescription),
     );
@@ -458,9 +570,71 @@ class RecommendationController {
     required String requestId,
     required String status,
   }) async {
-    await _firestore.collection('announcement_requests').doc(requestId).update({
-      'status': status,
+    final normalizedStatus = status.trim().toLowerCase();
+    final requestRef = _firestore
+        .collection('announcement_requests')
+        .doc(requestId);
+    final requestDoc = await requestRef.get();
+    final requestData = requestDoc.data();
+    final previousStatus = (requestData?['status'] ?? '')
+        .toString()
+        .toLowerCase();
+
+    await requestRef.update({
+      'status': normalizedStatus,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null ||
+        requestData == null ||
+        previousStatus == normalizedStatus ||
+        (normalizedStatus != 'accepted' && normalizedStatus != 'rejected')) {
+      return;
+    }
+
+    final clientId = (requestData['clientId'] ?? '').toString();
+    final freelancerId = (requestData['freelancerId'] ?? '').toString();
+
+    if (clientId.isEmpty ||
+        freelancerId.isEmpty ||
+        currentUser.uid != clientId) {
+      return;
+    }
+
+    final clientDoc = await _firestore
+        .collection('users')
+        .doc(currentUser.uid)
+        .get();
+    final clientData = clientDoc.data() ?? <String, dynamic>{};
+    final senderName = _displayName(clientData, 'Client');
+    final senderProfileUrl =
+        (clientData['photoUrl'] ?? clientData['profile'] ?? '').toString();
+    final announcementId = (requestData['announcementId'] ?? '').toString();
+    final announcementDescription = await _loadAnnouncementDescription(
+      clientId: clientId,
+      announcementId: announcementId,
+    );
+    final snippetSource = announcementDescription.isNotEmpty
+        ? announcementDescription
+        : (requestData['proposalText'] ?? '').toString();
+
+    await _createRequestNotification(
+      receiverId: freelancerId,
+      senderId: currentUser.uid,
+      senderName: senderName,
+      senderProfileUrl: senderProfileUrl,
+      actionText: normalizedStatus == 'accepted'
+          ? 'accepted your proposal'
+          : 'rejected your proposal',
+      type: normalizedStatus == 'accepted'
+          ? 'proposal_accepted'
+          : 'proposal_rejected',
+      snippet: _singleLineSnippet(snippetSource),
+      proposalId: requestId,
+      announcementId: announcementId,
+      announcementDescription: _singleLineSnippet(announcementDescription),
+    );
   }
 
   Future<List<FreelancerAnnouncementRequest>>

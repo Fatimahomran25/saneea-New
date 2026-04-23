@@ -11,6 +11,9 @@ class RequestNotificationItem {
   final String snippet;
   final String receiverId;
   final String? requestId;
+  final String? proposalId;
+  final String? contractId;
+  final String? chatId;
   final String? announcementId;
   final String? announcementDescription;
   final bool isRead;
@@ -26,6 +29,9 @@ class RequestNotificationItem {
     required this.snippet,
     required this.receiverId,
     required this.requestId,
+    required this.proposalId,
+    required this.contractId,
+    required this.chatId,
     required this.announcementId,
     required this.announcementDescription,
     required this.isRead,
@@ -36,22 +42,77 @@ class RequestNotificationItem {
     DocumentSnapshot<Map<String, dynamic>> doc,
   ) {
     final data = doc.data() ?? <String, dynamic>{};
+    final type = _clean(data['type']);
+    final actionText = _actionTextForType(
+      type: type,
+      rawActionText: data['actionText'],
+    );
+    final snippet = _snippetForType(
+      type: type,
+      rawSnippet: data['snippet'],
+    );
 
     return RequestNotificationItem(
       id: doc.id,
-      type: (data['type'] ?? '').toString(),
-      senderId: (data['senderId'] ?? '').toString(),
-      senderName: (data['senderName'] ?? '').toString(),
-      senderProfileUrl: (data['senderProfileUrl'] ?? '').toString(),
-      actionText: (data['actionText'] ?? '').toString(),
-      snippet: (data['snippet'] ?? '').toString(),
-      receiverId: (data['receiverId'] ?? '').toString(),
+      type: type,
+      senderId: _clean(data['senderId']),
+      senderName: _clean(data['senderName']),
+      senderProfileUrl: _clean(data['senderProfileUrl']),
+      actionText: actionText,
+      snippet: snippet,
+      receiverId: _clean(data['receiverId']),
       requestId: data['requestId']?.toString(),
+      proposalId: data['proposalId']?.toString(),
+      contractId: data['contractId']?.toString(),
+      chatId: data['chatId']?.toString(),
       announcementId: data['announcementId']?.toString(),
       announcementDescription: data['announcementDescription']?.toString(),
       isRead: data['isRead'] == true,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );
+  }
+
+  static String _clean(dynamic value) {
+    return (value ?? '').toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  static String _actionTextForType({
+    required String type,
+    required dynamic rawActionText,
+  }) {
+    final actionText = _clean(rawActionText);
+    if (actionText.isNotEmpty) return actionText;
+
+    switch (type) {
+      case 'contract_generated':
+        return 'generated a contract draft';
+      case 'contract_approved':
+        return 'approved your contract';
+      case 'contract_disapproved':
+        return 'rejected your contract';
+      case 'contract_termination_requested':
+        return 'requested to terminate the contract';
+      default:
+        return '';
+    }
+  }
+
+  static String _snippetForType({
+    required String type,
+    required dynamic rawSnippet,
+  }) {
+    final snippet = _clean(rawSnippet);
+    if (snippet.isNotEmpty) return snippet;
+
+    switch (type) {
+      case 'contract_generated':
+      case 'contract_approved':
+      case 'contract_disapproved':
+      case 'contract_termination_requested':
+        return 'Contract Agreement';
+      default:
+        return '';
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../controlles/recommendation_controller.dart';
 import 'anouncment_view.dart';
 import 'my_requests_view.dart';
@@ -29,14 +30,31 @@ class _SendRequestButtonState extends State<SendRequestButton> {
   static const Color primary = Color(0xFF5A3E9E);
 
   final RecommendationController _controller = RecommendationController();
+  final ChatController _chatController = ChatController();
 
   bool _isLoading = true;
   String? _pendingRequestId;
   String? _status;
+  String? _chatId;
+
   @override
   void initState() {
     super.initState();
     _loadRequestState();
+  }
+
+  @override
+  void didUpdateWidget(covariant SendRequestButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.freelancerId != widget.freelancerId) {
+      setState(() {
+        _isLoading = true;
+        _pendingRequestId = null;
+        _status = null;
+        _chatId = null;
+      });
+      _loadRequestState();
+    }
   }
 
   Future<void> _loadRequestState() async {
@@ -45,11 +63,18 @@ class _SendRequestButtonState extends State<SendRequestButton> {
         freelancerId: widget.freelancerId,
       );
 
+      final requestId = request?['id'] as String?;
+      final status = (request?['status'] ?? '').toString().toLowerCase();
+      final chatId = requestId != null && status == 'accepted'
+          ? await _chatController.getExistingChatIdForRequest(requestId)
+          : null;
+
       if (!mounted) return;
 
       setState(() {
-        _pendingRequestId = request?['id'] as String?;
+        _pendingRequestId = requestId;
         _status = request?['status'] as String?;
+        _chatId = chatId;
         _isLoading = false;
       });
     } catch (_) {
@@ -58,6 +83,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
       setState(() {
         _pendingRequestId = null;
         _status = null;
+        _chatId = null;
         _isLoading = false;
       });
     }
@@ -99,12 +125,25 @@ class _SendRequestButtonState extends State<SendRequestButton> {
     if (!mounted) return;
 
     if (request != null) {
+      final requestId = request['id'] as String?;
+      final status = (request['status'] ?? '').toString().toLowerCase();
+      final chatId = requestId != null && status == 'accepted'
+          ? await _chatController.getExistingChatIdForRequest(requestId)
+          : null;
+
+      if (!mounted) return;
+
       setState(() {
-        _pendingRequestId = request['id'] as String?;
+        _pendingRequestId = requestId;
         _status = request['status'] as String?;
+        _chatId = chatId;
       });
 
-      _showAlreadyRequestedDialog();
+      if (status == 'accepted') {
+        await _openExistingChat(chatId ?? '');
+      } else {
+        _showAlreadyRequestedDialog();
+      }
       return;
     }
 
@@ -166,6 +205,8 @@ class _SendRequestButtonState extends State<SendRequestButton> {
 
       setState(() {
         _pendingRequestId = null;
+        _status = null;
+        _chatId = null;
         _isLoading = false;
       });
 
@@ -198,7 +239,103 @@ class _SendRequestButtonState extends State<SendRequestButton> {
     widget.onChanged?.call();
   }
 
-  @override
+  Future<void> _openExistingChat(String chatId) async {
+    final requestId = _pendingRequestId;
+
+    try {
+      String? existingChatId = chatId.trim();
+
+      if (requestId != null) {
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unable to open chat right now.')),
+          );
+          return;
+        }
+
+        existingChatId = await _chatController.createOrGetChat(
+          requestId: requestId,
+          clientId: currentUser.uid,
+          freelancerId: widget.freelancerId,
+        );
+      }
+
+      if (!mounted) return;
+
+      if (existingChatId == null || existingChatId.isEmpty) {
+        setState(() {
+          _chatId = null;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Chat is not available yet.')),
+        );
+        return;
+      }
+
+      final safeChatId = existingChatId;
+
+      setState(() {
+        _chatId = safeChatId;
+      });
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChatView(
+            chatId: safeChatId,
+            otherUserName: widget.freelancerName ?? 'Freelancer',
+            otherUserId: widget.freelancerId,
+            otherUserRole: 'freelancer',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open chat right now.')),
+      );
+    }
+  }
+
+  Widget _buildChatButton(String chatId) {
+    // 🔹 الحالة الأولى: الكارد (Top rated)
+    if (widget.iconOnly) {
+      return GestureDetector(
+        onTap: () => _openExistingChat(chatId),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(color: primary, shape: BoxShape.circle),
+          child: const Icon(
+            Icons.chat_bubble_outline,
+            color: Colors.white,
+            size: 18,
+          ),
+        ),
+      );
+    }
+
+    // 🔹 الحالة الثانية: زر كبير (مثلاً داخل شاشة ثانية)
+    return SizedBox(
+      width: double.infinity,
+      height: 40,
+      child: ElevatedButton(
+        onPressed: () => _openExistingChat(chatId),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: primary,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+        ),
+        child: const Icon(Icons.chat_bubble_outline, size: 20),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -214,40 +351,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
 
     // ✅ accepted → Chat فقط
     if (hasRequest && status == 'accepted') {
-      return SizedBox(
-        width: double.infinity,
-        height: 40,
-        child: ElevatedButton(
-          onPressed: () async {
-            final chatController = ChatController();
-
-            final chatId = await chatController.createOrGetChat(
-              requestId: _pendingRequestId!,
-              clientId: chatController.currentUserId!,
-              freelancerId: widget.freelancerId,
-            );
-
-            if (!context.mounted) return;
-
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ChatView(
-                  chatId: chatId,
-                  otherUserName: widget.freelancerName ?? 'Freelancer',
-                  otherUserId: widget.freelancerId,
-                  otherUserRole: 'freelancer',
-                ),
-              ),
-            );
-          },
-          style: ElevatedButton.styleFrom(backgroundColor: primary),
-          child: const Text(
-            'Chat',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-        ),
-      );
+      return _buildChatButton((_chatId ?? '').trim());
     }
 
     // ✅ no request → Send Request
@@ -283,7 +387,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
                     Icon(Icons.send_outlined, color: Colors.white, size: 16),
                     SizedBox(width: 6),
                     Text(
-                      'Send Service Request',
+                      'Send Request',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -305,15 +409,25 @@ class _SendRequestButtonState extends State<SendRequestButton> {
             onTap: _showAlreadyRequestedDialog,
             borderRadius: BorderRadius.circular(30),
             child: Container(
-              padding: const EdgeInsets.all(11),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
               decoration: BoxDecoration(
                 color: const Color(0xFF5A3E9E).withOpacity(0.12),
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(20),
               ),
-              child: const Icon(
-                Icons.check_circle,
-                color: Color(0xFF5A3E9E),
-                size: 18,
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_circle, color: Color(0xFF5A3E9E), size: 14),
+                  SizedBox(width: 4),
+                  Text(
+                    'Requested',
+                    style: TextStyle(
+                      color: Color(0xFF5A3E9E),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -469,7 +583,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
                   Icon(Icons.send_outlined, color: Colors.white, size: 16),
                   SizedBox(width: 6),
                   Text(
-                    'Send Service Request',
+                    'Send Request',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 12,

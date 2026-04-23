@@ -5,9 +5,12 @@ import '../models/recommendation_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../views/chat_view.dart';
 import '../controlles/chat_controller.dart';
+import 'anouncment_view.dart';
 
 class MyRequestsView extends StatefulWidget {
-  const MyRequestsView({super.key});
+  final String? initialRequestId;
+
+  const MyRequestsView({super.key, this.initialRequestId});
 
   @override
   State<MyRequestsView> createState() => _MyRequestsViewState();
@@ -17,6 +20,7 @@ class _MyRequestsViewState extends State<MyRequestsView> {
   static const primary = Color(0xFF5A3E9E);
 
   final RecommendationController _controller = RecommendationController();
+  final ChatController _chatController = ChatController();
 
   bool _isLoading = true;
   List<ClientRequest> _requests = [];
@@ -29,7 +33,10 @@ class _MyRequestsViewState extends State<MyRequestsView> {
 
   Future<void> _loadRequests() async {
     try {
-      final data = await _controller.getMyRequests();
+      final initialRequestId = widget.initialRequestId?.trim();
+      final data = initialRequestId != null && initialRequestId.isNotEmpty
+          ? await _loadSingleRequest(initialRequestId)
+          : await _controller.getMyRequests();
 
       if (!mounted) return;
 
@@ -49,6 +56,26 @@ class _MyRequestsViewState extends State<MyRequestsView> {
         });
       }
     }
+  }
+
+  Future<List<ClientRequest>> _loadSingleRequest(String requestId) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      throw Exception('No logged in client found.');
+    }
+
+    final doc = await FirebaseFirestore.instance
+        .collection('requests')
+        .doc(requestId)
+        .get();
+
+    final data = doc.data();
+    final clientId = (data?['clientId'] ?? '').toString();
+    if (data == null || clientId != currentUser.uid) {
+      return [];
+    }
+
+    return [ClientRequest.fromMap(doc.id, data)];
   }
 
   Color _statusColor(String status) {
@@ -108,6 +135,113 @@ class _MyRequestsViewState extends State<MyRequestsView> {
     ).showSnackBar(const SnackBar(content: Text('Request cancelled')));
 
     _loadRequests();
+  }
+
+  Future<void> _openExistingChat(ClientRequest request) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    if (currentUser == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open chat right now.')),
+      );
+      return;
+    }
+
+    final chatId = await _chatController.createOrGetChat(
+      requestId: request.id,
+      clientId: currentUser.uid,
+      freelancerId: request.freelancerId,
+    );
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatView(
+          chatId: chatId,
+          otherUserName: request.freelancerName,
+          otherUserId: request.freelancerId,
+          otherUserRole: 'freelancer',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatActionButton({
+    required VoidCallback onPressed,
+    bool isEnabled = true,
+    bool isLoading = false,
+  }) {
+    return IgnorePointer(
+      ignoring: !isEnabled,
+      child: Opacity(
+        opacity: isEnabled ? 1 : 0.7,
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5A3E9E),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            onPressed: onPressed,
+            child: isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text('Chat'),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAcceptedChatAction(ClientRequest request) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('requests')
+          .doc(request.id)
+          .snapshots(),
+      builder: (context, requestSnapshot) {
+        final storedChatId = (requestSnapshot.data?.data()?['chatId'] ?? '')
+            .toString()
+            .trim();
+
+        if (storedChatId.isNotEmpty) {
+          return _buildChatActionButton(
+            onPressed: () => _openExistingChat(request),
+          );
+        }
+
+        return StreamBuilder<String?>(
+          stream: _chatController.watchChatIdForRequest(request.id),
+          builder: (context, chatSnapshot) {
+            final resolvedChatId = (chatSnapshot.data ?? '').trim();
+            final hasChat =
+                storedChatId.isNotEmpty || resolvedChatId.isNotEmpty;
+            final isLoading =
+                requestSnapshot.connectionState == ConnectionState.waiting ||
+                chatSnapshot.connectionState == ConnectionState.waiting;
+
+            return _buildChatActionButton(
+              onPressed: () => _openExistingChat(request),
+              isEnabled: true,
+              isLoading: !hasChat && isLoading,
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildRequestCard(ClientRequest request) {
@@ -178,6 +312,23 @@ class _MyRequestsViewState extends State<MyRequestsView> {
                           ),
                         ),
                       ),
+                      if (request.status.toLowerCase() == 'pending')
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AnnouncementView(
+                                  requestId: request.id,
+                                  initialDescription: request.description,
+                                  initialBudget: request.budget,
+                                  initialDeadline: request.deadline,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
@@ -273,43 +424,7 @@ class _MyRequestsViewState extends State<MyRequestsView> {
           ],
           if (request.status.toLowerCase() == 'accepted') ...[
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5A3E9E),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                onPressed: () async {
-                  final chatController = ChatController();
-
-                  final chatId = await chatController.createOrGetChat(
-                    requestId: request.id,
-                    clientId: FirebaseAuth.instance.currentUser!.uid,
-                    freelancerId: request.freelancerId,
-                  );
-
-                  if (!mounted) return;
-
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ChatView(
-                        chatId: chatId,
-                        otherUserName: request.freelancerName,
-                        otherUserId: request.freelancerId,
-                        otherUserRole: 'freelancer',
-                      ),
-                    ),
-                  );
-                },
-                child: const Text('Chat'),
-              ),
-            ),
+            _buildAcceptedChatAction(request),
           ],
         ],
       ),

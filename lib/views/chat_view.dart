@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
@@ -7,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:image_picker/image_picker.dart';
+import '../config/api_config.dart';
 import '../controlles/chat_controller.dart';
 import '../models/message_model.dart';
 import 'freelancer_client_profile_view.dart';
@@ -45,10 +47,7 @@ String _friendlyErrorMessage(Object error) {
   return 'Something went wrong';
 }
 
-Future<void> _showErrorDialogForContext(
-  BuildContext context,
-  String message,
-) {
+Future<void> _showErrorDialogForContext(BuildContext context, String message) {
   return showDialog<void>(
     context: context,
     builder: (dialogContext) {
@@ -92,6 +91,7 @@ class _ChatViewState extends State<ChatView> {
   final ImagePicker _picker = ImagePicker();
   final ChatController _controller = ChatController();
   final TextEditingController _messageController = TextEditingController();
+  final GlobalKey<FormState> _contractFormKey = GlobalKey<FormState>();
   Map<String, dynamic>? _contractData;
   bool _isGeneratingContract = false;
   bool _isSavingContract = false;
@@ -145,7 +145,8 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.chatId)
           .get();
 
-      final requestId = _extractRequestId(chatDoc.data());
+      final chatData = chatDoc.data();
+      final requestId = _extractRequestId(chatData);
       debugPrint('requestId: $requestId');
       debugPrint('CHAT ID: ${widget.chatId}');
       debugPrint('REQUEST ID: $requestId');
@@ -290,11 +291,7 @@ class _ChatViewState extends State<ChatView> {
     } catch (e) {
       if (!mounted) return;
       debugPrint('Pick images error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     }
   }
 
@@ -347,11 +344,7 @@ class _ChatViewState extends State<ChatView> {
     } catch (e) {
       if (!mounted) return;
       debugPrint('Send message error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (mounted) {
         setState(() {
@@ -521,6 +514,93 @@ class _ChatViewState extends State<ChatView> {
     return null;
   }
 
+  Future<void> _pickContractDeadline() async {
+    final parsedDeadline = _parseContractDeadline(_editableDeadline);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initialDate =
+        parsedDeadline != null && !parsedDeadline.isBefore(today)
+        ? parsedDeadline
+        : now;
+
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: now,
+      lastDate: DateTime(2100),
+    );
+
+    if (pickedDate == null) return;
+
+    _editableDeadline =
+        '${pickedDate.year.toString().padLeft(4, '0')}-'
+        '${pickedDate.month.toString().padLeft(2, '0')}-'
+        '${pickedDate.day.toString().padLeft(2, '0')}';
+
+    setState(() {});
+  }
+
+  String? _validateContractInputs() {
+    final amountText = _editableAmount.trim();
+    if (amountText.isEmpty) {
+      return 'Amount must not be empty';
+    }
+
+    final amount = double.tryParse(amountText);
+    if (amount == null || amount <= 0) {
+      return 'Amount must be a valid positive number';
+    }
+
+    final deadlineText = _editableDeadline.trim();
+    if (deadlineText.isEmpty) {
+      return 'Deadline must not be empty';
+    }
+    if (_parseContractDeadline(deadlineText) == null) {
+      return 'Deadline is invalid';
+    }
+
+    for (final clause in _pendingCustomClauses) {
+      final title = (clause['title'] ?? '').trim();
+      final content = (clause['content'] ?? '').trim();
+
+      if (title.isEmpty && content.isEmpty) {
+        continue;
+      }
+      if (title.isEmpty || content.isEmpty) {
+        return 'Every pending custom clause must have title and content';
+      }
+      if (title.length > 80) {
+        return 'Clause title must be 80 characters or less';
+      }
+      if (content.length > 500) {
+        return 'Clause content must be 500 characters or less';
+      }
+    }
+
+    return null;
+  }
+
+  String? _validateContractDescription(String? value) {
+    final serviceDescription = (value ?? '').trim();
+    if (serviceDescription.isEmpty) {
+      return 'Service description must not be empty';
+    }
+    if (RegExp(
+      r'(https?:\/\/|www\.)',
+      caseSensitive: false,
+    ).hasMatch(serviceDescription)) {
+      return 'Service description must not contain links';
+    }
+    if (RegExp(r'^\d+$').hasMatch(serviceDescription)) {
+      return 'Service description must not contain only digits';
+    }
+    if (serviceDescription.length > 150) {
+      return 'Service description must be 150 characters or less';
+    }
+
+    return null;
+  }
+
   bool _hasContractDeadlinePassed(String rawDeadline) {
     final parsedDeadline = _parseContractDeadline(rawDeadline);
     if (parsedDeadline == null) return false;
@@ -538,9 +618,8 @@ class _ChatViewState extends State<ChatView> {
                 as Object?)
             ?.toString()
             .trim()
-            .toLowerCase() ??
-        message.contractStatus.trim().toLowerCase();
-    if (currentContractStatus == 'terminated') {
+            .toLowerCase();
+    if (currentContractStatus != 'approved') {
       return const SizedBox.shrink();
     }
 
@@ -552,8 +631,35 @@ class _ChatViewState extends State<ChatView> {
         const <String, dynamic>{};
     final contractDeadline = (timeline['deadline'] ?? '').toString();
     final hideTerminateButton = _hasContractDeadlinePassed(contractDeadline);
-    final isApprovedContract =
-        message.contractStatus.trim().toLowerCase() == 'approved';
+    final isApprovedContract = currentContractStatus == 'approved';
+    final cardTitleText = currentContractStatus == 'approved'
+        ? 'Approved Contract'
+        : currentContractStatus == 'rejected'
+        ? 'Rejected Contract'
+        : currentContractStatus == 'termination_pending'
+        ? 'Contract'
+        : 'Generated Contract';
+    final statusChipText = currentContractStatus == 'approved'
+        ? 'Approved'
+        : currentContractStatus == 'rejected'
+        ? 'Rejected'
+        : currentContractStatus == 'termination_pending'
+        ? 'Termination Pending'
+        : 'Waiting';
+    final statusChipBackgroundColor = currentContractStatus == 'approved'
+        ? const Color(0xFFE8F5E9)
+        : currentContractStatus == 'rejected'
+        ? const Color(0xFFFFEBEE)
+        : currentContractStatus == 'termination_pending'
+        ? const Color(0xFFFFF4E5)
+        : const Color(0xFFFFF4E5);
+    final statusChipTextColor = currentContractStatus == 'approved'
+        ? const Color(0xFF2E7D32)
+        : currentContractStatus == 'rejected'
+        ? Colors.redAccent
+        : currentContractStatus == 'termination_pending'
+        ? const Color(0xFFEF6C00)
+        : const Color(0xFFEF6C00);
     final summaryLines = message.contractSummary
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
@@ -579,9 +685,9 @@ class _ChatViewState extends State<ChatView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Approved Contract',
-              style: TextStyle(
+            Text(
+              cardTitleText,
+              style: const TextStyle(
                 color: primary,
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
@@ -591,13 +697,13 @@ class _ChatViewState extends State<ChatView> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
+                color: statusChipBackgroundColor,
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text(
-                'Approved',
+              child: Text(
+                statusChipText,
                 style: TextStyle(
-                  color: Color(0xFF2E7D32),
+                  color: statusChipTextColor,
                   fontWeight: FontWeight.w600,
                   fontSize: 12.5,
                 ),
@@ -690,26 +796,12 @@ class _ChatViewState extends State<ChatView> {
                 .doc(widget.chatId)
                 .get();
 
-            final requestId = _extractRequestId(chatDoc.data());
-
-            final requestDoc = await FirebaseFirestore.instance
-                .collection('requests')
-                .doc(requestId)
-                .get();
-
-            final existingContractData = requestDoc.data()?['contractData'];
-
-            if (existingContractData != null && mounted) {
-              setState(() {
-                _contractData = Map<String, dynamic>.from(
-                  existingContractData as Map,
-                );
-              });
-            }
+            final chatData = chatDoc.data();
+            final requestId = _extractRequestId(chatData);
 
             final response = await http.post(
               Uri.parse(
-                'http://10.0.2.2:5001/generate-contract-from-request-id',
+                '${ApiConfig.baseUrl}/generate-contract-from-request-id',
               ),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode({'requestId': requestId}),
@@ -720,14 +812,49 @@ class _ChatViewState extends State<ChatView> {
               debugPrint('API response: $data');
 
               final rawContractData = data['contractData'];
+              Map<String, dynamic>? freshContractData;
+
+              if (rawContractData is Map) {
+                freshContractData = Map<String, dynamic>.from(rawContractData);
+
+                final approval = Map<String, dynamic>.from(
+                  (freshContractData['approval'] as Map?) ?? const {},
+                );
+                final freshStatus = (approval['contractStatus'] ?? '')
+                    .toString()
+                    .trim()
+                    .toLowerCase();
+
+                approval['clientApproved'] = false;
+                approval['freelancerApproved'] = false;
+                approval['contractStatus'] = freshStatus == 'pending_approval'
+                    ? 'pending_approval'
+                    : 'draft';
+                approval.remove('termination');
+
+                freshContractData['approval'] = approval;
+                freshContractData['signatures'] = {
+                  'clientSignature': null,
+                  'freelancerSignature': null,
+                };
+              }
 
               if (!mounted) return;
 
               setState(() {
-                _contractData = rawContractData != null
-                    ? Map<String, dynamic>.from(rawContractData as Map)
-                    : null;
+                _contractData = freshContractData;
               });
+
+              if (freshContractData != null) {
+                await _createContractNotification(
+                  type: 'contract_generated',
+                  actionText: 'generated a contract draft',
+                  requestId: requestId,
+                  chatData: chatData,
+                  contractData: freshContractData,
+                  notifyBothUsers: true,
+                );
+              }
 
               debugPrint('Stored contract data: $_contractData');
 
@@ -829,6 +956,18 @@ class _ChatViewState extends State<ChatView> {
         const <String, dynamic>{};
 
     if (_isEditingContract) {
+      final formState = _contractFormKey.currentState;
+      if (formState != null && !formState.validate()) {
+        return;
+      }
+
+      final validationError = _validateContractInputs();
+
+      if (validationError != null) {
+        _showErrorDialog(validationError);
+        return;
+      }
+
       final updatedContractData = Map<String, dynamic>.from(contractData);
       final updatedService = Map<String, dynamic>.from(service);
       final updatedPayment = Map<String, dynamic>.from(payment);
@@ -874,7 +1013,7 @@ class _ChatViewState extends State<ChatView> {
         final requestId = _extractRequestId(chatDoc.data());
 
         final response = await http.post(
-          Uri.parse('http://10.0.2.2:5001/update-contract'),
+          Uri.parse('${ApiConfig.baseUrl}/update-contract'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'requestId': requestId,
@@ -903,19 +1042,13 @@ class _ChatViewState extends State<ChatView> {
           );
         } else {
           unawaited(
-            _showErrorDialog(
-              _friendlyErrorMessage(response.statusCode),
-            ),
+            _showErrorDialog(_friendlyErrorMessage(response.statusCode)),
           );
         }
       } catch (e) {
         if (!mounted) return;
         debugPrint('Update contract error: $e');
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(e),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
       } finally {
         if (!mounted) return;
 
@@ -942,17 +1075,30 @@ class _ChatViewState extends State<ChatView> {
     required ValueChanged<String> onChanged,
     int maxLines = 1,
     TextInputType? keyboardType,
+    int? maxLength,
+    List<TextInputFormatter>? inputFormatters,
+    bool readOnly = false,
+    Widget? suffixIcon,
+    String? Function(String?)? validator,
   }) {
     return TextFormField(
       initialValue: initialValue,
       onChanged: onChanged,
       maxLines: maxLines,
       keyboardType: keyboardType,
+      maxLength: maxLength,
+      inputFormatters: inputFormatters,
+      readOnly: readOnly,
+      validator: validator,
+      autovalidateMode: validator == null
+          ? AutovalidateMode.disabled
+          : AutovalidateMode.onUserInteraction,
       style: const TextStyle(color: Colors.black87, height: 1.4),
       decoration: InputDecoration(
         isDense: true,
         filled: true,
         fillColor: const Color(0xFFF8F6FC),
+        suffixIcon: suffixIcon,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 10,
           vertical: 10,
@@ -973,10 +1119,195 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
+  }
+
+  String _firstFilled(List<dynamic> values) {
+    for (final value in values) {
+      final text = (value ?? '').toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  String _singleLineSnippet(String rawText) {
+    return rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  String _displayName(Map<String, dynamic> data, String fallback) {
+    final firstName = (data['firstName'] ?? '').toString().trim();
+    final lastName = (data['lastName'] ?? '').toString().trim();
+    final fullName = '$firstName $lastName'.trim();
+    final name = (data['name'] ?? '').toString().trim();
+
+    if (fullName.isNotEmpty) return fullName;
+    if (name.isNotEmpty) return name;
+    return fallback;
+  }
+
   String _currentUserRole() {
     final otherRole = widget.otherUserRole.trim().toLowerCase();
     if (otherRole == 'client') return 'freelancer';
     return 'client';
+  }
+
+  String _contractNotificationSnippet(Map<String, dynamic>? contractData) {
+    final normalizedContractData = contractData ?? _contractData;
+    final service = _asMap(normalizedContractData?['service']);
+    final meta = _asMap(normalizedContractData?['meta']);
+
+    final snippet = _singleLineSnippet(
+      _firstFilled([
+        service['description'],
+        meta['title'],
+        'Contract Agreement',
+      ]),
+    );
+
+    return snippet.isEmpty ? 'Contract Agreement' : snippet;
+  }
+
+  String _contractNotificationId({
+    required Map<String, dynamic>? contractData,
+    required String requestId,
+  }) {
+    final normalizedContractData = contractData ?? _contractData;
+    final meta = _asMap(normalizedContractData?['meta']);
+
+    return _firstFilled([
+      normalizedContractData?['contractId'],
+      meta['contractId'],
+      requestId,
+    ]);
+  }
+
+  Future<void> _createContractNotification({
+    required String type,
+    required String actionText,
+    required String requestId,
+    required Map<String, dynamic>? chatData,
+    required Map<String, dynamic>? contractData,
+    bool notifyBothUsers = false,
+  }) async {
+    try {
+      final normalizedChatData = chatData ?? <String, dynamic>{};
+      final clientId = (normalizedChatData['clientId'] ?? '').toString().trim();
+      final freelancerId = (normalizedChatData['freelancerId'] ?? '')
+          .toString()
+          .trim();
+      final currentUserRole = _currentUserRole();
+      final normalizedType = type.trim();
+      final normalizedActionText = actionText.trim();
+      final normalizedRequestId = requestId.trim();
+      final senderId = currentUserRole == 'client' ? clientId : freelancerId;
+      final receiverIds =
+          (notifyBothUsers
+                  ? <String>{clientId, freelancerId}
+                  : <String>{
+                      currentUserRole == 'client' ? freelancerId : clientId,
+                    })
+              .where((id) => id.trim().isNotEmpty)
+              .toSet();
+
+      if (senderId.isEmpty ||
+          normalizedType.isEmpty ||
+          normalizedActionText.isEmpty ||
+          receiverIds.isEmpty) {
+        return;
+      }
+
+      final senderDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(senderId)
+          .get();
+      final senderData = senderDoc.data() ?? <String, dynamic>{};
+      final senderName = _displayName(
+        senderData,
+        currentUserRole == 'client' ? 'Client' : 'Freelancer',
+      );
+      final senderProfileUrl = _firstFilled([
+        senderData['photoUrl'],
+        senderData['profile'],
+      ]);
+      final contractId = _contractNotificationId(
+        contractData: contractData,
+        requestId: requestId,
+      );
+      final snippet = _contractNotificationSnippet(contractData);
+
+      for (final receiverId in receiverIds) {
+        if (receiverId.trim().isEmpty) continue;
+
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(receiverId)
+            .collection('notifications')
+            .add({
+              'type': normalizedType,
+              'senderId': senderId,
+              'senderName': senderName,
+              'senderProfileUrl': senderProfileUrl,
+              'receiverId': receiverId,
+              'actionText': normalizedActionText,
+              'snippet': snippet,
+              'requestId': normalizedRequestId,
+              'contractId': contractId,
+              'chatId': widget.chatId,
+              'isRead': false,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+      }
+    } catch (e) {
+      debugPrint('Create contract notification error: $e');
+    }
+  }
+
+  bool _approvalFlag(Map<String, dynamic> approval, List<String> keys) {
+    for (final key in keys) {
+      final normalizedKey = key.toLowerCase();
+      final keyLooksApproved =
+          normalizedKey.contains('approved') ||
+          normalizedKey.contains('approval') ||
+          normalizedKey.contains('signed') ||
+          normalizedKey.contains('accepted');
+      final value = approval[key];
+      if (value == true && keyLooksApproved) return true;
+
+      final text = value?.toString().trim().toLowerCase() ?? '';
+      if ((text == 'true' && keyLooksApproved) ||
+          text == 'approved' ||
+          text == 'accepted' ||
+          text == 'signed') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool _rejectionFlag(Map<String, dynamic> approval, List<String> keys) {
+    for (final key in keys) {
+      final normalizedKey = key.toLowerCase();
+      final keyLooksRejected =
+          normalizedKey.contains('reject') ||
+          normalizedKey.contains('disapprove') ||
+          normalizedKey.contains('decline');
+      final value = approval[key];
+      if (value == true && keyLooksRejected) return true;
+
+      final text = value?.toString().trim().toLowerCase() ?? '';
+      if ((text == 'true' && keyLooksRejected) ||
+          text == 'rejected' ||
+          text == 'disapproved' ||
+          text == 'declined') {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   Future<void> _openSignatureAndApprove() async {
@@ -1010,10 +1341,11 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.chatId)
           .get();
 
-      final requestId = _extractRequestId(chatDoc.data());
+      final chatData = chatDoc.data();
+      final requestId = _extractRequestId(chatData);
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/approve-contract'),
+        Uri.parse('${ApiConfig.baseUrl}/approve-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'requestId': requestId,
@@ -1027,31 +1359,34 @@ class _ChatViewState extends State<ChatView> {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final updatedContractData = data['contractData'];
+        final normalizedContractData = updatedContractData is Map
+            ? Map<String, dynamic>.from(updatedContractData)
+            : null;
 
         setState(() {
-          if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
+          if (normalizedContractData != null) {
+            _contractData = normalizedContractData;
           }
         });
+
+        await _createContractNotification(
+          type: 'contract_approved',
+          actionText: 'approved your contract',
+          requestId: requestId,
+          chatData: chatData,
+          contractData: normalizedContractData,
+        );
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Contract approved successfully')),
         );
       } else {
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('Approve contract error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (!mounted) return;
 
@@ -1072,10 +1407,11 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.chatId)
           .get();
 
-      final requestId = _extractRequestId(chatDoc.data());
+      final chatData = chatDoc.data();
+      final requestId = _extractRequestId(chatData);
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/request-termination'),
+        Uri.parse('${ApiConfig.baseUrl}/request-termination'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -1085,12 +1421,23 @@ class _ChatViewState extends State<ChatView> {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final updatedContractData = data['contractData'];
+        final normalizedContractData = updatedContractData is Map
+            ? Map<String, dynamic>.from(updatedContractData)
+            : null;
 
         setState(() {
-          if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
+          if (normalizedContractData != null) {
+            _contractData = normalizedContractData;
           }
         });
+
+        await _createContractNotification(
+          type: 'contract_termination_requested',
+          actionText: 'requested to terminate the contract',
+          requestId: requestId,
+          chatData: chatData,
+          contractData: normalizedContractData,
+        );
 
         ScaffoldMessenger.of(
           context,
@@ -1100,20 +1447,12 @@ class _ChatViewState extends State<ChatView> {
           'request-termination failed: '
           'status=${response.statusCode}, body=${response.body}',
         );
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('request-termination exception: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (!mounted) return;
       setState(() {
@@ -1136,7 +1475,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/approve-termination'),
+        Uri.parse('${ApiConfig.baseUrl}/approve-termination'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -1157,20 +1496,12 @@ class _ChatViewState extends State<ChatView> {
           const SnackBar(content: Text('Contract terminated successfully')),
         );
       } else {
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('Approve termination error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (!mounted) return;
       setState(() {
@@ -1193,7 +1524,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/cancel-termination'),
+        Uri.parse('${ApiConfig.baseUrl}/cancel-termination'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -1214,20 +1545,12 @@ class _ChatViewState extends State<ChatView> {
           context,
         ).showSnackBar(const SnackBar(content: Text('Termination cancelled')));
       } else {
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('Cancel termination error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (!mounted) return;
       setState(() {
@@ -1239,7 +1562,7 @@ class _ChatViewState extends State<ChatView> {
   Future<void> downloadContract(String requestId) async {
     try {
       final url = Uri.parse(
-        "http://10.0.2.2:5001/download-contract-pdf?requestId=$requestId",
+        "${ApiConfig.baseUrl}/download-contract-pdf?requestId=$requestId",
       );
 
       final opened = await launchUrl(url);
@@ -1247,19 +1570,13 @@ class _ChatViewState extends State<ChatView> {
       if (!opened) {
         if (!mounted) return;
         unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage('Could not open PDF'),
-          ),
+          _showErrorDialog(_friendlyErrorMessage('Could not open PDF')),
         );
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('Download contract error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     }
   }
 
@@ -1277,10 +1594,11 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.chatId)
           .get();
 
-      final requestId = _extractRequestId(chatDoc.data());
+      final chatData = chatDoc.data();
+      final requestId = _extractRequestId(chatData);
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/cancel-approval'),
+        Uri.parse('${ApiConfig.baseUrl}/cancel-approval'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -1301,20 +1619,12 @@ class _ChatViewState extends State<ChatView> {
           context,
         ).showSnackBar(const SnackBar(content: Text('Approval cancelled')));
       } else {
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('Cancel approval error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (!mounted) return;
 
@@ -1356,10 +1666,11 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.chatId)
           .get();
 
-      final requestId = _extractRequestId(chatDoc.data());
+      final chatData = chatDoc.data();
+      final requestId = _extractRequestId(chatData);
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/disapprove-contract'),
+        Uri.parse('${ApiConfig.baseUrl}/disapprove-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
       );
@@ -1369,35 +1680,75 @@ class _ChatViewState extends State<ChatView> {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final updatedContractData = data['contractData'];
+        final normalizedContractData = updatedContractData is Map
+            ? Map<String, dynamic>.from(updatedContractData)
+            : null;
 
         setState(() {
-          if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
+          if (normalizedContractData != null) {
+            _contractData = normalizedContractData;
           }
         });
+
+        await _createContractNotification(
+          type: 'contract_disapproved',
+          actionText: 'rejected your contract',
+          requestId: requestId,
+          chatData: chatData,
+          contractData: normalizedContractData,
+        );
 
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Contract rejected')));
       } else {
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
       debugPrint('Reject contract error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     }
   }
 
   Future<void> _deleteContract() async {
+    await _removeGeneratedContract(
+      endpointPath: 'delete-contract',
+      dialogTitle: 'Delete Contract',
+      dialogMessage: 'Are you sure you want to delete this contract?',
+      dismissLabel: 'Cancel',
+      confirmLabel: 'Delete',
+      successMessage: 'Contract deleted',
+      logLabel: 'Delete contract',
+      clearContractData: true,
+    );
+  }
+
+  Future<void> _cancelContract() async {
+    await _removeGeneratedContract(
+      endpointPath: 'cancel-contract',
+      dialogTitle: 'Cancel Contract',
+      dialogMessage: 'Are you sure you want to cancel this contract?',
+      dismissLabel: 'No',
+      confirmLabel: 'Yes, Cancel',
+      successMessage: 'Contract cancelled',
+      logLabel: 'Cancel contract',
+      clearContractData: false,
+      includeRole: true,
+    );
+  }
+
+  Future<void> _removeGeneratedContract({
+    required String endpointPath,
+    required String dialogTitle,
+    required String dialogMessage,
+    required String dismissLabel,
+    required String confirmLabel,
+    required String successMessage,
+    required String logLabel,
+    required bool clearContractData,
+    bool includeRole = false,
+  }) async {
     final contractData = _contractData;
     if (contractData == null) return;
 
@@ -1405,18 +1756,16 @@ class _ChatViewState extends State<ChatView> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete Contract'),
-          content: const Text(
-            'Are you sure you want to delete this rejected contract?',
-          ),
+          title: Text(dialogTitle),
+          content: Text(dialogMessage),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
+              child: Text(dismissLabel),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete'),
+              child: Text(confirmLabel),
             ),
           ],
         );
@@ -1436,42 +1785,49 @@ class _ChatViewState extends State<ChatView> {
           .get();
 
       final requestId = _extractRequestId(chatDoc.data());
+      final body = <String, dynamic>{'requestId': requestId};
+      if (includeRole) {
+        body['role'] = _currentUserRole();
+      }
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/delete-contract'),
+        Uri.parse('${ApiConfig.baseUrl}/$endpointPath'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'requestId': requestId}),
+        body: jsonEncode(body),
       );
 
       if (!mounted) return;
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final updatedContractData = data['contractData'];
+
         setState(() {
-          _contractData = null;
+          if (clearContractData) {
+            _contractData = null;
+          } else if (updatedContractData is Map) {
+            _contractData = Map<String, dynamic>.from(updatedContractData);
+          } else {
+            _contractData = null;
+          }
           _isEditingContract = false;
           _isAddingClause = false;
+          _isApprovingContract = false;
+          _isTerminatingContract = false;
           _pendingCustomClauses = [];
           _contractError = null;
         });
 
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Contract deleted')));
+        ).showSnackBar(SnackBar(content: Text(successMessage)));
       } else {
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(response.statusCode),
-          ),
-        );
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
       }
     } catch (e) {
       if (!mounted) return;
-      debugPrint('Delete contract error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      debugPrint('$logLabel error: $e');
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     } finally {
       if (!mounted) return;
 
@@ -1489,7 +1845,13 @@ class _ChatViewState extends State<ChatView> {
 
     final existingClauses =
         (contractData['customClauses'] as List?)?.toList() ?? [];
-    final totalClauses = existingClauses.length + _pendingCustomClauses.length;
+    final existingUserClauses = existingClauses.where((clause) {
+      if (clause is! Map) return false;
+
+      final source = (clause['source'] ?? '').toString().trim().toLowerCase();
+      return source == 'user';
+    }).length;
+    final totalClauses = existingUserClauses + _pendingCustomClauses.length;
 
     if (totalClauses >= 5) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1533,7 +1895,7 @@ class _ChatViewState extends State<ChatView> {
       final requestId = _extractRequestId(chatDoc.data());
 
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/update-contract'),
+        Uri.parse('${ApiConfig.baseUrl}/update-contract'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'requestId': requestId,
@@ -1544,9 +1906,9 @@ class _ChatViewState extends State<ChatView> {
 
       if (!mounted) return;
 
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          final savedContractData = data['contractData'];
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final savedContractData = data['contractData'];
 
         setState(() {
           if (savedContractData is Map) {
@@ -1554,25 +1916,17 @@ class _ChatViewState extends State<ChatView> {
           }
         });
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Contract updated successfully')),
-          );
-        } else {
-          unawaited(
-            _showErrorDialog(
-              _friendlyErrorMessage(response.statusCode),
-            ),
-          );
-        }
-      } catch (e) {
-        if (!mounted) return;
-        debugPrint('Delete clause update error: $e');
-        unawaited(
-          _showErrorDialog(
-            _friendlyErrorMessage(e),
-          ),
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Contract updated successfully')),
         );
-      } finally {
+      } else {
+        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      debugPrint('Delete clause update error: $e');
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    } finally {
       if (!mounted) return;
 
       setState(() {
@@ -1607,7 +1961,10 @@ class _ChatViewState extends State<ChatView> {
         .trim()
         .toLowerCase();
 
-    if (contractStatus == 'approved' || contractStatus == 'terminated') {
+    if (contractStatus == 'approved' ||
+        contractStatus == 'terminated' ||
+        contractStatus == 'cancelled' ||
+        contractStatus == 'canceled') {
       return const SizedBox.shrink();
     }
 
@@ -1653,8 +2010,53 @@ class _ChatViewState extends State<ChatView> {
     final List<dynamic> summary = const [];
     final contractTitle = (meta['title'] ?? '').toString();
 
-    final clientApproved = approval['clientApproved'] == true;
-    final freelancerApproved = approval['freelancerApproved'] == true;
+    final clientApproved = _approvalFlag(approval, const [
+      'clientApproved',
+      'clientApproval',
+      'clientApprovalStatus',
+      'clientDecision',
+      'clientStatus',
+      'clientSigned',
+    ]);
+    final freelancerApproved = _approvalFlag(approval, const [
+      'freelancerApproved',
+      'freelancerApproval',
+      'freelancerApprovalStatus',
+      'freelancerDecision',
+      'freelancerStatus',
+      'freelancerSigned',
+    ]);
+    final bothPartiesApproved = clientApproved && freelancerApproved;
+    final clientRejected = _rejectionFlag(approval, const [
+      'clientRejected',
+      'clientRejection',
+      'clientRejectionStatus',
+      'clientDisapproved',
+      'clientDecision',
+      'clientStatus',
+    ]);
+    final freelancerRejected = _rejectionFlag(approval, const [
+      'freelancerRejected',
+      'freelancerRejection',
+      'freelancerRejectionStatus',
+      'freelancerDisapproved',
+      'freelancerDecision',
+      'freelancerStatus',
+    ]);
+    final bothPartiesRejected =
+        (clientRejected && freelancerRejected) || contractStatus == 'rejected';
+    final hasPendingDecisionStatus =
+        contractStatus.isEmpty ||
+        contractStatus == 'draft' ||
+        contractStatus == 'edited' ||
+        contractStatus == 'pending_approval';
+    final hasPendingPartyDecision = !clientApproved || !freelancerApproved;
+    final contractNeedsDecision =
+        !bothPartiesApproved &&
+        !bothPartiesRejected &&
+        !terminationRequested &&
+        hasPendingDecisionStatus &&
+        hasPendingPartyDecision;
 
     final currentUserApproved = currentUserRole == 'client'
         ? clientApproved
@@ -1681,6 +2083,8 @@ class _ChatViewState extends State<ChatView> {
         currentUserApproved &&
         !otherPartyApproved &&
         contractStatus == 'pending_approval';
+    final showCancelContractButton =
+        !_isEditingContract && contractNeedsDecision;
 
     final canEditContract =
         contractStatus == 'draft' ||
@@ -1928,12 +2332,17 @@ class _ChatViewState extends State<ChatView> {
                           title: 'Service description',
                           children: [
                             _isEditingContract
-                                ? _buildContractInput(
-                                    initialValue: _editableServiceDescription,
-                                    maxLines: 3,
-                                    onChanged: (value) {
-                                      _editableServiceDescription = value;
-                                    },
+                                ? Form(
+                                    key: _contractFormKey,
+                                    child: _buildContractInput(
+                                      initialValue: _editableServiceDescription,
+                                      maxLength: 150,
+                                      maxLines: 3,
+                                      validator: _validateContractDescription,
+                                      onChanged: (value) {
+                                        _editableServiceDescription = value;
+                                      },
+                                    ),
                                   )
                                 : Text(
                                     (service['description'] ?? '')
@@ -1981,10 +2390,33 @@ class _ChatViewState extends State<ChatView> {
                                       Expanded(
                                         child: _buildContractInput(
                                           initialValue: _editableAmount,
+                                          maxLength: 10,
                                           keyboardType:
                                               const TextInputType.numberWithOptions(
                                                 decimal: true,
                                               ),
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter.allow(
+                                              RegExp(r'[0-9.]'),
+                                            ),
+                                            TextInputFormatter.withFunction((
+                                              oldValue,
+                                              newValue,
+                                            ) {
+                                              final text = newValue.text;
+                                              if (text.isEmpty) {
+                                                return newValue;
+                                              }
+
+                                              if (!RegExp(
+                                                r'^\d*\.?\d{0,2}$',
+                                              ).hasMatch(text)) {
+                                                return oldValue;
+                                              }
+
+                                              return newValue;
+                                            }),
+                                          ],
                                           onChanged: (value) {
                                             _editableAmount = value;
                                           },
@@ -2016,11 +2448,20 @@ class _ChatViewState extends State<ChatView> {
                           title: 'Deadline',
                           children: [
                             _isEditingContract
-                                ? _buildContractInput(
-                                    initialValue: _editableDeadline,
-                                    onChanged: (value) {
-                                      _editableDeadline = value;
-                                    },
+                                ? GestureDetector(
+                                    onTap: _pickContractDeadline,
+                                    child: AbsorbPointer(
+                                      child: _buildContractInput(
+                                        initialValue: _editableDeadline,
+                                        readOnly: true,
+                                        suffixIcon: const Icon(
+                                          Icons.calendar_today_outlined,
+                                        ),
+                                        onChanged: (value) {
+                                          _editableDeadline = value;
+                                        },
+                                      ),
+                                    ),
                                   )
                                 : Text(
                                     (timeline['deadline'] ?? '')
@@ -2077,6 +2518,8 @@ class _ChatViewState extends State<ChatView> {
                                   children: [
                                     TextFormField(
                                       initialValue: clause['title'] ?? '',
+                                      maxLength: 20,
+                                      maxLines: 1,
                                       onChanged: (value) {
                                         _pendingCustomClauses[index]['title'] =
                                             value;
@@ -2104,6 +2547,7 @@ class _ChatViewState extends State<ChatView> {
                                     const SizedBox(height: 10),
                                     TextFormField(
                                       initialValue: clause['content'] ?? '',
+                                      maxLength: 100,
                                       minLines: 2,
                                       maxLines: 4,
                                       onChanged: (value) {
@@ -2396,6 +2840,39 @@ class _ChatViewState extends State<ChatView> {
                           ),
                         ],
 
+                        if (showCancelContractButton) ...[
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed:
+                                  (_isSavingContract || _isApprovingContract)
+                                  ? null
+                                  : _cancelContract,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFC75A5A),
+                                backgroundColor: const Color(0xFFFFF7F7),
+                                side: const BorderSide(
+                                  color: Color(0xFFE6BABA),
+                                  width: 1,
+                                ),
+                                minimumSize: const Size(0, 44),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              icon: const Icon(Icons.close_rounded),
+                              label: const Text('Cancel Contract'),
+                            ),
+                          ),
+                        ],
+
                         if (showApproveActions) ...[
                           const SizedBox(height: 12),
                           Row(
@@ -2490,7 +2967,10 @@ class _ChatViewState extends State<ChatView> {
             .toLowerCase() ??
         '';
     final showGenerateContractButton =
-        _contractData == null || previewContractStatus == 'terminated';
+        _contractData == null ||
+        previewContractStatus == 'terminated' ||
+        previewContractStatus == 'cancelled' ||
+        previewContractStatus == 'canceled';
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -2884,11 +3364,7 @@ class _SignatureSheetState extends State<_SignatureSheet> {
     } catch (e) {
       if (!mounted) return;
       debugPrint('Signature capture error: $e');
-      unawaited(
-        _showErrorDialog(
-          _friendlyErrorMessage(e),
-        ),
-      );
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
       setState(() {
         _isConfirming = false;
       });

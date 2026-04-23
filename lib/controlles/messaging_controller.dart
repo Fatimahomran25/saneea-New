@@ -10,6 +10,23 @@ typedef ForegroundMessageCallback =
     void Function(String title, String body, Map<String, dynamic> data);
 
 class MessagingController {
+  static const Set<String> _requestNotificationTypes = {
+    'service_request',
+    'announcement_request',
+    'proposal_accepted',
+    'proposal_rejected',
+    'request_accepted',
+    'request_deleted',
+    'request_rejected',
+    'proposal_received',
+    'contract',
+    'contract_generated',
+    'contract_approved',
+    'contract_disapproved',
+    'contract_termination_requested',
+    'contract_terminated',
+  };
+
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
@@ -84,9 +101,8 @@ class MessagingController {
       if (notification != null) {
         final title = notification.title ?? 'New Message';
         final body = notification.body ?? '';
-        final channelId =
-            data['type'] == 'service_request' ||
-                data['type'] == 'announcement_request'
+        final type = (data['type'] ?? '').toString().trim().toLowerCase();
+        final channelId = _requestNotificationTypes.contains(type)
             ? 'request_notifications'
             : 'chat_notifications';
 
