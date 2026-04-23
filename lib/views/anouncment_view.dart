@@ -550,6 +550,7 @@ class _AnnouncementViewState extends State<AnnouncementView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
@@ -582,16 +583,20 @@ class _AnnouncementViewState extends State<AnnouncementView> {
             final text = _descriptionController.text;
             final remaining = _characterLimit - text.length;
 
-            return Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: contentMaxWidth),
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    topPadding,
-                    horizontalPadding,
-                    0,
-                  ),
+            return SingleChildScrollView(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: contentMaxWidth),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      topPadding,
+                      horizontalPadding,
+                      0,
+                    ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -645,37 +650,35 @@ class _AnnouncementViewState extends State<AnnouncementView> {
                       ),
                       const SizedBox(height: 20),
 
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: TextField(
-                            controller: _descriptionController,
-                            autofocus: true,
-                            keyboardType: TextInputType.multiline,
-                            textInputAction: TextInputAction.newline,
-                            maxLines: null,
-                            expands: true,
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.all(12),
-                              hintText: 'What are you looking for?',
-                              hintStyle: TextStyle(
-                                fontSize: hintFontSize,
-                                fontWeight: FontWeight.w400,
-                                color: Colors.grey.shade400,
-                              ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: TextField(
+                          controller: _descriptionController,
+                          autofocus: true,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.newline,
+                          minLines: 8,
+                          maxLines: null,
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.all(12),
+                            hintText: 'What are you looking for?',
+                            hintStyle: TextStyle(
+                              fontSize: hintFontSize,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.grey.shade400,
                             ),
-                            style: normalStyle,
-                            cursorColor: Colors.black,
                           ),
+                          style: normalStyle,
+                          cursorColor: Colors.black,
                         ),
                       ),
 
@@ -725,6 +728,7 @@ class _AnnouncementViewState extends State<AnnouncementView> {
                     ],
                   ),
                 ),
+              ),
               ),
             );
           },
