@@ -1,4 +1,3 @@
-
 import base64
 import os
 from io import BytesIO
@@ -16,16 +15,33 @@ def generate_contract_pdf(contract_data):
     width, height = A4
     y = height - 55
 
-    parties = contract_data.get("parties", {})
-    service = contract_data.get("service", {})
-    payment = contract_data.get("payment", {})
-    timeline = contract_data.get("timeline", {})
-    meta = contract_data.get("meta", {})
-    approval = contract_data.get("approval", {})
-    signatures = contract_data.get("signatures", {})
-    custom_clauses = contract_data.get("customClauses", [])
+    def as_dict(value):
+        return value if isinstance(value, dict) else {}
 
-    status_raw = str(approval.get("contractStatus", "draft")).strip().lower()
+    parties = as_dict(contract_data.get("parties"))
+    service = as_dict(contract_data.get("service"))
+    payment = as_dict(contract_data.get("payment"))
+    timeline = as_dict(contract_data.get("timeline"))
+    meta = as_dict(contract_data.get("meta"))
+    approval = as_dict(contract_data.get("approval"))
+    signatures = as_dict(contract_data.get("signatures"))
+    custom_clauses = contract_data.get("customClauses", [])
+    if not isinstance(custom_clauses, list):
+        custom_clauses = []
+
+    client_name = parties.get("clientName", "-")
+    freelancer_name = parties.get("freelancerName", "-")
+    service_description = service.get("description", "-")
+    payment_amount = payment.get("amount", "-")
+    payment_currency = payment.get("currency", "")
+    deadline = timeline.get("deadline", "-")
+    contract_created_at = meta.get("createdAt", "-")
+    contract_title = meta.get("title", "CONTRACT AGREEMENT")
+    contract_status = approval.get("contractStatus", "draft")
+    client_signature = signatures.get("clientSignature")
+    freelancer_signature = signatures.get("freelancerSignature")
+
+    status_raw = str(contract_status).strip().lower()
     status = status_raw.replace("_", " ").title()
 
     base_dir = os.path.dirname(__file__)
@@ -34,6 +50,12 @@ def generate_contract_pdf(contract_data):
 
     def normalize_text(value):
         return " ".join(str(value or "").strip().lower().split())
+
+    def safe_text(value, fallback="-"):
+        if value is None:
+            return fallback
+        text = str(value).strip()
+        return text if text else fallback
 
     def get_status_color():
         if status_raw == "approved":
@@ -115,11 +137,6 @@ def generate_contract_pdf(contract_data):
         y = height - 55
         draw_header()
 
-    def ensure_space(lines=3):
-        nonlocal y
-        if y < 100 + (lines * body_line_height):
-            new_page()
-
     def ensure_height(required_height):
         nonlocal y
         if y - required_height < 80:
@@ -194,15 +211,24 @@ def generate_contract_pdf(contract_data):
 
         pdf.setFont("Helvetica-Bold", 10)
         pdf.setFillColor(colors.HexColor("#2A223A"))
-        pdf.drawString(meta_x + 12, meta_y + 12, str(meta.get("createdAt", "-")))
+        pdf.drawString(meta_x + 12, meta_y + 12, safe_text(contract_created_at))
 
         pdf.setFillColor(colors.HexColor("#2A223A"))
-        pdf.setFont("Helvetica-Bold", 20)
-        pdf.drawString(title_x, header_y + 47, "CONTRACT AGREEMENT")
+        pdf.setFont("Helvetica-Bold", 18)
+
+        title_text = safe_text(contract_title, "CONTRACT AGREEMENT").upper()
+        title_max_width = meta_x - title_x - 16
+        title_lines = wrap_text_lines(title_text, title_max_width, "Helvetica-Bold", 18)
+
+        current_y = header_y + 47
+        for line in title_lines[:2]:
+            if line:
+                pdf.drawString(title_x, current_y, line)
+            current_y -= 18
 
         pdf.setFont("Helvetica", 10)
         pdf.setFillColor(colors.HexColor("#6B6480"))
-        pdf.drawString(title_x, header_y + 28, "Official contract summary")
+        pdf.drawString(title_x, header_y + 16, "Official contract summary")
 
         y = header_y - 18
 
@@ -232,68 +258,6 @@ def generate_contract_pdf(contract_data):
 
         y = badge_bottom_y - 12
 
-    def draw_label_value(label, value, value_x=170, value_color=colors.black):
-        nonlocal y
-        safe_value = value if value not in [None, ""] else "-"
-        label_column_width = 108
-        value_max_width = section_width - (card_inner_padding_x * 2) - label_column_width - 12
-        value_lines = wrap_text_lines(
-            safe_value,
-            value_max_width,
-            font_name=body_font,
-            font_size=body_font_size,
-        )
-        text_block_height = max(body_line_height, len(value_lines) * body_line_height)
-        card_height = max(46, (card_inner_padding_y * 2) + text_block_height)
-
-        ensure_height(card_height + section_gap)
-        top_y = y
-        bottom_y = draw_content_card(section_left, top_y, section_width, card_height)
-        text_top_y = top_y - card_inner_padding_y - 1
-
-        pdf.setFont("Helvetica-Bold", 11)
-        pdf.setFillColor(label_text_color)
-        pdf.drawString(section_left + card_inner_padding_x, text_top_y, str(label))
-
-        pdf.setFont(body_font, body_font_size)
-        pdf.setFillColor(value_color if value_color != colors.black else body_text_color)
-        value_x = section_left + card_inner_padding_x + label_column_width
-        current_y = text_top_y
-
-        for line in value_lines:
-            if line:
-                pdf.drawString(value_x, current_y, line)
-            current_y -= body_line_height
-
-        y = bottom_y - section_gap
-
-    def draw_paragraph(text):
-        nonlocal y
-        content_lines = wrap_text_lines(
-            text,
-            section_width - (card_inner_padding_x * 2),
-            font_name=body_font,
-            font_size=body_font_size,
-        )
-        text_block_height = max(body_line_height, len(content_lines) * body_line_height)
-        card_height = max(54, (card_inner_padding_y * 2) + text_block_height)
-
-        ensure_height(card_height + section_gap)
-        top_y = y
-        bottom_y = draw_content_card(section_left, top_y, section_width, card_height)
-
-        pdf.setFont(body_font, body_font_size)
-        pdf.setFillColor(body_text_color)
-        text_x = section_left + card_inner_padding_x
-        current_y = top_y - card_inner_padding_y - 1
-
-        for line in content_lines:
-            if line:
-                pdf.drawString(text_x, current_y, line)
-            current_y -= body_line_height
-
-        y = bottom_y - section_gap
-
     def draw_status_box():
         nonlocal y
         box_height = 72
@@ -309,18 +273,13 @@ def generate_contract_pdf(contract_data):
         )
 
         label_x = section_left + card_inner_padding_x
-        value_x = label_x
         label_top_y = top_y - 16
         value_top_y = label_top_y - 16
         chip_height = 24
         chip_padding_x = 12
         status_font = "Helvetica-Bold"
         status_font_size = 10
-        status_chip_width = pdf.stringWidth(
-            status,
-            status_font,
-            status_font_size,
-        ) + (chip_padding_x * 2)
+        status_chip_width = pdf.stringWidth(status, status_font, status_font_size) + (chip_padding_x * 2)
         chip_x = section_left + section_width - card_inner_padding_x - status_chip_width
         chip_y = top_y - 48
 
@@ -331,7 +290,7 @@ def generate_contract_pdf(contract_data):
 
         pdf.setFont("Helvetica-Bold", 12)
         pdf.setFillColor(body_text_color)
-        pdf.drawString(value_x, value_top_y, str(meta.get("createdAt", "-")))
+        pdf.drawString(label_x, value_top_y, safe_text(contract_created_at))
 
         pdf.setFillColor(get_status_color())
         pdf.roundRect(
@@ -365,9 +324,6 @@ def generate_contract_pdf(contract_data):
             "This is the current contract approval state.",
         )
 
-        pdf.setFont("Helvetica-Bold", 11)
-        pdf.setFillColor(get_status_color())
-
         y = bottom_y - section_gap
 
     def draw_parties_section():
@@ -383,7 +339,7 @@ def generate_contract_pdf(contract_data):
         top_y = y
 
         def draw_party_card(x, label, value):
-            safe_value = value if value not in [None, ""] else "-"
+            safe_value = safe_text(value)
             bottom_y = draw_content_card(
                 x,
                 top_y,
@@ -419,12 +375,8 @@ def generate_contract_pdf(contract_data):
         left_x = section_left
         right_x = section_left + party_card_width + card_gap
 
-        draw_party_card(left_x, "Client", parties.get("clientName", "-"))
-        bottom_y = draw_party_card(
-            right_x,
-            "Freelancer",
-            parties.get("freelancerName", "-"),
-        )
+        draw_party_card(left_x, "Client", client_name)
+        bottom_y = draw_party_card(right_x, "Freelancer", freelancer_name)
 
         y = bottom_y - section_gap
 
@@ -434,7 +386,7 @@ def generate_contract_pdf(contract_data):
         draw_section("Service Description")
 
         content_lines = wrap_text_lines(
-            service.get("description", "-"),
+            safe_text(service_description),
             section_width - (card_inner_padding_x * 2),
             font_name=body_font,
             font_size=body_font_size,
@@ -473,13 +425,13 @@ def generate_contract_pdf(contract_data):
         card_gap = 12
         info_card_width = (section_width - card_gap) / 2
 
-        amount = payment.get("amount", "-")
-        currency = payment.get("currency", "")
-        payment_text = f"{amount} {currency}".strip()
-        deadline_text = timeline.get("deadline", "-")
+        amount = safe_text(payment_amount)
+        currency = safe_text(payment_currency, "")
+        payment_text = f"{amount} {currency}".strip() if currency else amount
+        deadline_text = safe_text(deadline)
 
         amount_lines = wrap_text_lines(
-            payment_text if payment_text else "-",
+            payment_text,
             info_card_width - (card_inner_padding_x * 2),
             font_name="Helvetica-Bold",
             font_size=13,
@@ -568,10 +520,7 @@ def generate_contract_pdf(contract_data):
                 font_name=body_font,
                 font_size=body_font_size,
             )
-            text_block_height = max(
-                body_line_height,
-                len(content_lines) * body_line_height,
-            )
+            text_block_height = max(body_line_height, len(content_lines) * body_line_height)
             card_height = max(64, (card_inner_padding_y * 2) + text_block_height + 4)
 
             ensure_height(card_height + section_gap)
@@ -713,9 +662,6 @@ def generate_contract_pdf(contract_data):
         card_height = 112
         top_y = y
 
-        client_signature = signatures.get("clientSignature") if isinstance(signatures, dict) else None
-        freelancer_signature = signatures.get("freelancerSignature") if isinstance(signatures, dict) else None
-
         draw_signature_card(
             "Client Signature",
             client_signature,
@@ -773,7 +719,6 @@ def generate_contract_pdf(contract_data):
 
     draw_header()
     draw_status_box()
-
     draw_parties_section()
 
     y -= 4
@@ -782,54 +727,32 @@ def generate_contract_pdf(contract_data):
     y -= 2
     draw_payment_deadline_section()
 
-    allowed_generated_section_titles = {
-        "services": "Services",
-        "payment terms": "Payment Terms",
-        "revisions": "Revisions",
-        "delivery": "Delivery",
-        "confidentiality": "Confidentiality",
-    }
-    allowed_section_order = [
-        "Services",
-        "Payment Terms",
-        "Revisions",
-        "Delivery",
-        "Confidentiality",
-    ]
-    generated_section_contents = {
-        section_title: [] for section_title in allowed_section_order
-    }
+    # عرض جميع البنود الموجودة في customClauses بدون تقييد بعنوان أو source
+    grouped_clauses = {}
 
     for clause in custom_clauses:
         if not isinstance(clause, dict):
             continue
 
-        title = normalize_text(clause.get("title"))
-        content = str(clause.get("content") or clause.get("text") or "").strip()
-        source = normalize_text(clause.get("source"))
+        title = safe_text(clause.get("title"), "Other")
+        content = safe_text(clause.get("content") or clause.get("text"), "")
 
-        if not content or title == "deadline":
+        if not content.strip():
             continue
 
-        is_ai_clause = source == "ai" or (
-            not source and ("category" in clause or "optional" in clause)
-        )
+        normalized_title = normalize_text(title)
+        if normalized_title not in grouped_clauses:
+            grouped_clauses[normalized_title] = {
+                "display_title": title,
+                "contents": []
+            }
 
-        if not is_ai_clause:
-            continue
+        if content not in grouped_clauses[normalized_title]["contents"]:
+            grouped_clauses[normalized_title]["contents"].append(content)
 
-        section_title = allowed_generated_section_titles.get(title)
-        if not section_title:
-            continue
-
-        if content not in generated_section_contents[section_title]:
-            generated_section_contents[section_title].append(content)
-
-    for section_title in allowed_section_order:
-        section_contents = generated_section_contents[section_title]
-        if section_contents:
-            y -= 2
-            draw_clause_group_section(section_title, section_contents)
+    for _, item in grouped_clauses.items():
+        y -= 2
+        draw_clause_group_section(item["display_title"], item["contents"])
 
     if status_raw == "approved":
         draw_signatures_section()

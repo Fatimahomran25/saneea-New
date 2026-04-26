@@ -1099,6 +1099,7 @@ class _ChatViewState extends State<ChatView> {
         filled: true,
         fillColor: const Color(0xFFF8F6FC),
         suffixIcon: suffixIcon,
+        counterText: '',
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 10,
           vertical: 10,
@@ -1939,6 +1940,12 @@ class _ChatViewState extends State<ChatView> {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
 
+    final mediaQuery = MediaQuery.of(context);
+    final keyboardOpen = mediaQuery.viewInsets.bottom > 0;
+    final maxPreviewHeight = keyboardOpen
+        ? mediaQuery.size.height * 0.38
+        : mediaQuery.size.height * 0.55;
+
     final parties =
         (contractData['parties'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
@@ -1989,6 +1996,7 @@ class _ChatViewState extends State<ChatView> {
         contractStatus == 'termination_pending' &&
         terminationRequested &&
         !currentUserRequestedTermination;
+
     final showCancelTerminationButton =
         contractStatus == 'termination_pending' &&
         terminationRequested &&
@@ -2004,9 +2012,11 @@ class _ChatViewState extends State<ChatView> {
       final source = (clause['source'] ?? '').toString().trim().toLowerCase();
       return source == 'user';
     }).toList();
+
     final meta =
         (contractData['meta'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
+
     final List<dynamic> summary = const [];
     final contractTitle = (meta['title'] ?? '').toString();
 
@@ -2018,6 +2028,7 @@ class _ChatViewState extends State<ChatView> {
       'clientStatus',
       'clientSigned',
     ]);
+
     final freelancerApproved = _approvalFlag(approval, const [
       'freelancerApproved',
       'freelancerApproval',
@@ -2026,7 +2037,9 @@ class _ChatViewState extends State<ChatView> {
       'freelancerStatus',
       'freelancerSigned',
     ]);
+
     final bothPartiesApproved = clientApproved && freelancerApproved;
+
     final clientRejected = _rejectionFlag(approval, const [
       'clientRejected',
       'clientRejection',
@@ -2035,6 +2048,7 @@ class _ChatViewState extends State<ChatView> {
       'clientDecision',
       'clientStatus',
     ]);
+
     final freelancerRejected = _rejectionFlag(approval, const [
       'freelancerRejected',
       'freelancerRejection',
@@ -2043,14 +2057,18 @@ class _ChatViewState extends State<ChatView> {
       'freelancerDecision',
       'freelancerStatus',
     ]);
+
     final bothPartiesRejected =
         (clientRejected && freelancerRejected) || contractStatus == 'rejected';
+
     final hasPendingDecisionStatus =
         contractStatus.isEmpty ||
         contractStatus == 'draft' ||
         contractStatus == 'edited' ||
         contractStatus == 'pending_approval';
+
     final hasPendingPartyDecision = !clientApproved || !freelancerApproved;
+
     final contractNeedsDecision =
         !bothPartiesApproved &&
         !bothPartiesRejected &&
@@ -2061,9 +2079,11 @@ class _ChatViewState extends State<ChatView> {
     final currentUserApproved = currentUserRole == 'client'
         ? clientApproved
         : freelancerApproved;
+
     final otherPartyApproved = currentUserRole == 'client'
         ? freelancerApproved
         : clientApproved;
+
     final showApproveActions =
         !_isEditingContract &&
         !currentUserApproved &&
@@ -2083,6 +2103,7 @@ class _ChatViewState extends State<ChatView> {
         currentUserApproved &&
         !otherPartyApproved &&
         contractStatus == 'pending_approval';
+
     final showCancelContractButton =
         !_isEditingContract && contractNeedsDecision;
 
@@ -2092,6 +2113,7 @@ class _ChatViewState extends State<ChatView> {
         (contractStatus == 'pending_approval' &&
             !currentUserApproved &&
             otherPartyApproved);
+
     final statusChipText = contractStatus == 'approved'
         ? 'Approved'
         : contractStatus == 'rejected'
@@ -2105,6 +2127,7 @@ class _ChatViewState extends State<ChatView> {
         : contractStatus == 'terminated'
         ? 'Terminated'
         : 'Draft';
+
     final statusChipBackgroundColor = contractStatus == 'approved'
         ? const Color(0xFFE8F5E9)
         : contractStatus == 'rejected'
@@ -2132,6 +2155,7 @@ class _ChatViewState extends State<ChatView> {
         : contractStatus == 'terminated'
         ? const Color(0xFF6A1B9A)
         : Colors.black54;
+
     final statusChipIcon = contractStatus == 'approved'
         ? Icons.check_circle_rounded
         : contractStatus == 'rejected'
@@ -2146,12 +2170,8 @@ class _ChatViewState extends State<ChatView> {
         ? Icons.block_rounded
         : Icons.description_outlined;
 
-    final amount = (payment['amount'] ?? '').toString();
-    final currency = (payment['currency'] ?? '').toString();
-    final paymentText = [
-      amount,
-      currency,
-    ].where((part) => part.trim().isNotEmpty).join(' ');
+    final amount = (payment['amount'] ?? '').toString().trim();
+    final paymentText = amount.isEmpty ? '-' : '$amount SAR';
 
     return Container(
       width: double.infinity,
@@ -2161,766 +2181,656 @@ class _ChatViewState extends State<ChatView> {
         color: const Color(0xFFF8F6FC),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Stack(
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: SizedBox(
-              width: double.infinity,
-              child: Scrollbar(
-                controller: _contractPreviewScrollController,
-                thumbVisibility: true,
-                thickness: 2.5,
-                radius: const Radius.circular(999),
-                child: SingleChildScrollView(
-                  controller: _contractPreviewScrollController,
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxPreviewHeight),
+        child: Scrollbar(
+          controller: _contractPreviewScrollController,
+          thumbVisibility: true,
+          thickness: 2.5,
+          radius: const Radius.circular(999),
+          child: SingleChildScrollView(
+            controller: _contractPreviewScrollController,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.only(left: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        contractTitle.trim().isEmpty
+                            ? 'Generated Contract'
+                            : contractTitle,
+                        style: const TextStyle(
+                          color: primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    if (canEditContract && contractStatus != 'draft') ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusChipBackgroundColor,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              statusChipIcon,
+                              size: 14,
+                              color: statusChipTextColor,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              statusChipText,
+                              style: TextStyle(
+                                color: statusChipTextColor,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    if (canEditContract)
+                      ElevatedButton.icon(
+                        onPressed: (_isSavingContract || _isApprovingContract)
+                            ? null
+                            : _toggleContractEdit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primary,
+                          foregroundColor: Colors.white,
+                          minimumSize: Size.zero,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: Icon(
+                          _isEditingContract ? Icons.check : Icons.edit,
+                        ),
+                        label: Text(_isEditingContract ? 'Save' : 'Edit'),
+                      ),
+                    if (!canEditContract) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusChipBackgroundColor,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              statusChipIcon,
+                              size: 14,
+                              color: statusChipTextColor,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              statusChipText,
+                              style: TextStyle(
+                                color: statusChipTextColor,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (contractStatus == 'edited') ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This contract was edited and requires fresh approval from both parties.',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 12.5,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                _buildContractSection(
+                  title: 'Client name',
+                  children: [
+                    Text(
+                      (parties['clientName'] ?? '').toString(),
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _buildContractSection(
+                  title: 'Freelancer name',
+                  children: [
+                    Text(
+                      (parties['freelancerName'] ?? '').toString(),
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _buildContractSection(
+                  title: 'Service description',
+                  children: [
+                    _isEditingContract
+                        ? Form(
+                            key: _contractFormKey,
+                            child: _buildContractInput(
+                              initialValue: _editableServiceDescription,
+                              maxLength: 150,
+                              maxLines: 3,
+                              validator: _validateContractDescription,
+                              onChanged: (value) {
+                                _editableServiceDescription = value;
+                              },
+                            ),
+                          )
+                        : Text(
+                            (service['description'] ?? '')
+                                    .toString()
+                                    .trim()
+                                    .isEmpty
+                                ? '-'
+                                : (service['description'] ?? '').toString(),
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          ),
+                  ],
+                ),
+                if (summary.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _buildContractSection(
+                    title: 'Summary',
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              contractTitle.trim().isEmpty
-                                  ? 'Generated Contract'
-                                  : contractTitle,
-                              style: const TextStyle(
-                                color: primary,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ),
-                          if (canEditContract && contractStatus != 'draft') ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: statusChipBackgroundColor,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    statusChipIcon,
-                                    size: 14,
-                                    color: statusChipTextColor,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    statusChipText,
-                                    style: TextStyle(
-                                      color: statusChipTextColor,
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          if (canEditContract)
-                            ElevatedButton.icon(
-                              onPressed:
-                                  (_isSavingContract || _isApprovingContract)
-                                  ? null
-                                  : _toggleContractEdit,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primary,
-                                foregroundColor: Colors.white,
-                                minimumSize: Size.zero,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              icon: Icon(
-                                _isEditingContract ? Icons.check : Icons.edit,
-                              ),
-                              label: Text(_isEditingContract ? 'Save' : 'Edit'),
-                            ),
-                          if (!canEditContract) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: statusChipBackgroundColor,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    statusChipIcon,
-                                    size: 14,
-                                    color: statusChipTextColor,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    statusChipText,
-                                    style: TextStyle(
-                                      color: statusChipTextColor,
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      if (contractStatus == 'edited') ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'This contract was edited and requires fresh approval from both parties.',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontSize: 12.5,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 10),
-                      _buildContractSection(
-                        title: 'Client name',
-                        children: [
-                          Text(
-                            (parties['clientName'] ?? '').toString(),
+                      ...summary.map<Widget>((item) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Text(
+                            "• ${item.toString()}",
                             style: const TextStyle(
                               color: Colors.black87,
                               height: 1.4,
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      _buildContractSection(
-                        title: 'Freelancer name',
-                        children: [
-                          Text(
-                            (parties['freelancerName'] ?? '').toString(),
-                            style: const TextStyle(
-                              color: Colors.black87,
-                              height: 1.4,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      _buildContractSection(
-                        title: 'Service description',
-                        children: [
-                          _isEditingContract
-                              ? Form(
-                                  key: _contractFormKey,
-                                  child: _buildContractInput(
-                                    initialValue: _editableServiceDescription,
-                                    maxLength: 150,
-                                    maxLines: 3,
-                                    validator: _validateContractDescription,
-                                    onChanged: (value) {
-                                      _editableServiceDescription = value;
-                                    },
-                                  ),
-                                )
-                              : Text(
-                                  (service['description'] ?? '')
-                                          .toString()
-                                          .trim()
-                                          .isEmpty
-                                      ? '-'
-                                      : (service['description'] ?? '')
-                                            .toString(),
-                                  style: const TextStyle(
-                                    color: Colors.black87,
-                                    height: 1.4,
-                                  ),
-                                ),
-                        ],
-                      ),
-                      if (summary.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _buildContractSection(
-                          title: 'Summary',
-                          children: [
-                            ...summary.map<Widget>((item) {
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: Text(
-                                  "• ${item.toString()}",
-                                  style: const TextStyle(
-                                    color: Colors.black87,
-                                    height: 1.4,
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ],
-                        ),
-                      ],
-
-                      const SizedBox(height: 10),
-                      _buildContractSection(
-                        title: 'Amount',
-                        children: [
-                          _isEditingContract
-                              ? Row(
-                                  children: [
-                                    Expanded(
-                                      child: _buildContractInput(
-                                        initialValue: _editableAmount,
-                                        maxLength: 10,
-                                        keyboardType:
-                                            const TextInputType.numberWithOptions(
-                                              decimal: true,
-                                            ),
-                                        inputFormatters: [
-                                          FilteringTextInputFormatter.allow(
-                                            RegExp(r'[0-9.]'),
-                                          ),
-                                          TextInputFormatter.withFunction((
-                                            oldValue,
-                                            newValue,
-                                          ) {
-                                            final text = newValue.text;
-                                            if (text.isEmpty) {
-                                              return newValue;
-                                            }
-
-                                            if (!RegExp(
-                                              r'^\d*\.?\d{0,2}$',
-                                            ).hasMatch(text)) {
-                                              return oldValue;
-                                            }
-
-                                            return newValue;
-                                          }),
-                                        ],
-                                        onChanged: (value) {
-                                          _editableAmount = value;
-                                        },
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      currency.trim().isEmpty ? '-' : currency,
-                                      style: const TextStyle(
-                                        color: Colors.black87,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              : Text(
-                                  paymentText.isEmpty ? '-' : paymentText,
-                                  style: const TextStyle(
-                                    color: Colors.black87,
-                                    height: 1.4,
-                                  ),
-                                ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      _buildContractSection(
-                        title: 'Deadline',
-                        children: [
-                          _isEditingContract
-                              ? GestureDetector(
-                                  onTap: _pickContractDeadline,
-                                  child: AbsorbPointer(
-                                    child: _buildContractInput(
-                                      initialValue: _editableDeadline,
-                                      readOnly: true,
-                                      suffixIcon: const Icon(
-                                        Icons.calendar_today_outlined,
-                                      ),
-                                      onChanged: (value) {
-                                        _editableDeadline = value;
-                                      },
-                                    ),
-                                  ),
-                                )
-                              : Text(
-                                  (timeline['deadline'] ?? '')
-                                          .toString()
-                                          .trim()
-                                          .isEmpty
-                                      ? '-'
-                                      : (timeline['deadline'] ?? '').toString(),
-                                  style: const TextStyle(
-                                    color: Colors.black87,
-                                    height: 1.4,
-                                  ),
-                                ),
-                        ],
-                      ),
-                      if (_isEditingContract) ...[
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _handleAddClause,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: primary,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add Clause'),
-                          ),
-                        ),
-                      ],
-                      if (_isEditingContract && _isAddingClause) ...[
-                        const SizedBox(height: 10),
-                        ..._pendingCustomClauses.asMap().entries.map((entry) {
-                          final index = entry.key;
-                          final clause = entry.value;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: primary.withOpacity(0.12),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  TextFormField(
-                                    initialValue: clause['title'] ?? '',
-                                    maxLength: 20,
-                                    maxLines: 1,
-                                    onChanged: (value) {
-                                      _pendingCustomClauses[index]['title'] =
-                                          value;
-                                    },
-                                    decoration: InputDecoration(
-                                      hintText: 'Clause title',
-                                      isDense: true,
-                                      filled: true,
-                                      fillColor: const Color(0xFFF8F6FC),
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 10,
-                                          ),
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                        borderSide: BorderSide(
-                                          color: primary.withOpacity(0.12),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  TextFormField(
-                                    initialValue: clause['content'] ?? '',
-                                    maxLength: 100,
-                                    minLines: 2,
-                                    maxLines: 4,
-                                    onChanged: (value) {
-                                      _pendingCustomClauses[index]['content'] =
-                                          value;
-                                    },
-                                    decoration: InputDecoration(
-                                      hintText: 'Clause content',
-                                      isDense: true,
-                                      filled: true,
-                                      fillColor: const Color(0xFFF8F6FC),
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 10,
-                                          ),
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                        borderSide: BorderSide(
-                                          color: primary.withOpacity(0.12),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }),
-                      ],
-                      if (userCustomClauseEntries.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        ...userCustomClauseEntries.map((entry) {
-                          final index = entry.key;
-                          final clause = entry.value;
-                          final clauseMap = clause is Map
-                              ? Map<String, dynamic>.from(clause)
-                              : <String, dynamic>{};
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: primary.withOpacity(0.12),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          (clauseMap['title'] ??
-                                                  'Custom Clause')
-                                              .toString(),
-                                          style: const TextStyle(
-                                            color: primary,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ),
-                                      if (_isEditingContract)
-                                        IconButton(
-                                          onPressed: _isSavingContract
-                                              ? null
-                                              : () => _deleteClause(index),
-                                          icon: const Icon(Icons.delete),
-                                          color: Colors.redAccent,
-                                          visualDensity: VisualDensity.compact,
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    (clauseMap['content'] ?? '')
-                                            .toString()
-                                            .trim()
-                                            .isEmpty
-                                        ? '-'
-                                        : (clauseMap['content'] ?? '')
-                                              .toString(),
-                                    style: const TextStyle(
-                                      color: Colors.black87,
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }),
-                      ],
-                      if (showWaitingForOtherPartySignature) ...[
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Waiting for other party signature',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontSize: 12.5,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                      if (showCancelApproval) ...[
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed:
-                                (_isApprovingContract || _isSavingContract)
-                                ? null
-                                : _callCancelApproval,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE57373),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            icon: _isApprovingContract
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.undo_rounded),
-                            label: const Text('Cancel Approval'),
-                          ),
-                        ),
-                      ],
-                      if (contractStatus == 'rejected') ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _isSavingContract
-                                ? null
-                                : _deleteContract,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE57373),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            icon: _isSavingContract
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.delete),
-                            label: const Text('Delete Contract'),
-                          ),
-                        ),
-                      ],
-
-                      if (showTerminateButton) ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _isTerminatingContract
-                                ? null
-                                : _requestTermination,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFC75A5A),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            icon: const Icon(Icons.gpp_bad_rounded),
-                            label: const Text('Request Termination'),
-                          ),
-                        ),
-                      ],
-
-                      if (showApproveTerminationButton) ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _isTerminatingContract
-                                ? null
-                                : _approveTermination,
-
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFC75A5A),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: const Text('Approve Termination'),
-                          ),
-                        ),
-                      ],
-
-                      if (showCancelTerminationButton) ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _isTerminatingContract
-                                ? null
-                                : _cancelTermination,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE57373),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            icon: const Icon(Icons.undo_rounded),
-                            label: const Text('Cancel Termination'),
-                          ),
-                        ),
-                      ],
-
-                      if (showCancelTerminationButton) ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Termination request sent. Waiting for the other party to approve.',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontSize: 12.5,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-
-                      if (contractStatus == 'terminated') ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'This contract has been terminated.',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontSize: 12.5,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-
-                      if (contractStatus == 'approved') ...[
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Approved',
-                          style: TextStyle(
-                            color: Color(0xFF2E7D32),
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-
-                      if (showCancelContractButton) ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                (_isSavingContract || _isApprovingContract)
-                                ? null
-                                : _cancelContract,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFFC75A5A),
-                              backgroundColor: const Color(0xFFFFF7F7),
-                              side: const BorderSide(
-                                color: Color(0xFFE6BABA),
-                                width: 1,
-                              ),
-                              minimumSize: const Size(0, 44),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              textStyle: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            icon: const Icon(Icons.close_rounded),
-                            label: const Text('Cancel Contract'),
-                          ),
-                        ),
-                      ],
-
-                      if (showApproveActions) ...[
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton(
-                                onPressed:
-                                    (_isApprovingContract || _isSavingContract)
-                                    ? null
-                                    : _openSignatureAndApprove,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primary,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  shadowColor: Colors.transparent,
-                                  minimumSize: const Size(0, 44),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                child: _isApprovingContract
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Text('Approve & Sign'),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: OutlinedButton(
-                                onPressed:
-                                    (_isApprovingContract || _isSavingContract)
-                                    ? null
-                                    : _disapproveContract,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFFC75A5A),
-                                  backgroundColor: const Color(0xFFFFF7F7),
-                                  side: const BorderSide(
-                                    color: Color(0xFFE6BABA),
-                                    width: 1,
-                                  ),
-                                  minimumSize: const Size(0, 44),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                child: const Text('Disapprove'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                        );
+                      }).toList(),
                     ],
                   ),
+                ],
+                const SizedBox(height: 10),
+                _buildContractSection(
+                  title: 'Amount',
+                  children: [
+                    _isEditingContract
+                        ? Row(
+                            children: [
+                              Expanded(
+                                child: _buildContractInput(
+                                  initialValue: _editableAmount,
+                                  maxLength: 10,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r'[0-9.]'),
+                                    ),
+                                    TextInputFormatter.withFunction((
+                                      oldValue,
+                                      newValue,
+                                    ) {
+                                      final text = newValue.text;
+                                      if (text.isEmpty) {
+                                        return newValue;
+                                      }
+
+                                      if (!RegExp(
+                                        r'^\d*\.?\d{0,2}$',
+                                      ).hasMatch(text)) {
+                                        return oldValue;
+                                      }
+
+                                      return newValue;
+                                    }),
+                                  ],
+                                  onChanged: (value) {
+                                    _editableAmount = value;
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'SAR',
+                                style: TextStyle(
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Text(
+                            paymentText,
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          ),
+                  ],
                 ),
-              ),
+                const SizedBox(height: 10),
+                _buildContractSection(
+                  title: 'Deadline',
+                  children: [
+                    _isEditingContract
+                        ? GestureDetector(
+                            onTap: _pickContractDeadline,
+                            child: AbsorbPointer(
+                              child: _buildContractInput(
+                                initialValue: _editableDeadline,
+                                readOnly: true,
+                                suffixIcon: const Icon(
+                                  Icons.calendar_today_outlined,
+                                ),
+                                onChanged: (value) {
+                                  _editableDeadline = value;
+                                },
+                              ),
+                            ),
+                          )
+                        : Text(
+                            (timeline['deadline'] ?? '')
+                                    .toString()
+                                    .trim()
+                                    .isEmpty
+                                ? '-'
+                                : (timeline['deadline'] ?? '').toString(),
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          ),
+                  ],
+                ),
+                if (_isEditingContract) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _handleAddClause,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Clause'),
+                    ),
+                  ),
+                ],
+                if (_isEditingContract && _pendingCustomClauses.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ..._pendingCustomClauses.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final clause = entry.value;
+
+                    return Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: primary.withOpacity(0.12)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextFormField(
+                            initialValue: clause['title'] ?? '',
+                            maxLength: 20,
+                            maxLines: 1,
+                            onChanged: (value) {
+                              _pendingCustomClauses[index]['title'] = value;
+                            },
+                            decoration: InputDecoration(
+                              hintText: 'Clause title',
+                              counterText: '',
+                              isDense: true,
+                              filled: true,
+                              fillColor: const Color(0xFFF8F6FC),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 10,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: primary.withOpacity(0.12),
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: primary.withOpacity(0.12),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: const BorderSide(color: primary),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextFormField(
+                            initialValue: clause['content'] ?? '',
+                            maxLength: 100,
+                            minLines: 2,
+                            maxLines: 4,
+                            onChanged: (value) {
+                              _pendingCustomClauses[index]['content'] = value;
+                            },
+                            decoration: InputDecoration(
+                              hintText: 'Clause content',
+                              counterText: '',
+                              isDense: true,
+                              filled: true,
+                              fillColor: const Color(0xFFF8F6FC),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 10,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: primary.withOpacity(0.12),
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: primary.withOpacity(0.12),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: const BorderSide(color: primary),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ],
+                if (userCustomClauseEntries.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  ...userCustomClauseEntries.map((entry) {
+                    final index = entry.key;
+                    final clause = entry.value as Map;
+
+                    return Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: primary.withOpacity(0.12)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (clause['title'] ?? '').toString().trim().isEmpty
+                                ? 'Clause'
+                                : (clause['title'] ?? '').toString(),
+                            style: const TextStyle(
+                              color: primary,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            (clause['content'] ?? '').toString().trim().isEmpty
+                                ? '-'
+                                : (clause['content'] ?? '').toString(),
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              height: 1.4,
+                            ),
+                          ),
+                          if (_isEditingContract) ...[
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: () => _deleteClause(index),
+                                icon: const Icon(Icons.delete_outline),
+                                label: const Text('Delete'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.redAccent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ],
+                if (showApproveActions) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isApprovingContract
+                              ? null
+                              : _openSignatureAndApprove,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          icon: const Icon(Icons.check_rounded),
+                          label: const Text('Approve'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _isApprovingContract
+                              ? null
+                              : _disapproveContract,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.redAccent,
+                            side: const BorderSide(color: Colors.redAccent),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          icon: const Icon(Icons.close_rounded),
+                          label: const Text('Disapprove'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (showWaitingForOtherPartySignature) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Waiting for the other party approval.',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 12.5,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                if (showCancelApproval) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isApprovingContract
+                          ? null
+                          : _callCancelApproval,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.undo_rounded),
+                      label: const Text('Cancel Approval'),
+                    ),
+                  ),
+                ],
+                if (showCancelContractButton) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isSavingContract ? null : _cancelContract,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Cancel Contract'),
+                    ),
+                  ),
+                ],
+                if (showTerminateButton) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isTerminatingContract
+                          ? null
+                          : _requestTermination,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFC75A5A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.close_rounded),
+                      label: const Text('Terminate'),
+                    ),
+                  ),
+                ],
+                if (showApproveTerminationButton) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isTerminatingContract
+                          ? null
+                          : _approveTermination,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFC75A5A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.check_rounded),
+                      label: const Text('Approve Termination'),
+                    ),
+                  ),
+                ],
+                if (showCancelTerminationButton) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isTerminatingContract
+                          ? null
+                          : _cancelTermination,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.undo_rounded),
+                      label: const Text('Cancel Termination'),
+                    ),
+                  ),
+                ],
+                if (contractStatus == 'rejected') ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isSavingContract ? null : _deleteContract,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete Contract'),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -2942,6 +2852,7 @@ class _ChatViewState extends State<ChatView> {
         previewContractStatus == 'canceled';
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -3040,235 +2951,254 @@ class _ChatViewState extends State<ChatView> {
             ),
           ),
 
-          if (_selectedImages.isNotEmpty)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF6F2FB),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: primary.withOpacity(0.20)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.image_outlined,
-                        color: primary,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${_selectedImages.length} image(s) selected',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 90,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _selectedImages.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        return Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.file(
-                                _selectedImages[index],
-                                width: 90,
-                                height: 90,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                            Positioned(
-                              top: 4,
-                              right: 4,
-                              child: GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _selectedImages.removeAt(index);
-                                  });
-                                },
-                                child: const CircleAvatar(
-                                  radius: 11,
-                                  backgroundColor: Colors.black54,
-                                  child: Icon(
-                                    Icons.close,
-                                    size: 13,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'You can send these images with or without text.',
-                    style: TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
-                ],
-              ),
-            ),
-
           SafeArea(
             top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
+            child: AnimatedPadding(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_isGeneratingContract)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: primary,
-                            ),
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'Generating contract...',
-                            style: TextStyle(
-                              color: primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, -2),
                     ),
-
-                  if (_isSavingContract)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: primary,
-                            ),
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'Saving contract...',
-                            style: TextStyle(
-                              color: primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                  if (_contractError != null)
-                    Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF1F1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _contractError!,
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
-                    ),
-
-                  _buildContractPreview(),
-
-                  if (showGenerateContractButton) ...[
-                    _buildGenerateButton(),
-                    const SizedBox(height: 10),
                   ],
-
-                  Row(
+                ),
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      IconButton(
-                        onPressed: _isSending ? null : _pickImages,
-                        icon: const Icon(Icons.image_outlined, color: primary),
-                        tooltip: 'Send image',
-                      ),
-                      const SizedBox(width: 4),
-
-                      Expanded(
-                        child: TextField(
-                          controller: _messageController,
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: InputDecoration(
-                            hintText: 'Write a message...',
-                            filled: true,
-                            fillColor: const Color(0xFFF6F2FB),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 12,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide.none,
+                      if (_selectedImages.isNotEmpty)
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF6F2FB),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: primary.withOpacity(0.20),
                             ),
                           ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 8),
-
-                      CircleAvatar(
-                        radius: 22,
-                        backgroundColor: primary,
-                        child: _isSending
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : IconButton(
-                                onPressed: _sendMessage,
-                                icon: const Icon(
-                                  Icons.send,
-                                  color: Colors.white,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.image_outlined,
+                                    color: primary,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${_selectedImages.length} image(s) selected',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                height: 90,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: _selectedImages.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(width: 8),
+                                  itemBuilder: (context, index) {
+                                    return Stack(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          child: Image.file(
+                                            _selectedImages[index],
+                                            width: 90,
+                                            height: 90,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                        Positioned(
+                                          top: 4,
+                                          right: 4,
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              setState(() {
+                                                _selectedImages.removeAt(index);
+                                              });
+                                            },
+                                            child: const CircleAvatar(
+                                              radius: 11,
+                                              backgroundColor: Colors.black54,
+                                              child: Icon(
+                                                Icons.close,
+                                                size: 13,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'You can send these images with or without text.',
+                                style: TextStyle(
+                                  color: Colors.black54,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      if (_isGeneratingContract)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 12),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: primary,
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Generating contract.',
+                                style: TextStyle(
+                                  color: primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      if (_isSavingContract)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 12),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: primary,
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Saving contract.',
+                                style: TextStyle(
+                                  color: primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      if (_contractError != null)
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF1F1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _contractError!,
+                            style: const TextStyle(color: Colors.redAccent),
+                          ),
+                        ),
+
+                      _buildContractPreview(),
+
+                      if (showGenerateContractButton) ...[
+                        _buildGenerateButton(),
+                        const SizedBox(height: 10),
+                      ],
+
+                      Row(
+                        children: [
+                          IconButton(
+                            onPressed: _isSending ? null : _pickImages,
+                            icon: const Icon(
+                              Icons.image_outlined,
+                              color: primary,
+                            ),
+                            tooltip: 'Send image',
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: TextField(
+                              controller: _messageController,
+                              minLines: 1,
+                              maxLines: 4,
+                              decoration: InputDecoration(
+                                hintText: 'Write a message.',
+                                filled: true,
+                                fillColor: const Color(0xFFF6F2FB),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(24),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          CircleAvatar(
+                            radius: 22,
+                            backgroundColor: primary,
+                            child: _isSending
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : IconButton(
+                                    onPressed: _sendMessage,
+                                    icon: const Icon(
+                                      Icons.send,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
