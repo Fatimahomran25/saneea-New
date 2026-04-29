@@ -18,6 +18,11 @@ def generate_contract_pdf(contract_data):
     def as_dict(value):
         return value if isinstance(value, dict) else {}
 
+    def as_list(value):
+        return value if isinstance(value, list) else []
+
+    contract_data = as_dict(contract_data)
+
     parties = as_dict(contract_data.get("parties"))
     service = as_dict(contract_data.get("service"))
     payment = as_dict(contract_data.get("payment"))
@@ -25,13 +30,12 @@ def generate_contract_pdf(contract_data):
     meta = as_dict(contract_data.get("meta"))
     approval = as_dict(contract_data.get("approval"))
     signatures = as_dict(contract_data.get("signatures"))
-    custom_clauses = contract_data.get("customClauses", [])
-    if not isinstance(custom_clauses, list):
-        custom_clauses = []
+    custom_clauses = as_list(contract_data.get("customClauses"))
 
     client_name = parties.get("clientName", "-")
     freelancer_name = parties.get("freelancerName", "-")
-    service_description = service.get("description", "-")
+    service_ai_text = service.get("aiText")
+    service_raw_description = service.get("description", "-")
     payment_amount = payment.get("amount", "-")
     payment_currency = payment.get("currency", "")
     deadline = timeline.get("deadline", "-")
@@ -45,8 +49,10 @@ def generate_contract_pdf(contract_data):
     status = status_raw.replace("_", " ").title()
 
     base_dir = os.path.dirname(__file__)
-    project_root = os.path.abspath(os.path.join(base_dir, ".."))
-    logo_path = os.path.join(project_root, "assets", "LOGO.png")
+    project_root = os.path.abspath(os.path.join(base_dir, os.pardir))
+    logo_path = os.path.abspath(
+        os.path.join(project_root, "assets", "LOGO.png")
+    )
 
     def normalize_text(value):
         return " ".join(str(value or "").strip().lower().split())
@@ -56,6 +62,10 @@ def generate_contract_pdf(contract_data):
             return fallback
         text = str(value).strip()
         return text if text else fallback
+
+    service_description = safe_text(service_ai_text, "")
+    if service_description == "":
+        service_description = safe_text(service_raw_description)
 
     def get_status_color():
         if status_raw == "approved":
@@ -735,7 +745,10 @@ def generate_contract_pdf(contract_data):
             continue
 
         title = safe_text(clause.get("title"), "Other")
-        content = safe_text(clause.get("content") or clause.get("text"), "")
+        raw_clause_content = clause.get("content")
+        if raw_clause_content in (None, ""):
+            raw_clause_content = clause.get("text")
+        content = safe_text(raw_clause_content, "")
 
         if not content.strip():
             continue

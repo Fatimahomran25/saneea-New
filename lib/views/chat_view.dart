@@ -147,31 +147,51 @@ class _ChatViewState extends State<ChatView> {
 
       final chatData = chatDoc.data();
       final requestId = _extractRequestId(chatData);
+      final announcementId = (chatData?['announcementId'] ?? '')
+          .toString()
+          .trim();
+      final proposalId = (chatData?['proposalId'] ?? '').toString().trim();
       debugPrint('requestId: $requestId');
       debugPrint('CHAT ID: ${widget.chatId}');
       debugPrint('REQUEST ID: $requestId');
+      debugPrint('ANNOUNCEMENT ID: $announcementId');
+      debugPrint('PROPOSAL ID: $proposalId');
 
       await _requestContractSubscription?.cancel();
 
-      _requestContractSubscription = FirebaseFirestore.instance
-          .collection('requests')
-          .doc(requestId)
-          .snapshots()
-          .listen((requestDoc) {
-            final rawContractData = requestDoc.data()?['contractData'];
-            final hasContractData =
-                rawContractData is Map && rawContractData.isNotEmpty;
+      final isAnnouncementProposalChat = proposalId.isNotEmpty;
+      final sourceCollection = isAnnouncementProposalChat
+          ? 'announcement_requests'
+          : 'requests';
+      final sourceDocumentId = isAnnouncementProposalChat
+          ? proposalId
+          : requestId;
 
-            debugPrint('contractData exists: $hasContractData');
+      debugPrint('Listening source: $sourceCollection');
+      debugPrint('Listening document id: $sourceDocumentId');
 
-            if (!mounted) return;
+      final sourceStream = FirebaseFirestore.instance
+          .collection(sourceCollection)
+          .doc(sourceDocumentId)
+          .snapshots();
 
-            setState(() {
-              _contractData = hasContractData
-                  ? Map<String, dynamic>.from(rawContractData as Map)
-                  : null;
-            });
-          });
+      _requestContractSubscription = sourceStream.listen((sourceDoc) {
+        final rawContractData = sourceDoc.data()?['contractData'];
+        final hasContractData =
+            rawContractData is Map && rawContractData.isNotEmpty;
+
+        debugPrint('Listening source: $sourceCollection');
+        debugPrint('Listening document id: $sourceDocumentId');
+        debugPrint('contractData exists: $hasContractData');
+
+        if (!mounted) return;
+
+        setState(() {
+          _contractData = hasContractData
+              ? Map<String, dynamic>.from(rawContractData as Map)
+              : null;
+        });
+      });
     } catch (e) {
       debugPrint('Error listening to request contract: $e');
 
@@ -798,13 +818,26 @@ class _ChatViewState extends State<ChatView> {
 
             final chatData = chatDoc.data();
             final requestId = _extractRequestId(chatData);
+            final proposalId = (chatData?['proposalId'] ?? '')
+                .toString()
+                .trim();
+            final announcementId = (chatData?['announcementId'] ?? '')
+                .toString()
+                .trim();
+            final requestBody = <String, dynamic>{'requestId': requestId};
+            if (proposalId.isNotEmpty) {
+              requestBody['proposalId'] = proposalId;
+            }
+            debugPrint('Generate Contract requestId: $requestId');
+            debugPrint('Generate Contract proposalId: $proposalId');
+            debugPrint('Generate Contract announcementId: $announcementId');
 
             final response = await http.post(
               Uri.parse(
                 '${ApiConfig.baseUrl}/generate-contract-from-request-id',
               ),
               headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'requestId': requestId}),
+              body: jsonEncode(requestBody),
             );
 
             if (response.statusCode >= 200 && response.statusCode < 300) {

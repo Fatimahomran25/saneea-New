@@ -76,17 +76,15 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
 
   Future<void> _openAcceptedProposalChat({
     required AnnouncementRequest request,
-    required String chatLookupId,
     String? initialChatId,
   }) async {
-    final storedChatId = (initialChatId ?? '').trim();
-    final chatId = storedChatId.isNotEmpty
-        ? storedChatId
-        : await _chatController.createOrGetChat(
-            requestId: chatLookupId,
-            clientId: request.clientId,
-            freelancerId: request.freelancerId,
-          );
+    final chatId = await _chatController.createOrGetAnnouncementProposalChat(
+      announcementId: request.announcementId,
+      proposalId: request.id,
+      clientId: request.clientId,
+      freelancerId: request.freelancerId,
+      initialChatId: initialChatId,
+    );
 
     if (!mounted) return;
 
@@ -114,52 +112,35 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
       builder: (context, proposalSnapshot) {
         final proposalData = proposalSnapshot.data?.data() ?? {};
         final proposalChatId = (proposalData['chatId'] ?? '').toString().trim();
-        final chatLookupId = (proposalData['requestId'] ?? '').toString().trim();
-        final effectiveLookupId = chatLookupId.isEmpty ? request.id : chatLookupId;
+        final isLoading =
+            proposalSnapshot.connectionState == ConnectionState.waiting;
 
-        return StreamBuilder<String?>(
-          stream: _chatController.watchChatIdForRequest(effectiveLookupId),
-          builder: (context, chatSnapshot) {
-            final resolvedChatId = (chatSnapshot.data ?? '').trim();
-            final hasChat =
-                proposalChatId.isNotEmpty || resolvedChatId.isNotEmpty;
-            final isLoading =
-                proposalSnapshot.connectionState == ConnectionState.waiting &&
-                !hasChat;
-
-            return SizedBox(
-              width: double.infinity,
-              height: 42,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                ),
-                onPressed: () => _openAcceptedProposalChat(
-                  request: request,
-                  chatLookupId: effectiveLookupId,
-                  initialChatId: proposalChatId.isNotEmpty
-                      ? proposalChatId
-                      : resolvedChatId,
-                ),
-                child: hasChat
-                    ? const Icon(Icons.chat_bubble_outline, size: 18)
-                    : isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.chat_bubble_outline, size: 18),
+        return SizedBox(
+          width: double.infinity,
+          height: 42,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
               ),
-            );
-          },
+            ),
+            onPressed: () => _openAcceptedProposalChat(
+              request: request,
+              initialChatId: proposalChatId,
+            ),
+            child: isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.chat_bubble_outline, size: 18),
+          ),
         );
       },
     );

@@ -6,13 +6,16 @@ from datetime import datetime
 from firebase_service import (
     create_approved_contract_chat_message,
     delete_request_contract_data,
+    get_contract_source_by_id,
     get_request_by_id,
+    update_announcement_contract_data,
+    update_announcement_proposal_contract_data,
     update_request_contract_data,
 )
 from contract_service import render_contract_text
 
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_MODEL = "gpt-5.1"
 
 CONTRACT_SCHEMA = {
     "type": "object",
@@ -63,18 +66,69 @@ CONTRACT_SCHEMA = {
 }
 
 
+def _get_openai_client():
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY is not set. Configure it before generating contracts."
+        )
+
+    return OpenAI(api_key=api_key)
+
+
+def _extract_refusal_text(response):
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", "") == "message":
+            for content in getattr(item, "content", []) or []:
+                if getattr(content, "type", "") == "refusal":
+                    refusal = getattr(content, "refusal", "") or getattr(
+                        content,
+                        "text",
+                        "",
+                    )
+                    if refusal:
+                        return str(refusal).strip()
+
+        if getattr(item, "type", "") == "refusal":
+            refusal = getattr(item, "refusal", "") or getattr(item, "text", "")
+            if refusal:
+                return str(refusal).strip()
+
+    return ""
+
+
 def generate_contract_ai(data):
+    source = str(data.get("source", "")).strip().lower()
+    description_label = "Project Description"
+    description_text = data.get("description", "Not specified")
+    announcement_context = ""
+
+    if source == "announcement":
+        description_label = "Original Public Announcement Description"
+        announcement_context = f"""
+Announcement ID: {data.get('announcementId', 'Not specified')}
+Proposal ID: {data.get('proposalId', 'Not specified')}
+Accepted Freelancer Proposal: {data.get('proposalText', 'Not provided')}
+
+Announcement-specific instructions:
+- The contract scope must be based mainly on the original announcement description.
+- The freelancer proposal is supporting context only.
+- Do not replace the original announcement description with the proposal text.
+"""
+
     prompt = f"""
 Create a professional freelance contract draft using these inputs:
 
+Source: {data.get('source', 'request')}
 Client: {data.get('client', 'Client')}
 Freelancer: {data.get('freelancer', 'Freelancer')}
 Service Type: {data.get('service_type', 'Not specified')}
-Project Description: {data.get('description', 'Not specified')}
+{description_label}: {description_text}
 Budget: {data.get('amount', 'Not specified')}
 Currency: {data.get('currency', 'Not specified')}
 Deadline: {data.get('deadline', 'Not specified')}
 Extra Requirements: {data.get('extra_requirements', 'None')}
+{announcement_context}
 
 Instructions:
 - Write clearly and professionally.
@@ -84,43 +138,82 @@ Instructions:
 - Return output strictly matching the JSON schema.
 """
 
-    response = client.responses.create(
-        model="gpt-5.4",
-        input=[
-            {
-                "role": "system",
-                "content": "You are a professional contract drafting assistant."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "generated_contract",
-                "strict": True,
-                "schema": CONTRACT_SCHEMA
-            }
-        }
-    )
-
-    raw_text = response.output_text
-
-    if not raw_text:
-        raise ValueError("Empty AI response")
+    client = _get_openai_client()
 
     try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid AI JSON response: {str(e)}")
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            input=[
+                {
+                    "role": "system",
+                    "content": "You are a professional contract drafting assistant.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "generated_contract",
+                    "strict": True,
+                    "schema": CONTRACT_SCHEMA,
+                }
+            },
+        )
+    except Exception as error:
+        raise ValueError(f"OpenAI contract generation failed: {str(error)}") from error
+
+    raw_text = getattr(response, "output_text", "")
+    if not isinstance(raw_text, str):
+        raw_text = str(raw_text or "")
+    raw_text = raw_text.strip()
+
+    if not raw_text:
+        refusal_text = _extract_refusal_text(response)
+        if refusal_text:
+            raise ValueError(
+                f"OpenAI refused to generate the contract: {refusal_text}"
+            )
+
+        raise ValueError("OpenAI returned an empty contract response.")
+
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid AI JSON response: {str(error)}") from error
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Invalid AI JSON response: expected a JSON object.")
+
+    required_fields = ("title", "contractText", "summary", "clauses", "warnings")
+    missing_fields = [field for field in required_fields if field not in parsed]
+    if missing_fields:
+        raise ValueError(
+            "Invalid AI JSON response: missing fields: "
+            + ", ".join(missing_fields)
+        )
+
+    return parsed
 
 
 def generate_contract_from_data(request_data):
     print("AI working")
 
+    service_data = {
+        "description": request_data.get("description"),
+        "aiText": None,
+    }
+    proposal_text = request_data.get("proposalText")
+    if isinstance(proposal_text, str) and proposal_text.strip():
+        service_data["proposalText"] = proposal_text.strip()
+
     ai_result = generate_contract_ai({
+        "source": request_data.get("source"),
+        "announcementId": request_data.get("announcementId"),
+        "proposalId": request_data.get("proposalId"),
+        "proposalText": request_data.get("proposalText"),
         "client": request_data.get("clientName") or request_data.get("client"),
         "freelancer": request_data.get("freelancerName") or request_data.get("freelancer"),
         "service_type": request_data.get("serviceType") or request_data.get("category"),
@@ -143,7 +236,7 @@ def generate_contract_from_data(request_data):
             "summary": ai_result.get("summary", []),
             "warnings": ai_result.get("warnings", []),
             "source": "ai",
-            "model": "gpt-5.4",
+            "model": OPENAI_MODEL,
             "createdAt": datetime.now().strftime("%d/%m/%Y"),
         },
         "approval": {
@@ -156,10 +249,7 @@ def generate_contract_from_data(request_data):
             "clientSignature": None,
             "freelancerSignature": None,
         },
-        "service": {
-            "description": request_data.get("description"),
-            "aiText": ai_result["contractText"],
-        },
+        "service": service_data,
         "payment": {
             "amount": request_data.get("amount") or request_data.get("budget"),
             "currency": request_data.get("currency"),
@@ -179,6 +269,7 @@ def generate_contract_from_data(request_data):
             if isinstance(clause, dict)
         ],
     }
+    contract_data["service"]["aiText"] = ai_result["contractText"]
 
     return {
         "success": True,
@@ -188,17 +279,37 @@ def generate_contract_from_data(request_data):
     }
 
 
-def generate_contract_from_request_id(request_id):
-    request_data = get_request_by_id(request_id)
+def generate_contract_from_request_id(request_id, proposal_id=None):
+    normalized_request_id = str(request_id or "").strip()
+    normalized_proposal_id = str(proposal_id or "").strip()
+    print(f"received request_id: {normalized_request_id}")
+    print(f"received proposal_id: {normalized_proposal_id}")
 
-    if not request_data:
+    contract_source = get_contract_source_by_id(request_id, proposal_id)
+
+    if not contract_source:
         return {
             "success": False,
             "error": "Request not found"
         }
 
+    request_data = contract_source.get("data") or {}
     result = generate_contract_from_data(request_data)
-    update_request_contract_data(request_id, result["contractData"])
+
+    if contract_source.get("source") == "announcement":
+        update_announcement_proposal_contract_data(
+            contract_source.get("proposalId") or normalized_proposal_id,
+            result["contractData"],
+        )
+        print(
+            "where contractData was saved: "
+            + "announcement_requests/"
+            + str(contract_source.get("proposalId") or normalized_proposal_id)
+        )
+    else:
+        update_request_contract_data(request_id, result["contractData"])
+        print(f"where contractData was saved: requests/{normalized_request_id}")
+
     result["requestData"] = request_data
     return result
 
@@ -208,6 +319,17 @@ def _normalize_signatures(signatures):
     return {
         "clientSignature": raw_signatures.get("clientSignature"),
         "freelancerSignature": raw_signatures.get("freelancerSignature"),
+    }
+
+
+def _normalize_approval(approval):
+    return dict(approval) if isinstance(approval, dict) else {}
+
+
+def _empty_signatures():
+    return {
+        "clientSignature": None,
+        "freelancerSignature": None,
     }
 
 
@@ -295,7 +417,22 @@ def approve_contract(request_id, role, signature_data):
         generated = generate_contract_from_data(request_data)
         contract_data = generated["contractData"]
 
-    approval = contract_data.get("approval", {})
+    approval = _normalize_approval(contract_data.get("approval"))
+    current_contract_status = str(
+        approval.get("contractStatus", "draft")
+    ).strip().lower()
+    if current_contract_status in (
+        "rejected",
+        "cancelled",
+        "canceled",
+        "terminated",
+        "termination_pending",
+    ):
+        return {
+            "success": False,
+            "error": "This contract cannot be approved in its current state"
+        }
+
     previous_contract_status = str(
         approval.get("contractStatus", "")
     ).strip().lower()
@@ -358,7 +495,20 @@ def cancel_approval(request_id, role):
             "error": "No contract found"
         }
 
-    approval = contract_data.get("approval", {})
+    approval = _normalize_approval(contract_data.get("approval"))
+    contract_status = str(approval.get("contractStatus", "draft")).strip().lower()
+    if contract_status in (
+        "rejected",
+        "cancelled",
+        "canceled",
+        "terminated",
+        "termination_pending",
+    ):
+        return {
+            "success": False,
+            "error": "Approval cannot be cancelled in the current contract state"
+        }
+
     signatures = _normalize_signatures(contract_data.get("signatures"))
 
     if normalized_role == "client":
@@ -413,10 +563,28 @@ def disapprove_contract(request_id, role):
         generated = generate_contract_from_data(request_data)
         contract_data = generated["contractData"]
 
-    approval = contract_data.get("approval", {})
+    approval = _normalize_approval(contract_data.get("approval"))
+    contract_status = str(approval.get("contractStatus", "draft")).strip().lower()
+    if contract_status in (
+        "approved",
+        "rejected",
+        "cancelled",
+        "canceled",
+        "termination_pending",
+        "terminated",
+    ):
+        return {
+            "success": False,
+            "error": "This contract cannot be rejected in its current state"
+        }
+
+    approval["clientApproved"] = False
+    approval["freelancerApproved"] = False
     approval["contractStatus"] = "rejected"
+    approval["edited"] = False
 
     contract_data["approval"] = approval
+    contract_data["signatures"] = _empty_signatures()
     update_request_contract_data(request_id, contract_data)
 
     return {
@@ -478,10 +646,7 @@ def cancel_contract(request_id, role=""):
     approval["edited"] = False
 
     contract_data["approval"] = approval
-    contract_data["signatures"] = {
-        "clientSignature": None,
-        "freelancerSignature": None,
-    }
+    contract_data["signatures"] = _empty_signatures()
 
     update_request_contract_data(request_id, contract_data)
 
@@ -514,9 +679,7 @@ def request_termination(request_id, role):
             "error": "No contract found"
         }
 
-    approval = contract_data.get("approval")
-    if not isinstance(approval, dict):
-        approval = {}
+    approval = _normalize_approval(contract_data.get("approval"))
 
     contract_status = str(approval.get("contractStatus", "")).strip().lower()
     if contract_status != "approved":
@@ -572,9 +735,7 @@ def approve_termination(request_id, role):
             "error": "No contract found"
         }
 
-    approval = contract_data.get("approval")
-    if not isinstance(approval, dict):
-        approval = {}
+    approval = _normalize_approval(contract_data.get("approval"))
 
     contract_status = str(approval.get("contractStatus", "")).strip().lower()
     if contract_status != "termination_pending":
@@ -591,6 +752,12 @@ def approve_termination(request_id, role):
         }
 
     requested_by = str(termination.get("requestedBy", "")).strip().lower()
+    if requested_by not in ("client", "freelancer"):
+        return {
+            "success": False,
+            "error": "Invalid termination requester"
+        }
+
     if requested_by == normalized_role:
         return {
             "success": False,
@@ -637,9 +804,7 @@ def cancel_termination(request_id, role):
             "error": "No contract found"
         }
 
-    approval = contract_data.get("approval")
-    if not isinstance(approval, dict):
-        approval = {}
+    approval = _normalize_approval(contract_data.get("approval"))
 
     contract_status = str(approval.get("contractStatus", "")).strip().lower()
     if contract_status != "termination_pending":
@@ -750,10 +915,7 @@ def update_contract(request_id, contract_data, role=""):
         updated_approval["edited"] = True
         updated_approval["lastEditedBy"] = normalized_role
         updated_approval["lastEditedAt"] = datetime.now().isoformat()
-        updated_contract_data["signatures"] = {
-            "clientSignature": None,
-            "freelancerSignature": None,
-        }
+        updated_contract_data["signatures"] = _empty_signatures()
     else:
         updated_approval["contractStatus"] = (
             updated_approval.get("contractStatus") or "draft"

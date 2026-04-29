@@ -197,17 +197,15 @@ class _MyAnnouncementRequestsViewState
 
   Future<void> _openAcceptedProposalChat({
     required FreelancerAnnouncementRequest request,
-    required String chatLookupId,
     String? initialChatId,
   }) async {
-    final storedChatId = (initialChatId ?? '').trim();
-    final chatId = storedChatId.isNotEmpty
-        ? storedChatId
-        : await _chatController.createOrGetChat(
-            requestId: chatLookupId,
-            clientId: request.clientId,
-            freelancerId: request.freelancerId,
-          );
+    final chatId = await _chatController.createOrGetAnnouncementProposalChat(
+      announcementId: request.announcementId,
+      proposalId: request.id,
+      clientId: request.clientId,
+      freelancerId: request.freelancerId,
+      initialChatId: initialChatId,
+    );
 
     if (!mounted) return;
 
@@ -270,68 +268,16 @@ class _MyAnnouncementRequestsViewState
       builder: (context, proposalSnapshot) {
         final proposalData = proposalSnapshot.data?.data() ?? {};
         final proposalChatId = (proposalData['chatId'] ?? '').toString().trim();
-        final chatLookupId = (proposalData['requestId'] ?? '').toString().trim();
+        final isLoading =
+            proposalSnapshot.connectionState == ConnectionState.waiting;
 
-        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: chatLookupId.isEmpty
-              ? const Stream.empty()
-              : FirebaseFirestore.instance
-                    .collection('requests')
-                    .doc(chatLookupId)
-                    .snapshots(),
-          builder: (context, requestSnapshot) {
-            final requestData = requestSnapshot.data?.data() ?? {};
-            final requestChatId = (requestData['chatId'] ?? '')
-                .toString()
-                .trim();
-            final directChatId = proposalChatId.isNotEmpty
-                ? proposalChatId
-                : requestChatId;
-            final effectiveLookupId = chatLookupId.isEmpty
-                ? request.id
-                : chatLookupId;
-
-            if (directChatId.isNotEmpty) {
-              return _buildAcceptedChatButton(
-                hasChat: true,
-                isLoading: false,
-                onPressed: () => _openAcceptedProposalChat(
-                  request: request,
-                  chatLookupId: effectiveLookupId,
-                  initialChatId: directChatId,
-                ),
-              );
-            }
-
-            return StreamBuilder<String?>(
-              stream: _chatController.watchChatIdForRequest(effectiveLookupId),
-              builder: (context, chatSnapshot) {
-                final resolvedChatId = (chatSnapshot.data ?? '').trim();
-                final hasChat =
-                    directChatId.isNotEmpty || resolvedChatId.isNotEmpty;
-                final isLoading =
-                    (proposalSnapshot.connectionState ==
-                                ConnectionState.waiting ||
-                            requestSnapshot.connectionState ==
-                                ConnectionState.waiting ||
-                            chatSnapshot.connectionState ==
-                                ConnectionState.waiting) &&
-                    !hasChat;
-
-                return _buildAcceptedChatButton(
-                  hasChat: hasChat,
-                  isLoading: isLoading,
-                  onPressed: () => _openAcceptedProposalChat(
-                    request: request,
-                    chatLookupId: effectiveLookupId,
-                    initialChatId: directChatId.isNotEmpty
-                        ? directChatId
-                        : resolvedChatId,
-                  ),
-                );
-              },
-            );
-          },
+        return _buildAcceptedChatButton(
+          hasChat: proposalChatId.isNotEmpty,
+          isLoading: isLoading,
+          onPressed: () => _openAcceptedProposalChat(
+            request: request,
+            initialChatId: proposalChatId,
+          ),
         );
       },
     );

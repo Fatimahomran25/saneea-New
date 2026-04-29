@@ -40,6 +40,7 @@ def generate_contract_api():
     try:
         data = request.get_json(force=True)
         request_id = data.get("requestId", "")
+        proposal_id = data.get("proposalId", "")
 
         if not request_id:
             return jsonify({
@@ -47,7 +48,7 @@ def generate_contract_api():
                 "error": "requestId is required"
             }), 400
 
-        result = generate_contract_from_request_id(request_id)
+        result = generate_contract_from_request_id(request_id, proposal_id)
         return jsonify(result), 200
 
     except Exception as error:

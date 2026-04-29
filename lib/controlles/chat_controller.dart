@@ -189,6 +189,77 @@ class ChatController {
     return chatRef.id;
   }
 
+  int _safeUnreadCount(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+
+    final text = value?.toString().trim() ?? '';
+    return int.tryParse(text) ?? 0;
+  }
+
+  Future<String> createOrGetAnnouncementProposalChat({
+    required String announcementId,
+    required String proposalId,
+    required String clientId,
+    required String freelancerId,
+    String? initialChatId,
+  }) async {
+    final normalizedAnnouncementId = announcementId.trim();
+    final normalizedProposalId = proposalId.trim();
+    final normalizedInitialChatId = (initialChatId ?? '').trim();
+
+    if (normalizedAnnouncementId.isEmpty) {
+      throw Exception(
+        'announcementId is required to open announcement proposal chat.',
+      );
+    }
+
+    if (normalizedProposalId.isEmpty) {
+      throw Exception(
+        'proposalId is required to open announcement proposal chat.',
+      );
+    }
+
+    final proposalRef = _firestore
+        .collection('announcement_requests')
+        .doc(normalizedProposalId);
+    final proposalDoc = await proposalRef.get();
+    final proposalData = proposalDoc.data() ?? <String, dynamic>{};
+    final storedChatId = (proposalData['chatId'] ?? '').toString().trim();
+
+    final chatId = normalizedInitialChatId.isNotEmpty
+        ? normalizedInitialChatId
+        : storedChatId.isNotEmpty
+        ? storedChatId
+        : normalizedProposalId;
+
+    final chatRef = _firestore.collection(_chatCollection).doc(chatId);
+    final chatDoc = await chatRef.get();
+    final chatData = chatDoc.data() ?? <String, dynamic>{};
+
+    await chatRef.set({
+      'clientId': clientId,
+      'freelancerId': freelancerId,
+      'requestId': normalizedAnnouncementId,
+      'announcementId': normalizedAnnouncementId,
+      'proposalId': normalizedProposalId,
+      'lastMessage': (chatData['lastMessage'] ?? '').toString(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'unreadCountClient': _safeUnreadCount(chatData['unreadCountClient']),
+      'unreadCountFreelancer': _safeUnreadCount(
+        chatData['unreadCountFreelancer'],
+      ),
+    }, SetOptions(merge: true));
+
+    await proposalRef.set({
+      'chatId': chatRef.id,
+      'announcementId': normalizedAnnouncementId,
+      'proposalId': normalizedProposalId,
+    }, SetOptions(merge: true));
+
+    return chatRef.id;
+  }
+
   Future<void> sendCombinedMessage({
     required String chatId,
     required String text,
