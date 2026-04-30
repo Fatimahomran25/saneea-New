@@ -12,13 +12,6 @@ class RecommendationController {
 
   final String backendBaseUrl = ApiConfig.baseUrl;
 
-  String _requestDocId({
-    required String clientId,
-    required String freelancerId,
-  }) {
-    return '${clientId}_$freelancerId';
-  }
-
   String _singleLineSnippet(String rawText) {
     final text = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (text.isEmpty) return '';
@@ -294,22 +287,21 @@ class RecommendationController {
     final senderProfileUrl =
         (clientData['photoUrl'] ?? clientData['profile'] ?? '').toString();
 
-    final requestId = _requestDocId(
-      clientId: currentUser.uid,
-      freelancerId: freelancer.id,
-    );
+    final existingRequestsSnapshot = await _firestore
+        .collection('requests')
+        .where('clientId', isEqualTo: currentUser.uid)
+        .where('freelancerId', isEqualTo: freelancer.id)
+        .get();
 
-    final requestRef = _firestore.collection('requests').doc(requestId);
-    final existingDoc = await requestRef.get();
-
-    if (existingDoc.exists) {
-      final existingData = existingDoc.data() ?? {};
-      final status = (existingData['status'] ?? '').toString().toLowerCase();
-
+    for (final doc in existingRequestsSnapshot.docs) {
+      final status = (doc.data()['status'] ?? '').toString().toLowerCase();
       if (status == 'pending' || status == 'accepted') {
         throw Exception('already sent');
       }
     }
+
+    final requestRef = _firestore.collection('requests').doc();
+    final requestId = requestRef.id;
 
     final requestData = {
       'clientId': currentUser.uid,
@@ -325,14 +317,11 @@ class RecommendationController {
       'status': 'pending',
       'requestType': 'private',
 
-      'createdAt': existingDoc.exists
-          ? (existingDoc.data()?['createdAt'] ?? FieldValue.serverTimestamp())
-          : FieldValue.serverTimestamp(),
-
+      'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
-    await requestRef.set(requestData, SetOptions(merge: true));
+    await requestRef.set(requestData);
 
     await _createRequestNotification(
       receiverId: freelancer.id,

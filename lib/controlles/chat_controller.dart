@@ -338,6 +338,35 @@ class ChatController {
     }, SetOptions(merge: true));
   }
 
+  Future<List<String>> uploadDeliveryImages({
+    required String chatId,
+    required List<File> imageFiles,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('No logged in user found.');
+    }
+
+    final List<String> imageUrls = [];
+
+    for (final imageFile in imageFiles) {
+      final fileName =
+          '${DateTime.now().millisecondsSinceEpoch}_${imageUrls.length}';
+
+      final storageRef = _storage
+          .ref()
+          .child('delivery_images')
+          .child(chatId)
+          .child('$fileName.jpg');
+
+      await storageRef.putFile(imageFile);
+      final imageUrl = await storageRef.getDownloadURL();
+      imageUrls.add(imageUrl);
+    }
+
+    return imageUrls;
+  }
+
   Stream<List<MessageModel>> getMessages(String chatId) {
     return _firestore
         .collection(_chatCollection)

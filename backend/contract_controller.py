@@ -1,13 +1,14 @@
 import os
 import json
 from openai import OpenAI
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from firebase_service import (
     create_approved_contract_chat_message,
     delete_request_contract_data,
     get_contract_source_by_id,
     get_request_by_id,
+    get_termination_grace_period_minutes,
     update_announcement_contract_data,
     update_announcement_proposal_contract_data,
     update_request_contract_data,
@@ -16,6 +17,7 @@ from contract_service import render_contract_text
 
 
 OPENAI_MODEL = "gpt-5.1"
+DEFAULT_TERMINATION_GRACE_PERIOD_MINUTES = 720
 
 CONTRACT_SCHEMA = {
     "type": "object",
@@ -96,7 +98,100 @@ def _extract_refusal_text(response):
 
     return ""
 
+def _parse_iso_datetime(value):
+    if not value:
+        return None
 
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _get_contract_approved_at(contract_data, approval):
+    approval_map = approval if isinstance(approval, dict) else {}
+    meta = contract_data.get("meta")
+    meta_map = meta if isinstance(meta, dict) else {}
+
+    for candidate in (
+        approval_map.get("approvedAt"),
+        approval_map.get("contractApprovedAt"),
+        meta_map.get("approvedAt"),
+    ):
+        parsed = _parse_iso_datetime(candidate)
+        if parsed is not None:
+            return parsed
+
+    return None
+
+
+def _parse_contract_created_at(value):
+    parsed = _parse_iso_datetime(value)
+    if parsed is not None:
+        return parsed, True
+
+    text = str(value or "").strip()
+    if not text:
+        return None, False
+
+    try:
+        return datetime.strptime(text, "%d/%m/%Y"), False
+    except ValueError:
+        return None, False
+
+
+def _get_contract_created_at(contract_data, approval):
+    meta = contract_data.get("meta")
+    meta_map = meta if isinstance(meta, dict) else {}
+
+    for candidate in (
+        meta_map.get("createdAtIso"),
+        meta_map.get("createdAt"),
+    ):
+        parsed, _ = _parse_contract_created_at(candidate)
+        if parsed is not None:
+            return parsed
+
+    return _get_contract_approved_at(contract_data, approval)
+
+
+def _get_contract_termination_deadline(contract_data, approval):
+    grace_period_minutes = get_termination_grace_period_minutes(
+        default_minutes=DEFAULT_TERMINATION_GRACE_PERIOD_MINUTES
+    )
+    meta = contract_data.get("meta")
+    meta_map = meta if isinstance(meta, dict) else {}
+
+    explicit_deadline = _parse_iso_datetime(meta_map.get("terminationEligibleUntil"))
+    if explicit_deadline is not None:
+        return explicit_deadline
+
+    created_at_value = meta_map.get("createdAtIso")
+    if created_at_value in (None, ""):
+        created_at_value = meta_map.get("createdAt")
+
+    created_at, has_exact_time = _parse_contract_created_at(created_at_value)
+    if created_at is not None:
+        if not has_exact_time:
+            return created_at + timedelta(days=1)
+        return created_at + timedelta(minutes=grace_period_minutes)
+
+    approved_at = _get_contract_approved_at(contract_data, approval)
+    if approved_at is not None:
+        return approved_at + timedelta(minutes=grace_period_minutes)
+
+    return None
+
+
+def _safe_float(value):
+    try:
+        return float(str(value or "").strip())
+    except (TypeError, ValueError):
+        return 0.0
 def generate_contract_ai(data):
     source = str(data.get("source", "")).strip().lower()
     description_label = "Project Description"
@@ -226,6 +321,8 @@ def generate_contract_from_data(request_data):
 
     print("AI RESULT =>", ai_result)
 
+    created_at = datetime.now()
+
     contract_data = {
         "parties": {
             "clientName": request_data.get("clientName") or request_data.get("client", "Client"),
@@ -237,7 +334,16 @@ def generate_contract_from_data(request_data):
             "warnings": ai_result.get("warnings", []),
             "source": "ai",
             "model": OPENAI_MODEL,
-            "createdAt": datetime.now().strftime("%d/%m/%Y"),
+            "createdAt": created_at.strftime("%d/%m/%Y"),
+            "createdAtIso": created_at.isoformat(),
+            "terminationEligibleUntil": (
+                created_at
+                + timedelta(
+                    minutes=get_termination_grace_period_minutes(
+                        default_minutes=DEFAULT_TERMINATION_GRACE_PERIOD_MINUTES
+                    )
+                )
+            ).isoformat(),
         },
         "approval": {
             "clientApproved": False,
@@ -256,6 +362,29 @@ def generate_contract_from_data(request_data):
         },
         "timeline": {
             "deadline": request_data.get("deadline"),
+        },
+        "progressData": {
+            "stage": "started",
+            "updatedAt": created_at.isoformat(),
+            "updatedBy": "",
+        },
+        "deliveryData": {
+            "status": "not_submitted",
+            "previewImageUrls": [],
+            "submittedBy": "",
+            "submittedAt": "",
+            "changesRequestedBy": "",
+            "changesRequestedAt": "",
+            "approvedBy": "",
+            "approvedAt": "",
+        },
+        "adminReview": {
+            "status": "none",
+            "requestedBy": "",
+            "requestedAt": "",
+            "reasonType": "",
+            "reasonText": "",
+            "relatedArea": "",
         },
         "customClauses": [
             {
@@ -448,6 +577,14 @@ def approve_contract(request_id, role, signature_data):
 
     if approval.get("clientApproved") and approval.get("freelancerApproved"):
         approval["contractStatus"] = "approved"
+        approved_at = datetime.now().isoformat()
+        approval["contractApprovedAt"] = approved_at
+
+        meta = contract_data.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["approvedAt"] = approved_at
+        contract_data["meta"] = meta
     else:
         approval["contractStatus"] = "pending_approval"
 
@@ -658,8 +795,9 @@ def cancel_contract(request_id, role=""):
     }
 
 
-def request_termination(request_id, role):
+def request_termination(request_id, role, termination_mode=""):
     normalized_role = (role or "").strip().lower()
+    normalized_mode = (termination_mode or "").strip().lower()
 
     if normalized_role not in ("client", "freelancer"):
         raise ValueError("role must be either 'client' or 'freelancer'")
@@ -688,20 +826,56 @@ def request_termination(request_id, role):
             "error": "Only approved contracts can be terminated"
         }
 
+    termination_deadline = _get_contract_termination_deadline(
+        contract_data,
+        approval,
+    )
+    can_self_terminate = False
+
+    if termination_deadline is not None:
+        can_self_terminate = datetime.now() <= termination_deadline
+
+    if normalized_mode not in ("", "mutual", "paid"):
+        return {
+            "success": False,
+            "error": "Invalid termination mode"
+        }
+
     termination = approval.get("termination")
     if not isinstance(termination, dict):
         termination = {}
+
+    requested_at = datetime.now().isoformat()
+    payment = contract_data.get("payment")
+    payment_map = payment if isinstance(payment, dict) else {}
+    amount_value = _safe_float(payment_map.get("amount"))
+    compensation_amount = round(amount_value * 0.20, 2) if amount_value > 0 else 0.0
+    direct_paid_termination = (not can_self_terminate) and normalized_mode == "paid"
+    requires_mutual_approval = (not can_self_terminate) and not direct_paid_termination
 
     approval["termination"] = {
         **termination,
         "requested": True,
         "requestedBy": normalized_role,
-        "requestedAt": datetime.now().isoformat(),
-        "approved": False,
-        "approvedBy": "",
-        "approvedAt": "",
+        "requestedAt": requested_at,
+        "approved": can_self_terminate or direct_paid_termination,
+        "approvedBy": normalized_role if (can_self_terminate or direct_paid_termination) else "",
+        "approvedAt": requested_at if (can_self_terminate or direct_paid_termination) else "",
+        "mode": (
+            "grace_period"
+            if can_self_terminate
+            else "paid_compensation"
+            if direct_paid_termination
+            else "mutual_agreement"
+        ),
+        "requiresCompensation": direct_paid_termination,
+        "compensationPercentage": 20 if direct_paid_termination else 0,
+        "compensationAmount": compensation_amount if direct_paid_termination else 0,
+        "compensationCurrency": payment_map.get("currency") or "SAR"
     }
-    approval["contractStatus"] = "termination_pending"
+    approval["contractStatus"] = (
+        "termination_pending" if requires_mutual_approval else "terminated"
+    )
 
     contract_data["approval"] = approval
     update_request_contract_data(request_id, contract_data)
@@ -711,6 +885,8 @@ def request_termination(request_id, role):
         "contractData": contract_data,
         "contractStatus": approval["contractStatus"],
         "contractText": render_contract_text(contract_data),
+        "selfTerminated": can_self_terminate or direct_paid_termination,
+        "terminationMode": approval["termination"].get("mode", ""),
     }
 
 
@@ -771,6 +947,80 @@ def approve_termination(request_id, role):
         "approvedAt": datetime.now().isoformat(),
     }
     approval["contractStatus"] = "terminated"
+
+    contract_data["approval"] = approval
+    update_request_contract_data(request_id, contract_data)
+
+    return {
+        "success": True,
+        "contractData": contract_data,
+        "contractStatus": approval["contractStatus"],
+        "contractText": render_contract_text(contract_data),
+    }
+
+
+def reject_termination(request_id, role):
+    normalized_role = (role or "").strip().lower()
+
+    if normalized_role not in ("client", "freelancer"):
+        raise ValueError("role must be either 'client' or 'freelancer'")
+
+    request_data = get_request_by_id(request_id)
+
+    if not request_data:
+        return {
+            "success": False,
+            "error": "Request not found"
+        }
+
+    contract_data = request_data.get("contractData")
+    if not isinstance(contract_data, dict):
+        return {
+            "success": False,
+            "error": "No contract found"
+        }
+
+    approval = _normalize_approval(contract_data.get("approval"))
+
+    contract_status = str(approval.get("contractStatus", "")).strip().lower()
+    if contract_status != "termination_pending":
+        return {
+            "success": False,
+            "error": "No termination request is pending"
+        }
+
+    termination = approval.get("termination")
+    if not isinstance(termination, dict) or termination.get("requested") is not True:
+        return {
+            "success": False,
+            "error": "No termination request found"
+        }
+
+    requested_by = str(termination.get("requestedBy", "")).strip().lower()
+    if requested_by not in ("client", "freelancer"):
+        return {
+            "success": False,
+            "error": "Invalid termination requester"
+        }
+
+    if requested_by == normalized_role:
+        return {
+            "success": False,
+            "error": "The requester cannot reject their own termination request"
+        }
+
+    approval["termination"] = {
+        **termination,
+        "requested": False,
+        "approved": False,
+        "approvedBy": "",
+        "approvedAt": "",
+        "rejected": True,
+        "rejectedBy": normalized_role,
+        "rejectedAt": datetime.now().isoformat(),
+        "mode": "mutual_rejected",
+    }
+    approval["contractStatus"] = "approved"
 
     contract_data["approval"] = approval
     update_request_contract_data(request_id, contract_data)
@@ -864,6 +1114,9 @@ def update_contract(request_id, contract_data, role=""):
     existing_service = existing_contract_data.get("service")
     existing_payment = existing_contract_data.get("payment")
     existing_timeline = existing_contract_data.get("timeline")
+    existing_progress = existing_contract_data.get("progressData")
+    existing_delivery = existing_contract_data.get("deliveryData")
+    existing_admin_review = existing_contract_data.get("adminReview")
     existing_custom_clauses = existing_contract_data.get("customClauses")
 
     updated_contract_data = {
@@ -874,6 +1127,9 @@ def update_contract(request_id, contract_data, role=""):
         "service": dict(existing_service) if isinstance(existing_service, dict) else {},
         "payment": dict(existing_payment) if isinstance(existing_payment, dict) else {},
         "timeline": dict(existing_timeline) if isinstance(existing_timeline, dict) else {},
+        "progressData": dict(existing_progress) if isinstance(existing_progress, dict) else {},
+        "deliveryData": dict(existing_delivery) if isinstance(existing_delivery, dict) else {},
+        "adminReview": dict(existing_admin_review) if isinstance(existing_admin_review, dict) else {},
         "customClauses": list(existing_custom_clauses) if isinstance(existing_custom_clauses, list) else [],
     }
 
@@ -885,6 +1141,15 @@ def update_contract(request_id, contract_data, role=""):
 
     if isinstance(contract_data.get("timeline"), dict):
         updated_contract_data["timeline"] = dict(contract_data["timeline"])
+
+    if isinstance(contract_data.get("progressData"), dict):
+        updated_contract_data["progressData"] = dict(contract_data["progressData"])
+
+    if isinstance(contract_data.get("deliveryData"), dict):
+        updated_contract_data["deliveryData"] = dict(contract_data["deliveryData"])
+
+    if isinstance(contract_data.get("adminReview"), dict):
+        updated_contract_data["adminReview"] = dict(contract_data["adminReview"])
 
     if isinstance(contract_data.get("meta"), dict):
         updated_contract_data["meta"].update(contract_data["meta"])
@@ -901,6 +1166,33 @@ def update_contract(request_id, contract_data, role=""):
 
     normalized_role = (role or "").strip().lower()
     updated_approval = updated_contract_data["approval"]
+    normalized_existing_meta = (
+        dict(existing_meta) if isinstance(existing_meta, dict) else {}
+    )
+    normalized_existing_service = (
+        dict(existing_service) if isinstance(existing_service, dict) else {}
+    )
+    normalized_existing_payment = (
+        dict(existing_payment) if isinstance(existing_payment, dict) else {}
+    )
+    normalized_existing_timeline = (
+        dict(existing_timeline) if isinstance(existing_timeline, dict) else {}
+    )
+    normalized_existing_custom_clauses = (
+        list(existing_custom_clauses) if isinstance(existing_custom_clauses, list) else []
+    )
+    workflow_only_update = (
+        (
+            isinstance(contract_data.get("progressData"), dict)
+            or isinstance(contract_data.get("deliveryData"), dict)
+            or isinstance(contract_data.get("adminReview"), dict)
+        )
+        and updated_contract_data["meta"] == normalized_existing_meta
+        and updated_contract_data["service"] == normalized_existing_service
+        and updated_contract_data["payment"] == normalized_existing_payment
+        and updated_contract_data["timeline"] == normalized_existing_timeline
+        and updated_contract_data["customClauses"] == normalized_existing_custom_clauses
+    )
     had_previous_approval = bool(updated_approval.get("clientApproved")) or bool(
         updated_approval.get("freelancerApproved")
     )
@@ -908,7 +1200,9 @@ def update_contract(request_id, contract_data, role=""):
         updated_approval.get("edited")
     )
 
-    if had_previous_approval or was_edited:
+    if workflow_only_update:
+        updated_contract_data["signatures"] = _normalize_signatures(existing_signatures)
+    elif had_previous_approval or was_edited:
         updated_approval["clientApproved"] = False
         updated_approval["freelancerApproved"] = False
         updated_approval["contractStatus"] = "edited"

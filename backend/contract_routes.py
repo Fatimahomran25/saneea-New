@@ -12,6 +12,7 @@ from contract_controller import (
     disapprove_contract,
     generate_contract_from_data,
     generate_contract_from_request_id,
+    reject_termination,
     request_termination,
     update_contract,
 )
@@ -64,6 +65,7 @@ def approve_contract_api():
         data = request.get_json(force=True)
         request_id = data.get("requestId", "")
         role = data.get("role", "")
+        termination_mode = data.get("terminationMode", "")
         signature_data = data.get("signatureData", "")
 
         if not request_id:
@@ -101,6 +103,7 @@ def request_termination_api():
         data = request.get_json(force=True)
         request_id = data.get("requestId", "")
         role = data.get("role", "")
+        termination_mode = data.get("terminationMode", "")
 
         if not request_id:
             return jsonify({
@@ -114,7 +117,7 @@ def request_termination_api():
                 "error": "role is required"
             }), 400
 
-        result = request_termination(request_id, role)
+        result = request_termination(request_id, role, termination_mode)
         status_code = 200 if result.get("success") else 400
         return jsonify(result), status_code
 
@@ -151,6 +154,42 @@ def approve_termination_api():
             }), 400
 
         result = approve_termination(request_id, role)
+        status_code = 200 if result.get("success") else 400
+        return jsonify(result), status_code
+
+    except ValueError as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 400
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error)
+        }), 500
+
+
+@contract_routes.route("/reject-termination", methods=["POST"])
+def reject_termination_api():
+    try:
+        data = request.get_json(force=True)
+        request_id = data.get("requestId", "")
+        role = data.get("role", "")
+
+        if not request_id:
+            return jsonify({
+                "success": False,
+                "error": "requestId is required"
+            }), 400
+
+        if not role:
+            return jsonify({
+                "success": False,
+                "error": "role is required"
+            }), 400
+
+        result = reject_termination(request_id, role)
         status_code = 200 if result.get("success") else 400
         return jsonify(result), status_code
 

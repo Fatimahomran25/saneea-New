@@ -437,7 +437,11 @@ def generate_contract_pdf(contract_data):
 
         amount = safe_text(payment_amount)
         currency = safe_text(payment_currency, "")
-        payment_text = f"{amount} {currency}".strip() if currency else amount
+        payment_text = (
+            f"{amount} {currency}".strip()
+            if currency
+            else (f"{amount} SAR" if amount != "-" else amount)
+        )
         deadline_text = safe_text(deadline)
 
         amount_lines = wrap_text_lines(
