@@ -92,6 +92,12 @@ class RequestNotificationItem {
         return 'rejected your contract';
       case 'contract_termination_requested':
         return 'requested to terminate the contract';
+      case 'contract_termination_approved':
+        return 'approved your termination request';
+      case 'contract_termination_rejected':
+        return 'rejected your termination request';
+      case 'contract_payment_completed':
+        return 'completed the contract payment';
       default:
         return '';
     }
@@ -109,6 +115,9 @@ class RequestNotificationItem {
       case 'contract_approved':
       case 'contract_disapproved':
       case 'contract_termination_requested':
+      case 'contract_termination_approved':
+      case 'contract_termination_rejected':
+      case 'contract_payment_completed':
         return 'Contract Agreement';
       default:
         return '';

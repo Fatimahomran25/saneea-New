@@ -1,5 +1,5 @@
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, messaging
 
 # Initialize Firebase only once.
 if not firebase_admin._apps:
@@ -7,6 +7,65 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
+
+
+def _string_map(value):
+    if not isinstance(value, dict):
+        return {}
+
+    normalized = {}
+    for key, item in value.items():
+        key_text = str(key).strip()
+        item_text = str(item).strip()
+        if key_text and item_text:
+            normalized[key_text] = item_text
+
+    return normalized
+
+
+def send_push_notification_to_user(user_id, title, body, data=None):
+    normalized_user_id = str(user_id or "").strip()
+    normalized_title = str(title or "").strip()
+    normalized_body = str(body or "").strip()
+
+    if not normalized_user_id:
+        return {"success": False, "error": "userId is required"}
+
+    user_doc = db.collection("users").document(normalized_user_id).get()
+    if not user_doc.exists:
+        return {"success": False, "error": "User not found"}
+
+    user_data = user_doc.to_dict() or {}
+    fcm_token = str(user_data.get("fcmToken") or "").strip()
+    if not fcm_token:
+        return {"success": False, "error": "No FCM token for user"}
+
+    payload = _string_map(data)
+
+    message = messaging.Message(
+        token=fcm_token,
+        notification=messaging.Notification(
+            title=normalized_title or "Saneea",
+            body=normalized_body or "You have a new update.",
+        ),
+        data=payload,
+        android=messaging.AndroidConfig(
+            priority="high",
+            notification=messaging.AndroidNotification(
+                channel_id="request_notifications",
+                sound="default",
+            ),
+        ),
+        apns=messaging.APNSConfig(
+            headers={"apns-priority": "10"},
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(sound="default"),
+            ),
+        ),
+    )
+
+    message_id = messaging.send(message)
+    return {"success": True, "messageId": message_id}
 
 
 def _as_dict(value):

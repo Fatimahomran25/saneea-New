@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -21,7 +20,7 @@ String _friendlyErrorMessage(Object error) {
   final rawError = error.toString().replaceFirst('Exception: ', '').trim();
   final normalizedError = rawError.toLowerCase();
   final statusCode = error is int ? error : int.tryParse(rawError);
-  
+
   if (error is SocketException ||
       normalizedError.contains('socketexception') ||
       normalizedError.contains('failed host lookup') ||
@@ -88,7 +87,9 @@ class ChatView extends StatefulWidget {
 
 class _ChatViewState extends State<ChatView> {
   static const Color primary = Color(0xFF5A3E9E);
-  static const String moyasarPublishableKey = 'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
+  static const String contractDisplayTitle = 'Freelancer Service Agreement';
+  static const String moyasarPublishableKey =
+      'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;
   final ImagePicker _picker = ImagePicker();
@@ -106,6 +107,7 @@ class _ChatViewState extends State<ChatView> {
   bool _isContractPreviewExpanded = true;
   bool _isGenerateContractSectionOpen = false;
   bool _isAddingClause = false;
+  Timer? _terminationCountdownTimer;
   String? _contractError;
   String _editableServiceDescription = '';
   String _editableAmount = '';
@@ -126,6 +128,12 @@ class _ChatViewState extends State<ChatView> {
     });
     _loadOtherUserPhoto();
     _listenToRequestContract();
+    _terminationCountdownTimer = Timer.periodic(const Duration(minutes: 1), (
+      _,
+    ) {
+      if (!mounted) return;
+      setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom(jump: true);
     });
@@ -133,6 +141,106 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> _showErrorDialog(String message) {
     return _showErrorDialogForContext(context, message);
+  }
+
+  Future<void> _openDeliveryPreviewImage(String imageUrl) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          backgroundColor: Colors.black,
+          child: Stack(
+            children: [
+              InteractiveViewer(
+                minScale: 1,
+                maxScale: 4,
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.network(imageUrl, fit: BoxFit.contain),
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: IconButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openFinalWorkGallery(List<String> imageUrls) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          backgroundColor: Colors.black,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 8, 0),
+                child: Row(
+                  children: [
+                    Text(
+                      'Final Work (${imageUrls.length})',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: 380,
+                child: PageView.builder(
+                  itemCount: imageUrls.length,
+                  itemBuilder: (context, index) {
+                    final imageUrl = imageUrls[index];
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: InteractiveViewer(
+                          minScale: 1,
+                          maxScale: 4,
+                          child: Image.network(
+                            imageUrl,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) {
+                              return const Center(
+                                child: Text(
+                                  'Failed to load image',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   String _extractRequestId(Map<String, dynamic>? chatData) {
@@ -207,6 +315,41 @@ class _ChatViewState extends State<ChatView> {
         _contractData = null;
       });
     }
+  }
+
+  Future<void> _refreshContractDataFromSource() async {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+
+    final chatData = chatDoc.data();
+    final requestId = _extractRequestId(chatData);
+    final proposalId = (chatData?['proposalId'] ?? '').toString().trim();
+    final isAnnouncementProposalChat = proposalId.isNotEmpty;
+    final sourceCollection = isAnnouncementProposalChat
+        ? 'announcement_requests'
+        : 'requests';
+    final sourceDocumentId = isAnnouncementProposalChat
+        ? proposalId
+        : requestId;
+
+    final sourceDoc = await FirebaseFirestore.instance
+        .collection(sourceCollection)
+        .doc(sourceDocumentId)
+        .get();
+
+    final rawContractData = sourceDoc.data()?['contractData'];
+    final hasContractData =
+        rawContractData is Map && rawContractData.isNotEmpty;
+
+    if (!mounted) return;
+
+    setState(() {
+      _contractData = hasContractData
+          ? Map<String, dynamic>.from(rawContractData as Map)
+          : _contractData;
+    });
   }
 
   Future<void> _loadOtherUserPhoto() async {
@@ -331,6 +474,7 @@ class _ChatViewState extends State<ChatView> {
     _clauseTitleController.dispose();
     _clauseContentController.dispose();
     _requestContractSubscription?.cancel();
+    _terminationCountdownTimer?.cancel();
     _contractPreviewScrollController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -749,16 +893,14 @@ class _ChatViewState extends State<ChatView> {
                 ),
               ),
             ),
-            if (message.contractTitle.trim().isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(
-                message.contractTitle.trim(),
-                style: const TextStyle(
-                  color: Colors.black87,
-                  fontWeight: FontWeight.w600,
-                ),
+            const SizedBox(height: 10),
+            const Text(
+              contractDisplayTitle,
+              style: TextStyle(
+                color: Colors.black87,
+                fontWeight: FontWeight.w600,
               ),
-            ],
+            ),
             if (previewText.isNotEmpty) ...[
               const SizedBox(height: 10),
               Text(
@@ -811,12 +953,9 @@ class _ChatViewState extends State<ChatView> {
                           ),
                         ),
 
-
                         icon: const Icon(Icons.close_rounded),
-                    
-                        label: const Text('Terminate'),
 
-                  
+                        label: const Text('Terminate'),
                       ),
                     ),
                   ],
@@ -1303,6 +1442,75 @@ class _ChatViewState extends State<ChatView> {
         DateTime.now().isAtSameMomentAs(deadline);
   }
 
+  Map<String, dynamic>? _terminationGracePeriodData() {
+    final contractData = _contractData;
+    if (contractData == null) return null;
+
+    final approval = _asMap(contractData['approval']);
+    final contractStatus = (approval['contractStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (contractStatus != 'approved') return null;
+
+    final meta = _asMap(contractData['meta']);
+    final startedAt = _parseContractDateTime(
+      meta['createdAtIso'] ?? meta['approvedAt'] ?? meta['createdAt'],
+    );
+    final explicitDeadline = _parseContractDateTime(
+      meta['terminationEligibleUntil'],
+    );
+    if (explicitDeadline == null) return null;
+
+    final now = DateTime.now();
+    final isExpired = now.isAfter(explicitDeadline);
+    final totalDuration = startedAt != null
+        ? explicitDeadline.difference(startedAt)
+        : null;
+    final remainingDuration = explicitDeadline.difference(now);
+    final remainingMinutes = remainingDuration.inMinutes.clamp(0, 1000000);
+    final hours = remainingMinutes ~/ 60;
+    final minutes = remainingMinutes % 60;
+
+    String label;
+    if (isExpired) {
+      label = 'Expired';
+    } else if (hours > 0) {
+      label = '${hours}h ${minutes}m';
+    } else {
+      label = '${minutes}m';
+    }
+
+    double progress = 0;
+    if (!isExpired && totalDuration != null && totalDuration.inSeconds > 0) {
+      progress = (remainingDuration.inSeconds / totalDuration.inSeconds).clamp(
+        0.0,
+        1.0,
+      );
+    }
+
+    Color indicatorColor;
+    if (isExpired) {
+      indicatorColor = const Color(0xFFC75A5A);
+    } else if (progress > 0.5) {
+      indicatorColor = const Color(0xFF43A047);
+    } else if (progress > 0.2) {
+      indicatorColor = const Color(0xFFEF6C00);
+    } else {
+      indicatorColor = const Color(0xFFC75A5A);
+    }
+
+    return {
+      'label': label,
+      'progress': progress,
+      'isExpired': isExpired,
+      'indicatorColor': indicatorColor,
+      'subtitle': isExpired
+          ? 'Free termination period has ended.'
+          : 'Free termination window',
+    };
+  }
+
   String _terminationCompensationText() {
     final contractData = _contractData;
     if (contractData == null) return '20% of the contract amount';
@@ -1321,6 +1529,17 @@ class _ChatViewState extends State<ChatView> {
         ? compensation.toInt().toString()
         : compensation.toStringAsFixed(2);
     return '$formattedCompensation $currency';
+  }
+
+  double? _terminationCompensationAmount() {
+    final contractData = _contractData;
+    if (contractData == null) return null;
+
+    final payment = _asMap(contractData['payment']);
+    final amountText = (payment['amount'] ?? '').toString().trim();
+    final amount = double.tryParse(amountText);
+    if (amount == null || amount <= 0) return null;
+    return amount * 0.20;
   }
 
   String _currentUserRole() {
@@ -1443,19 +1662,24 @@ class _ChatViewState extends State<ChatView> {
 
     final contractData = _contractData;
     if (contractData == null) return false;
-  final progressData = _asMap(contractData['progressData']);
-   final currentStage =
-    _normalizeContractProgressStage(progressData['stage']);
-final deliveryData = _asMap(contractData['deliveryData']);
-final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
-final isPaidDelivered = deliveryStatus == 'paid_delivered';
-final isLocked = isPaidDelivered || contractStatus == 'completed';
+    final progressData = _asMap(contractData['progressData']);
+    final currentStage = _normalizeContractProgressStage(progressData['stage']);
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final paymentData = _asMap(contractData['paymentData']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final paymentStatus = (paymentData['paymentStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final isPaidDelivered =
+        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+    final isLocked = isPaidDelivered || contractStatus == 'completed';
 
-if (isPaidDelivered || contractStatus == 'completed') return false;
+    if (isPaidDelivered || contractStatus == 'completed') return false;
 
-return currentStage == 'completed' &&
-    (deliveryStatus == 'not_submitted' ||
-        deliveryStatus == 'changes_requested');
+    return currentStage == 'completed' &&
+        (deliveryStatus == 'not_submitted' ||
+            deliveryStatus == 'changes_requested');
   }
 
   Future<void> _saveWorkflowContractData(
@@ -1494,14 +1718,13 @@ return currentStage == 'completed' &&
     if (contractData == null) return;
 
     try {
-      final pickedFiles = await _picker.pickMultiImage(imageQuality: 85);
-      if (pickedFiles.isEmpty) return;
+      final deliveryFiles = await _pickDeliveryImagesForSubmission();
+      if (deliveryFiles == null || deliveryFiles.isEmpty) return;
 
       setState(() {
         _isSavingContract = true;
       });
 
-      final deliveryFiles = pickedFiles.map((file) => File(file.path)).toList();
       final uploadedUrls = await _controller.uploadDeliveryImages(
         chatId: widget.chatId,
         imageFiles: deliveryFiles,
@@ -1517,6 +1740,9 @@ return currentStage == 'completed' &&
       deliveryData['changesRequestedAt'] = '';
       deliveryData['approvedBy'] = '';
       deliveryData['approvedAt'] = '';
+      deliveryData['finalWorkUrls'] = <String>[];
+      deliveryData['finalWorkUploadedBy'] = '';
+      deliveryData['finalWorkUploadedAt'] = '';
       updatedContractData['deliveryData'] = deliveryData;
 
       await _saveWorkflowContractData(updatedContractData);
@@ -1967,23 +2193,28 @@ return currentStage == 'completed' &&
     if (contractData == null) return const SizedBox.shrink();
 
     final shouldShowProgress =
-    contractStatus == 'approved' ||
-    contractStatus == 'completed' ||
-    contractStatus == 'termination_pending' ||
-    contractStatus == 'terminated';
+        contractStatus == 'approved' ||
+        contractStatus == 'completed' ||
+        contractStatus == 'termination_pending' ||
+        contractStatus == 'terminated';
 
     if (!shouldShowProgress) return const SizedBox.shrink();
 
     final progressData = _asMap(contractData['progressData']);
-    final currentStage =
-    _normalizeContractProgressStage(progressData['stage']);
+    final currentStage = _normalizeContractProgressStage(progressData['stage']);
     final currentStageIndex = _contractProgressIndex(currentStage);
     final currentStageColor = _contractProgressColor(currentStage);
     final showClientTimeline = currentUserRole == 'client';
-final deliveryData = _asMap(contractData['deliveryData']);
-final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
-final isPaidDelivered = deliveryStatus == 'paid_delivered';
-final isLocked = isPaidDelivered || contractStatus == 'completed';
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final paymentData = _asMap(contractData['paymentData']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final paymentStatus = (paymentData['paymentStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final isPaidDelivered =
+        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+    final isLocked = isPaidDelivered || contractStatus == 'completed';
 
     final progressContent = Container(
       width: double.infinity,
@@ -2104,9 +2335,9 @@ final isLocked = isPaidDelivered || contractStatus == 'completed';
                   ),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(14),
-                   onTap: (_isSavingContract || isLocked)
+                    onTap: (_isSavingContract || isLocked)
                         ? null
-                      : () => _updateContractProgress(stage),
+                        : () => _updateContractProgress(stage),
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
@@ -2183,65 +2414,62 @@ final isLocked = isPaidDelivered || contractStatus == 'completed';
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
 
- final approval = _asMap(contractData['approval']);
-final contractStatus = (approval['contractStatus'] ?? '')
-    .toString()
-    .trim()
-    .toLowerCase();
+    final approval = _asMap(contractData['approval']);
+    final contractStatus = (approval['contractStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
 
-final deliveryData = _asMap(contractData['deliveryData']);
-final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
-final isPaidDelivered = deliveryStatus == 'paid_delivered';
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final paymentData = _asMap(contractData['paymentData']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final paymentStatus = (paymentData['paymentStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final isPaidDelivered =
+        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
 
-if (contractStatus != 'approved' &&
-    contractStatus != 'completed' &&
-    !isPaidDelivered) {
-  return const SizedBox.shrink();
-}
+    if (contractStatus != 'approved' &&
+        contractStatus != 'completed' &&
+        !isPaidDelivered) {
+      return const SizedBox.shrink();
+    }
 
-final meta = _asMap(contractData['meta']);
-final service = _asMap(contractData['service']);
-final payment = _asMap(contractData['payment']);
-final timeline = _asMap(contractData['timeline']);
-final progressData = _asMap(contractData['progressData']);
-final progressStage = _normalizeContractProgressStage(progressData['stage']);
+    final meta = _asMap(contractData['meta']);
+    final service = _asMap(contractData['service']);
+    final payment = _asMap(contractData['payment']);
+    final timeline = _asMap(contractData['timeline']);
+    final description = (service['description'] ?? '').toString().trim();
+    final amount = (payment['amount'] ?? '').toString().trim();
+    final deadline = (timeline['deadline'] ?? '').toString().trim();
 
-// 👇 إذا الدفع تم، اعتبره Completed حتى لو progressData غلط
-final isProgressCompleted =
-    progressStage == 'completed' || isPaidDelivered;
-
-final title = (meta['title'] ?? 'Approved Contract').toString().trim();
-final description = (service['description'] ?? '').toString().trim();
-final amount = (payment['amount'] ?? '').toString().trim();
-final deadline = (timeline['deadline'] ?? '').toString().trim();
-
-final isCompleted =
-    contractStatus == 'completed' || isPaidDelivered || isProgressCompleted;
-final hideTerminateButton = _hasContractDeadlinePassed(deadline);
-final isLocked = isPaidDelivered || contractStatus == 'completed';
-final isClientView = _currentUserRole() == 'client';
+    final isCompleted = contractStatus == 'completed' || isPaidDelivered;
+    final canDownloadFinalWork =
+        deliveryStatus == 'paid_delivered' ||
+        contractStatus == 'completed' ||
+        paymentStatus == 'paid';
+    final hideTerminateButton = _hasContractDeadlinePassed(deadline);
+    final isLocked = isPaidDelivered || contractStatus == 'completed';
+    final isClientView = _currentUserRole() == 'client';
+    final terminationGraceData = _terminationGracePeriodData();
     return Container(
       width: double.infinity,
       margin: margin,
       decoration: BoxDecoration(
-  color: isCompleted
-    ? const Color(0xFFF3E8FF) 
-    : const Color(0xFFF6F2FB),
-  borderRadius: BorderRadius.circular(18),
-  border: Border.all(
-  color: Colors.transparent,
-),
-  boxShadow: [
-    BoxShadow(
-      color: isCompleted
-    ? const Color(0xFF7C3AED).withOpacity(0.15)
-          
-          : Colors.black.withOpacity(0.05),
-      blurRadius: 12,
-      offset: const Offset(0, 2),
-    ),
-  ],
-),
+        color: isCompleted ? const Color(0xFFF3E8FF) : const Color(0xFFF6F2FB),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.transparent),
+        boxShadow: [
+          BoxShadow(
+            color: isCompleted
+                ? const Color(0xFF7C3AED).withOpacity(0.15)
+                : Colors.black.withOpacity(0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Column(
         children: [
           Padding(
@@ -2253,7 +2481,9 @@ final isClientView = _currentUserRole() == 'client';
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                    isCompleted ? 'Completed Contract' : 'Approved Contract',
+                        isCompleted
+                            ? 'Completed Contract'
+                            : 'Approved Contract',
                         style: TextStyle(
                           color: primary,
                           fontSize: 15,
@@ -2268,14 +2498,16 @@ final isClientView = _currentUserRole() == 'client';
                         ),
                         decoration: BoxDecoration(
                           color: isCompleted
-    ? const Color(0xFF7C3AED).withOpacity(0.12)
-    : const Color(0xFFE8F5E9),
+                              ? const Color(0xFF7C3AED).withOpacity(0.12)
+                              : const Color(0xFFE8F5E9),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                       isCompleted ? 'Completed' : 'Approved',
+                          isCompleted ? 'Completed' : 'Approved',
                           style: TextStyle(
-                            color: isCompleted ? const Color(0xFF7C3AED) : const Color(0xFF2E7D32),
+                            color: isCompleted
+                                ? const Color(0xFF7C3AED)
+                                : const Color(0xFF2E7D32),
                             fontWeight: FontWeight.w600,
                             fontSize: 12.5,
                           ),
@@ -2312,9 +2544,9 @@ final isClientView = _currentUserRole() == 'client';
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title.isEmpty ? 'Approved Contract' : title,
-                    style: const TextStyle(
+                  const Text(
+                    contractDisplayTitle,
+                    style: TextStyle(
                       color: Colors.black87,
                       fontWeight: FontWeight.w700,
                       fontSize: 15,
@@ -2332,30 +2564,109 @@ final isClientView = _currentUserRole() == 'client';
                   ],
                   const SizedBox(height: 12),
                   Wrap(
-  spacing: 8,
-  runSpacing: 8,
-  children: [
-    if (amount.isNotEmpty)
-      _buildPinnedContractMetaChip('Amount: $amount SAR'),
-    if (deadline.isNotEmpty)
-      _buildPinnedContractMetaChip('Deadline: $deadline'),
-  ],
-),
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (amount.isNotEmpty)
+                        _buildPinnedContractMetaChip('Amount: $amount SAR'),
+                      if (deadline.isNotEmpty)
+                        _buildPinnedContractMetaChip('Deadline: $deadline'),
+                    ],
+                  ),
+                  if (terminationGraceData != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAF8),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color:
+                              (terminationGraceData['indicatorColor']
+                                      as Color?) ??
+                                  const Color(0xFF43A047),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Free Termination Window',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color:
+                                  (terminationGraceData['indicatorColor']
+                                          as Color?) ??
+                                      const Color(0xFF43A047),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: 64,
+                            height: 64,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                CircularProgressIndicator(
+                                  value:
+                                      (terminationGraceData['progress']
+                                          as double?) ??
+                                      0,
+                                  strokeWidth: 5.5,
+                                  backgroundColor: const Color(0xFFE6E6E6),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    (terminationGraceData['indicatorColor']
+                                            as Color?) ??
+                                        const Color(0xFF43A047),
+                                  ),
+                                ),
+                                Text(
+                                  (terminationGraceData['label'] ?? '')
+                                      .toString(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.black87,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'Direct termination is available during this period.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.black54,
+                              fontSize: 12,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
 
- if (isClientView) ...[
-  const SizedBox(height: 12),
-  _buildContractProgressSection(
-    contractStatus: contractStatus,
-    currentUserRole: 'client',
-  ),
-],
+                  if (isClientView) ...[
+                    const SizedBox(height: 12),
+                    _buildContractProgressSection(
+                      contractStatus: contractStatus,
+                      currentUserRole: 'client',
+                    ),
+                  ],
 
-if (!isLocked) _buildDeliverySection(contractStatus),
+                  if (!isLocked) _buildDeliverySection(contractStatus),
+                  if (!isLocked) _buildAdminReviewSection(contractStatus),
 
-const SizedBox(height: 12),
-SizedBox(
-  width: double.infinity,
-  child: OutlinedButton.icon(
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
                       onPressed: _downloadCurrentContract,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: primary,
@@ -2373,46 +2684,74 @@ SizedBox(
                       label: const Text('Download Contract'),
                     ),
                   ),
-       if (isPaidDelivered) ...[
-  const SizedBox(height: 12),
-  SizedBox(
-    width: double.infinity,
-    child: ElevatedButton.icon(
-      onPressed: () {
-        print("Open Rating Screen");
-      },
-      icon: const Icon(Icons.star),
-      label: const Text('Rate & Review'),
-    ),
-  ),
-],
-                 if (!isPaidDelivered && !hideTerminateButton) ...[
-  const SizedBox(height: 10),
-  SizedBox(
-    width: double.infinity,
-    child: ElevatedButton.icon(
-      onPressed: _isTerminatingContract
-          ? null
-          : _requestTermination,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFC75A5A),
-        foregroundColor: Colors.white,
-        minimumSize: const Size(0, 44),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-      ),
-      icon: const Icon(Icons.close_rounded),
-      label: const Text('Terminate'),
-    ),
-  ),
-],
-              ],      
-             ), 
+                  if (canDownloadFinalWork ||
+                      (!isClientView &&
+                          deliveryStatus == 'approved_awaiting_payment')) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: canDownloadFinalWork
+                            ? (isClientView
+                                  ? _downloadDeliveredWork
+                                  : _handleFinalWorkAction)
+                            : _showWorkReleaseAfterPaymentDialog,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          side: BorderSide(
+                            color: primary.withOpacity(0.22),
+                            width: 1,
+                          ),
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: const Text('Download Work'),
+                      ),
+                    ),
+                  ],
+                  if (isCompleted) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          print("Open Rating Screen");
+                        },
+                        icon: const Icon(Icons.star),
+                        label: const Text('Rate & Review'),
+                      ),
+                    ),
+                  ],
+                  if (!isCompleted && !hideTerminateButton) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _isTerminatingContract
+                            ? null
+                            : _requestTermination,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFC75A5A),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.close_rounded),
+                        label: const Text('Terminate'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
-
         ],
       ),
     );
@@ -2433,8 +2772,8 @@ SizedBox(
         .trim()
         .toLowerCase();
     if (contractStatus != 'approved' && contractStatus != 'completed') {
-  return const SizedBox.shrink();
-}
+      return const SizedBox.shrink();
+    }
 
     return Container(
       width: double.infinity,
@@ -2545,107 +2884,262 @@ SizedBox(
     );
   }
 
-Future<void> _openMoyasarPayment() async {
-  final contractData = _contractData;
-  if (contractData == null) return;
+  Future<void> _openMoyasarPayment() async {
+    final contractData = _contractData;
+    if (contractData == null) return;
 
-  final payment = _asMap(contractData['payment']);
-  final amountText = (payment['amount'] ?? '').toString().trim();
-  final amount = double.tryParse(amountText);
+    final payment = _asMap(contractData['payment']);
+    final amountText = (payment['amount'] ?? '').toString().trim();
+    final amount = double.tryParse(amountText);
 
-  if (amount == null || amount <= 0) {
-    await _showErrorDialog('Invalid payment amount');
-    return;
-  }
+    if (amount == null || amount <= 0) {
+      await _showErrorDialog('Invalid payment amount');
+      return;
+    }
 
-  final amountInHalalas = (amount * 100).round();
+    final amountInHalalas = (amount * 100).round();
 
-  final paymentConfig = PaymentConfig(
-    publishableApiKey: moyasarPublishableKey,
-    amount: amountInHalalas,
-    description: 'Contract Payment',
-  );
+    final paymentConfig = PaymentConfig(
+      publishableApiKey: moyasarPublishableKey,
+      amount: amountInHalalas,
+      description: 'Contract Payment',
+    );
 
-  await Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => Scaffold(
-        appBar: AppBar(title: const Text('Payment')),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: CreditCard(
-            config: paymentConfig,
-            onPaymentResult: (result) async {
-              if (result is PaymentResponse &&
-                  result.status == PaymentStatus.paid) {
-                await _verifyPayment(result.id);
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Payment')),
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: CreditCard(
+              config: paymentConfig,
+              onPaymentResult: (result) async {
+                if (result is PaymentResponse &&
+                    result.status == PaymentStatus.paid) {
+                  try {
+                    await _verifyPayment(result.id);
 
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Payment successful')),
-                  );
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Payment completed successfully'),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      await _showErrorDialog(_friendlyErrorMessage(e));
+                    }
+                  }
+                } else {
+                  await _showErrorDialog('Payment failed');
                 }
-              } else {
-                await _showErrorDialog('Payment failed');
-              }
-            },
+              },
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
-
-Future<void> _verifyPayment(String paymentId) async {
-  final chatDoc = await FirebaseFirestore.instance
-      .collection('chat')
-      .doc(widget.chatId)
-      .get();
-
-  final requestId = _extractRequestId(chatDoc.data());
-
-  print('PAYMENT ID: $paymentId');
-  print('REQUEST ID: $requestId');
-  print('VERIFY URL: ${ApiConfig.baseUrl}/verify-payment');
-
-  final response = await http.post(
-    Uri.parse('${ApiConfig.baseUrl}/verify-payment'),
-    headers: {'Content-Type': 'application/json'},
-    body: jsonEncode({
-      'paymentId': paymentId,
-      'requestId': requestId,
-      'paidBy': _controller.currentUserId,
-    }),
-  );
-
-  print('VERIFY STATUS: ${response.statusCode}');
-  print('VERIFY BODY: ${response.body}');
-
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw Exception('Payment verification failed');
+    );
   }
-}
+
+  Future<void> _openTerminationCompensationPayment() async {
+    final compensationAmount = _terminationCompensationAmount();
+    if (compensationAmount == null || compensationAmount <= 0) {
+      await _showErrorDialog('Invalid compensation amount');
+      return;
+    }
+
+    final amountInHalalas = (compensationAmount * 100).round();
+    final paymentConfig = PaymentConfig(
+      publishableApiKey: moyasarPublishableKey,
+      amount: amountInHalalas,
+      description: 'Termination Compensation (20%)',
+    );
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Termination Payment')),
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF8E1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFFD54F)),
+                  ),
+                  child: Text(
+                    'Termination with 20% compensation: ${_terminationCompensationText()}',
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontSize: 12.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: CreditCard(
+                    config: paymentConfig,
+                    onPaymentResult: (result) async {
+                      if (result is PaymentResponse &&
+                          result.status == PaymentStatus.paid) {
+                        try {
+                          await _verifyTerminationCompensationPayment(
+                            result.id,
+                          );
+
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Termination payment completed successfully',
+                                ),
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            await _showErrorDialog(_friendlyErrorMessage(e));
+                          }
+                        }
+                      } else {
+                        await _showErrorDialog('Payment failed');
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _verifyPayment(String paymentId) async {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+
+    final chatData = chatDoc.data();
+    final requestId = _extractRequestId(chatData);
+
+    print('PAYMENT ID: $paymentId');
+    print('REQUEST ID: $requestId');
+    print('VERIFY URL: ${ApiConfig.baseUrl}/verify-payment');
+
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/verify-payment'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'paymentId': paymentId,
+        'requestId': requestId,
+        'paidBy': _controller.currentUserId,
+      }),
+    );
+
+    print('VERIFY STATUS: ${response.statusCode}');
+    print('VERIFY BODY: ${response.body}');
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final errorMessage = (decoded['error'] ?? 'Payment verification failed')
+          .toString();
+      throw Exception(errorMessage);
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final returnedContractData = decoded['contractData'];
+    if (returnedContractData is Map) {
+      setState(() {
+        _contractData = Map<String, dynamic>.from(returnedContractData);
+      });
+    }
+
+    await _createContractNotification(
+      type: 'contract_payment_completed',
+      actionText: 'completed the contract payment',
+      requestId: requestId,
+      chatData: chatData,
+      contractData: returnedContractData is Map
+          ? Map<String, dynamic>.from(returnedContractData)
+          : null,
+    );
+
+    await _refreshContractDataFromSource();
+  }
+
+  Future<void> _verifyTerminationCompensationPayment(String paymentId) async {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+
+    final chatData = chatDoc.data();
+    final requestId = _extractRequestId(chatData);
+
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/verify-termination-payment'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'paymentId': paymentId,
+        'requestId': requestId,
+        'paidBy': _currentUserRole(),
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final errorMessage =
+          (decoded['error'] ?? 'Termination payment verification failed')
+              .toString();
+      throw Exception(errorMessage);
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final updatedContractData = decoded['contractData'];
+    final normalizedContractData = updatedContractData is Map
+        ? Map<String, dynamic>.from(updatedContractData)
+        : null;
+
+    if (normalizedContractData != null && mounted) {
+      setState(() {
+        _contractData = normalizedContractData;
+      });
+    }
+
+    await _createContractNotification(
+      type: 'contract_terminated',
+      actionText: 'terminated the contract with 20% compensation',
+      requestId: requestId,
+      chatData: chatData,
+      contractData: normalizedContractData,
+    );
+
+    await _refreshContractDataFromSource();
+  }
+
   Widget _buildDeliverySection(String contractStatus) {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
     if (contractStatus != 'approved') return const SizedBox.shrink();
 
     final deliveryData = _asMap(contractData['deliveryData']);
-    final adminReview = _asMap(contractData['adminReview']);
+    final progressData = _asMap(contractData['progressData']);
+    final currentStage = _normalizeContractProgressStage(progressData['stage']);
     final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
-    final adminReviewStatus = _normalizeAdminReviewStatus(
-      adminReview['status'],
-    );
-    final adminReviewReason = _adminReviewReasonLabel(
-      (adminReview['reasonType'] ?? '').toString(),
-    );
-    final adminReviewRequestedBy = (adminReview['requestedBy'] ?? '')
-        .toString()
-        .trim();
-    final canWithdrawAdminReview =
-        adminReviewStatus != 'resolved' &&
-        adminReviewRequestedBy == _currentUserRole();
     final previewImageUrls =
         (deliveryData['previewImageUrls'] as List?)
             ?.map((item) => item.toString())
@@ -2653,6 +3147,7 @@ Future<void> _verifyPayment(String paymentId) async {
             .toList() ??
         const <String>[];
     final isClient = _currentUserRole() == 'client';
+    final isFreelancer = _currentUserRole() == 'freelancer';
     final canSubmit = _canFreelancerSubmitWork(contractStatus);
 
     return Container(
@@ -2676,96 +3171,43 @@ Future<void> _verifyPayment(String paymentId) async {
             ),
           ),
           const SizedBox(height: 10),
-          if (adminReviewStatus != 'none') ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF8E1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFFD54F)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Under Admin Review',
-                    style: TextStyle(
-                      color: Color(0xFF8D6E00),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.5,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Reason: $adminReviewReason',
-                    style: const TextStyle(
-                      color: Colors.black87,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                  if (adminReviewRequestedBy.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'Requested by: $adminReviewRequestedBy',
-                      style: const TextStyle(
-                        color: Colors.black54,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                  if (canWithdrawAdminReview) ...[
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        onPressed: _isSavingContract
-                            ? null
-                            : _withdrawAdminReview,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: primary,
-                          backgroundColor: Colors.transparent,
-                          side: BorderSide(color: primary.withOpacity(0.32)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 14, // 👈 مسافة فوق وتحت
-                            horizontal: 20, // 👈 مسافة يمين ويسار
-                          ),
-                        ),
-                        child: const Text(
-                          'Withdraw Complaint',
-                          textAlign: TextAlign.center, // 👈 يخلي النص بالنص
-                          style: TextStyle(
-                            height: 1.3, // 👈 يحسن شكل السطرين لو انكسر
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+          if (isFreelancer &&
+              !canSubmit &&
+              (deliveryStatus == 'not_submitted' ||
+                  deliveryStatus == 'changes_requested')) ...[
+            Text(
+              currentStage == 'completed'
+                  ? 'Work delivery will be available now.'
+                  : 'Work delivery will be enabled when progress reaches Completed.',
+              style: const TextStyle(
+                color: Colors.black54,
+                fontSize: 12.5,
+                height: 1.35,
               ),
             ),
             const SizedBox(height: 12),
-       ] else if (deliveryStatus != 'paid_delivered') ...[
             SizedBox(
               width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _isSavingContract ? null : _requestAdminReview,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: primary,
-                  side: BorderSide(color: primary.withOpacity(0.24)),
+              child: ElevatedButton.icon(
+                onPressed: null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primary,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: primary.withOpacity(0.35),
+                  disabledForegroundColor: Colors.white70,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                icon: const Icon(Icons.admin_panel_settings_outlined),
-                label: const Text('Request Admin Review'),
+                icon: const Icon(Icons.upload_file_rounded),
+                label: Text(
+                  deliveryStatus == 'changes_requested'
+                      ? 'Resubmit Work'
+                      : 'Submit Work',
+                ),
               ),
             ),
-            const SizedBox(height: 12),
           ],
           if (canSubmit) ...[
             const Text(
@@ -2807,13 +3249,20 @@ Future<void> _verifyPayment(String paymentId) async {
                 itemCount: previewImageUrls.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      previewImageUrls[index],
-                      width: 88,
-                      height: 88,
-                      fit: BoxFit.cover,
+                  final imageUrl = previewImageUrls[index];
+
+                  return GestureDetector(
+                    onTap: isClient
+                        ? () => _openDeliveryPreviewImage(imageUrl)
+                        : null,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        imageUrl,
+                        width: 88,
+                        height: 88,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   );
                 },
@@ -2921,7 +3370,7 @@ Future<void> _verifyPayment(String paymentId) async {
               ),
             ),
           ],
-         if (deliveryStatus == 'approved_awaiting_payment' && isClient) ...[
+          if (deliveryStatus == 'approved_awaiting_payment' && isClient) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
@@ -2949,8 +3398,6 @@ Future<void> _verifyPayment(String paymentId) async {
                       color: Colors.black54,
                       fontSize: 12.5,
                       height: 1.35,
-
-
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2958,11 +3405,11 @@ Future<void> _verifyPayment(String paymentId) async {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: _isSavingContract
-                    ? null
-                     : () {
-                      debugPrint('PAY NOW CLICKED');
-                     _openMoyasarPayment();
-                     },
+                          ? null
+                          : () {
+                              debugPrint('PAY NOW CLICKED');
+                              _openMoyasarPayment();
+                            },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primary,
                         foregroundColor: Colors.white,
@@ -2977,6 +3424,191 @@ Future<void> _verifyPayment(String paymentId) async {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+          if (deliveryStatus == 'approved_awaiting_payment' && !isClient) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: primary.withOpacity(0.14)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Final Work Release',
+                    style: TextStyle(
+                      color: primary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'The client must complete payment before the final work can be released.',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 12.5,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _showWorkReleaseAfterPaymentDialog,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: primary,
+                        side: BorderSide(color: primary.withOpacity(0.24)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.lock_outline_rounded),
+                      label: const Text('Download Work'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdminReviewSection(String contractStatus) {
+    final contractData = _contractData;
+    if (contractData == null) return const SizedBox.shrink();
+    if (contractStatus != 'approved') return const SizedBox.shrink();
+
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final adminReview = _asMap(contractData['adminReview']);
+    final adminReviewStatus = _normalizeAdminReviewStatus(
+      adminReview['status'],
+    );
+    final adminReviewReason = _adminReviewReasonLabel(
+      (adminReview['reasonType'] ?? '').toString(),
+    );
+    final adminReviewRequestedBy = (adminReview['requestedBy'] ?? '')
+        .toString()
+        .trim();
+    final canWithdrawAdminReview =
+        adminReviewStatus != 'resolved' &&
+        adminReviewRequestedBy == _currentUserRole();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F6FC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: primary.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Admin Review',
+            style: TextStyle(
+              color: primary,
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (adminReviewStatus != 'none') ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFD54F)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Under Admin Review',
+                    style: TextStyle(
+                      color: Color(0xFF8D6E00),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Reason: $adminReviewReason',
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  if (adminReviewRequestedBy.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Requested by: $adminReviewRequestedBy',
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                  if (canWithdrawAdminReview) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: _isSavingContract
+                            ? null
+                            : _withdrawAdminReview,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          backgroundColor: Colors.transparent,
+                          side: BorderSide(color: primary.withOpacity(0.32)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 14,
+                            horizontal: 20,
+                          ),
+                        ),
+                        child: const Text(
+                          'Withdraw Complaint',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(height: 1.3),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ] else if (deliveryStatus != 'paid_delivered') ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isSavingContract ? null : _requestAdminReview,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: primary,
+                  side: BorderSide(color: primary.withOpacity(0.24)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.admin_panel_settings_outlined),
+                label: const Text('Request Admin Review'),
               ),
             ),
           ],
@@ -3016,6 +3648,229 @@ Future<void> _verifyPayment(String paymentId) async {
       debugPrint('Resolve contract download error: $e');
       unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
     }
+  }
+
+  Future<void> _downloadDeliveredWork() async {
+    try {
+      final deliveryData = _asMap(_contractData?['deliveryData']);
+      final deliveredUrls =
+          (deliveryData['finalWorkUrls'] as List?)
+              ?.map((item) => item.toString())
+              .where((item) => item.trim().isNotEmpty)
+              .toList() ??
+          const <String>[];
+
+      if (deliveredUrls.isEmpty) {
+        final waitingMessage = _currentUserRole() == 'client'
+            ? 'Please wait for the freelancer to upload the final work.'
+            : 'Final work is not available yet';
+        unawaited(_showErrorDialog(waitingMessage));
+        return;
+      }
+
+      await _openFinalWorkGallery(deliveredUrls);
+    } catch (e) {
+      if (!mounted) return;
+      debugPrint('Download delivered work error: $e');
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    }
+  }
+
+  Future<void> _showWorkReleaseAfterPaymentDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Payment Required'),
+          content: const Text(
+            'The final work can only be released after the client completes the payment.',
+          ),
+          actions: [
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: primary,
+                side: BorderSide(color: primary.withOpacity(0.24)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<List<File>?> _pickDeliveryImagesForSubmission() async {
+    final pickedFiles = await _picker.pickMultiImage(imageQuality: 85);
+    if (pickedFiles.isEmpty) return null;
+
+    final selectedFiles = pickedFiles.map((file) => File(file.path)).toList();
+
+    if (!mounted) return null;
+
+    return showDialog<List<File>>(
+      context: context,
+      builder: (dialogContext) {
+        final files = List<File>.from(selectedFiles);
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Review Work Images'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: files.isEmpty
+                    ? const Text('No images selected.')
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Remove any image you do not want before submitting.',
+                            style: TextStyle(
+                              color: Colors.black54,
+                              fontSize: 12.5,
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            height: 92,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: files.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 8),
+                              itemBuilder: (context, index) {
+                                return Stack(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.file(
+                                        files[index],
+                                        width: 92,
+                                        height: 92,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setDialogState(() {
+                                            files.removeAt(index);
+                                          });
+                                        },
+                                        child: const CircleAvatar(
+                                          radius: 11,
+                                          backgroundColor: Colors.black54,
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 13,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+              actions: [
+                OutlinedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFC75A5A),
+                    side: const BorderSide(color: Color(0xFFC75A5A)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: files.isEmpty
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(files),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Submit Work'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _handleFinalWorkAction() async {
+    final contractData = _contractData;
+    if (contractData == null) return;
+
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final finalWorkUrls =
+        (deliveryData['finalWorkUrls'] as List?)
+            ?.map((item) => item.toString())
+            .where((item) => item.trim().isNotEmpty)
+            .toList() ??
+        const <String>[];
+
+    if (_currentUserRole() == 'freelancer' && finalWorkUrls.isEmpty) {
+      try {
+        final selectedFiles = await _pickDeliveryImagesForSubmission();
+        if (selectedFiles == null || selectedFiles.isEmpty) return;
+
+        setState(() {
+          _isSavingContract = true;
+        });
+
+        final uploadedUrls = await _controller.uploadDeliveryImages(
+          chatId: widget.chatId,
+          imageFiles: selectedFiles,
+        );
+
+        final updatedContractData = Map<String, dynamic>.from(contractData);
+        final updatedDeliveryData = _asMap(updatedContractData['deliveryData']);
+        updatedDeliveryData['finalWorkUrls'] = uploadedUrls;
+        updatedDeliveryData['finalWorkUploadedBy'] = _currentUserRole();
+        updatedDeliveryData['finalWorkUploadedAt'] = DateTime.now()
+            .toIso8601String();
+        updatedContractData['deliveryData'] = updatedDeliveryData;
+
+        await _saveWorkflowContractData(updatedContractData);
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Final work uploaded successfully')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        debugPrint('Upload final work error: $e');
+        unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      } finally {
+        if (!mounted) return;
+        setState(() {
+          _isSavingContract = false;
+        });
+      }
+      return;
+    }
+
+    await _downloadDeliveredWork();
   }
 
   String _contractNotificationSnippet(Map<String, dynamic>? contractData) {
@@ -3123,9 +3978,46 @@ Future<void> _verifyPayment(String paymentId) async {
               'isRead': false,
               'createdAt': FieldValue.serverTimestamp(),
             });
+
+        await _sendNotificationPush(
+          receiverId: receiverId,
+          title: senderName.isEmpty ? 'Contract Update' : senderName,
+          body: normalizedActionText,
+          data: {
+            'type': normalizedType,
+            'senderId': senderId,
+            'receiverId': receiverId,
+            'requestId': normalizedRequestId,
+            'contractId': contractId,
+            'chatId': widget.chatId,
+            'notificationOrigin': 'firestore_contract_notification',
+          },
+        );
       }
     } catch (e) {
       debugPrint('Create contract notification error: $e');
+    }
+  }
+
+  Future<void> _sendNotificationPush({
+    required String receiverId,
+    required String title,
+    required String body,
+    required Map<String, dynamic> data,
+  }) async {
+    try {
+      await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/send-notification-push'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'receiverId': receiverId,
+          'title': title,
+          'body': body,
+          'data': data,
+        }),
+      );
+    } catch (e) {
+      debugPrint('Send notification push error: $e');
     }
   }
 
@@ -3370,6 +4262,12 @@ Future<void> _verifyPayment(String paymentId) async {
       if ((terminationMode ?? '').isEmpty || !mounted) return;
     }
 
+    if ((terminationMode ?? '').trim().toLowerCase() == 'paid' &&
+        !_isWithinTerminationGracePeriod()) {
+      await _openTerminationCompensationPayment();
+      return;
+    }
+
     setState(() {
       _isTerminatingContract = true;
     });
@@ -3496,8 +4394,8 @@ Future<void> _verifyPayment(String paymentId) async {
                 .data();
         final requestId = _extractRequestId(chatDocData);
         await _createContractNotification(
-          type: 'contract_terminated',
-          actionText: 'approved contract termination',
+          type: 'contract_termination_approved',
+          actionText: 'approved your termination request',
           requestId: requestId,
           chatData: chatDocData,
           contractData: updatedContractData is Map
@@ -3560,7 +4458,7 @@ Future<void> _verifyPayment(String paymentId) async {
 
         await _createContractNotification(
           type: 'contract_termination_rejected',
-          actionText: 'rejected your mutual termination request',
+          actionText: 'rejected your termination request',
           requestId: requestId,
           chatData: chatData,
           contractData: normalizedContractData,
@@ -4042,6 +4940,7 @@ Future<void> _verifyPayment(String paymentId) async {
         .toLowerCase();
 
     if (contractStatus == 'approved' ||
+        contractStatus == 'completed' ||
         contractStatus == 'terminated' ||
         contractStatus == 'cancelled' ||
         contractStatus == 'canceled') {
@@ -4068,6 +4967,14 @@ Future<void> _verifyPayment(String paymentId) async {
         .toLowerCase();
 
     final currentUserRole = _currentUserRole();
+    final otherPartyLabel = currentUserRole == 'client'
+        ? 'freelancer'
+        : 'client';
+    final requesterLabel = terminationRequestedBy == 'client'
+        ? 'client'
+        : terminationRequestedBy == 'freelancer'
+        ? 'freelancer'
+        : 'other party';
     final currentUserRequestedTermination =
         terminationRequestedBy == currentUserRole;
     final currentUserMutualRequestRejected =
@@ -4112,7 +5019,6 @@ Future<void> _verifyPayment(String paymentId) async {
         const <String, dynamic>{};
 
     final List<dynamic> summary = const [];
-    final contractTitle = (meta['title'] ?? '').toString();
 
     final clientApproved = _approvalFlag(approval, const [
       'clientApproved',
@@ -4269,9 +5175,9 @@ Future<void> _verifyPayment(String paymentId) async {
     final header = Row(
       children: [
         Expanded(
-          child: Text(
-            contractTitle.trim().isEmpty ? 'Generated Contract' : contractTitle,
-            style: const TextStyle(
+          child: const Text(
+            contractDisplayTitle,
+            style: TextStyle(
               color: primary,
               fontWeight: FontWeight.w700,
               fontSize: 15,
@@ -4879,12 +5785,22 @@ Future<void> _verifyPayment(String paymentId) async {
                 ],
                 if (currentUserMutualRequestRejected) ...[
                   const SizedBox(height: 12),
-                  const Text(
-                    'Your mutual termination request was rejected. You can still terminate with 20% compensation.',
-                    style: TextStyle(
-                      color: Colors.black54,
-                      fontSize: 12.5,
-                      height: 1.35,
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF8E1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFFFD54F)),
+                    ),
+                    child: Text(
+                      'The $otherPartyLabel rejected your mutual termination request. You can continue with paid termination (20%).',
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 12.5,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -4893,7 +5809,7 @@ Future<void> _verifyPayment(String paymentId) async {
                     child: ElevatedButton.icon(
                       onPressed: _isTerminatingContract
                           ? null
-                          : () => _requestTermination(forcePaidMode: 'paid'),
+                          : _openTerminationCompensationPayment,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFC75A5A),
                         foregroundColor: Colors.white,
@@ -4904,6 +5820,48 @@ Future<void> _verifyPayment(String paymentId) async {
                       ),
                       icon: const Icon(Icons.payments_outlined),
                       label: const Text('Terminate with 20%'),
+                    ),
+                  ),
+                ],
+                if (showApproveTerminationButton) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF8E1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFFFD54F)),
+                    ),
+                    child: Text(
+                      'The $requesterLabel requested termination for this contract. You can approve or reject this request.',
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 12.5,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                if (showCancelTerminationButton) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3E5F5),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: primary.withOpacity(0.22)),
+                    ),
+                    child: Text(
+                      'You requested termination for this contract. Please wait for the $otherPartyLabel to respond.',
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 12.5,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
@@ -5014,7 +5972,9 @@ Future<void> _verifyPayment(String paymentId) async {
         previewContractStatus == 'terminated' ||
         previewContractStatus == 'cancelled' ||
         previewContractStatus == 'canceled';
-    final showPinnedApprovedContract = previewContractStatus == 'approved';
+    final showPinnedApprovedContract =
+        previewContractStatus == 'approved' ||
+        previewContractStatus == 'completed';
     final showFreelancerContractPanels =
         showPinnedApprovedContract && _currentUserRole() == 'freelancer';
 

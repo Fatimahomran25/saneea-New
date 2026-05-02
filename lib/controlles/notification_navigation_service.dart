@@ -640,7 +640,10 @@ bool _isContractNotification(String type) {
       type == 'contract_approved' ||
       type == 'contract_disapproved' ||
       type == 'contract_termination_requested' ||
-      type == 'contract_terminated';
+      type == 'contract_termination_approved' ||
+      type == 'contract_termination_rejected' ||
+      type == 'contract_terminated' ||
+      type == 'contract_payment_completed';
 }
 
 bool _isProposalNotification(String type) {

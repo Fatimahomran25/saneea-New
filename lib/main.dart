@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -45,6 +47,10 @@ class _MyAppState extends State<MyApp> {
   bool _isAuthReady = false;
   String? _lastOpenedChatId; // Guard against duplicate chats
   OverlayEntry? _foregroundNotificationEntry;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _inAppNotificationsSubscription;
+  bool _notificationsPrimed = false;
+  final Set<String> _seenNotificationIds = <String>{};
 
   @override
   void initState() {
@@ -62,6 +68,8 @@ class _MyAppState extends State<MyApp> {
 
     // Listen for auth state changes to know when user is ready
     FirebaseAuth.instance.authStateChanges().listen((user) async {
+      await _bindInAppNotifications(user);
+
       if (!_isAuthReady) {
         _isAuthReady = true;
         debugPrint('✅ [APP] Auth state ready - user: ${user?.uid}');
@@ -111,6 +119,52 @@ class _MyAppState extends State<MyApp> {
         });
       }
     });
+  }
+
+  Future<void> _bindInAppNotifications(User? user) async {
+    await _inAppNotificationsSubscription?.cancel();
+    _inAppNotificationsSubscription = null;
+    _notificationsPrimed = false;
+    _seenNotificationIds.clear();
+
+    if (user == null) return;
+
+    _inAppNotificationsSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('notifications')
+        .orderBy('createdAt', descending: true)
+        .limit(20)
+        .snapshots()
+        .listen((snapshot) {
+          if (!_notificationsPrimed) {
+            for (final doc in snapshot.docs) {
+              _seenNotificationIds.add(doc.id);
+            }
+            _notificationsPrimed = true;
+            return;
+          }
+
+          for (final change in snapshot.docChanges) {
+            if (change.type != DocumentChangeType.added) continue;
+            if (_seenNotificationIds.contains(change.doc.id)) continue;
+
+            _seenNotificationIds.add(change.doc.id);
+            final data = change.doc.data() ?? <String, dynamic>{};
+            final senderName = (data['senderName'] ?? '').toString().trim();
+            final actionText = (data['actionText'] ?? '').toString().trim();
+            final title = senderName.isEmpty ? 'New Notification' : senderName;
+            final body = actionText.isEmpty
+                ? 'You have a new update.'
+                : actionText;
+
+            _showForegroundBanner(
+              title,
+              body,
+              Map<String, dynamic>.from(data),
+            );
+          }
+        });
   }
 
   void _initNotificationTapHandler() {
@@ -526,6 +580,7 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     _removeForegroundBanner();
+    _inAppNotificationsSubscription?.cancel();
     _messagingController.dispose();
     super.dispose();
   }

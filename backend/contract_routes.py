@@ -1,9 +1,16 @@
 from flask import Blueprint, jsonify, request, send_file
 import os
 import requests
+from datetime import datetime
 from firebase_admin import firestore
 import firebase_service
-from firebase_service import get_request_by_id
+from firebase_service import (
+    get_contract_source_by_id,
+    get_request_by_id,
+    update_announcement_contract_data,
+    update_announcement_proposal_contract_data,
+    update_request_contract_data,
+)
 from pdf_service import generate_contract_pdf
 
 from contract_controller import (
@@ -24,6 +31,44 @@ from contract_controller import (
 
 # Keep all contract endpoints together so server.py only handles app setup.
 contract_routes = Blueprint("contract_routes", __name__)
+
+
+def _safe_notification_text(value, fallback):
+    text = str(value or "").strip()
+    return text or fallback
+
+
+@contract_routes.route("/send-notification-push", methods=["POST"])
+def send_notification_push_api():
+    try:
+        data = request.get_json(force=True) or {}
+        receiver_id = str(data.get("receiverId", "")).strip()
+        title = _safe_notification_text(data.get("title"), "Saneea")
+        body = _safe_notification_text(
+            data.get("body"),
+            "You have a new update.",
+        )
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+
+        if not receiver_id:
+            return jsonify({
+                "success": False,
+                "error": "receiverId is required",
+            }), 400
+
+        result = firebase_service.send_push_notification_to_user(
+            receiver_id,
+            title,
+            body,
+            payload,
+        )
+        return jsonify(result), 200
+
+    except Exception as error:
+        return jsonify({
+            "success": False,
+            "error": str(error),
+        }), 500
 
 
 @contract_routes.route("/generate-contract", methods=["POST"])
@@ -394,6 +439,7 @@ def delete_contract_api():
 def download_contract_pdf_api():
     try:
         request_id = request.args.get("requestId", "").strip()
+        proposal_id = request.args.get("proposalId", "").strip()
 
         if not request_id:
             return jsonify({
@@ -401,15 +447,16 @@ def download_contract_pdf_api():
                 "error": "requestId is required"
             }), 400
 
-        request_data = get_request_by_id(request_id)
+        source_context = get_contract_source_by_id(request_id, proposal_id or request_id)
 
-        if not request_data:
+        if not source_context:
             return jsonify({
                 "success": False,
                 "error": "Request not found"
             }), 404
 
-        contract_data = request_data.get("contractData")
+        source_data = source_context.get("data") or {}
+        contract_data = source_data.get("contractData")
 
         if not isinstance(contract_data, dict):
             return jsonify({
@@ -423,7 +470,7 @@ def download_contract_pdf_api():
         freelancer_approved = approval.get("freelancerApproved") is True
 
         if (
-            contract_status != "approved"
+            contract_status not in {"approved", "completed"}
             or not client_approved
             or not freelancer_approved
         ):
@@ -484,25 +531,198 @@ def verify_payment_api():
                 "deliveryStatus": "approved_awaiting_payment"
             }), 400
 
-        firebase_service.db.collection("requests").document(request_id).update({
-            "contractData.paymentData": {
-                "paymentStatus": "paid",
-                "transactionId": payment.get("id"),
-                "paidAt": firestore.SERVER_TIMESTAMP,
-                "paidBy": paid_by,
-                "amount": payment.get("amount")
-            },
-            "contractData.deliveryData.status": "paid_delivered",
-            "contractData.progressData.stage": "completed",
-            "contractData.progressData.updatedAt": firestore.SERVER_TIMESTAMP,
-            "contractData.progressData.updatedBy": "system",
-            "contractData.approval.contractStatus": "completed"
+        source_context = get_contract_source_by_id(request_id, request_id)
+        if not source_context:
+            return jsonify({
+                "success": False,
+                "error": "Contract source not found"
+            }), 404
+
+        source = source_context.get("source")
+        source_data = source_context.get("data") or {}
+        contract_data = source_data.get("contractData")
+
+        if not isinstance(contract_data, dict):
+            return jsonify({
+                "success": False,
+                "error": "contractData is missing"
+            }), 400
+
+        updated_contract_data = dict(contract_data)
+        updated_payment_data = dict(updated_contract_data.get("paymentData") or {})
+        updated_delivery_data = dict(updated_contract_data.get("deliveryData") or {})
+        updated_progress_data = dict(updated_contract_data.get("progressData") or {})
+        updated_approval_data = dict(updated_contract_data.get("approval") or {})
+        now_iso = datetime.now().isoformat()
+
+        updated_payment_data.update({
+            "paymentStatus": "paid",
+            "transactionId": payment.get("id"),
+            "paidAt": now_iso,
+            "paidBy": paid_by,
+            "amount": payment.get("amount"),
         })
+        updated_delivery_data["status"] = "paid_delivered"
+        updated_progress_data["stage"] = "completed"
+        updated_progress_data["updatedAt"] = now_iso
+        updated_progress_data["updatedBy"] = "system"
+        updated_approval_data["contractStatus"] = "completed"
+
+        updated_contract_data["paymentData"] = updated_payment_data
+        updated_contract_data["deliveryData"] = updated_delivery_data
+        updated_contract_data["progressData"] = updated_progress_data
+        updated_contract_data["approval"] = updated_approval_data
+
+        if source == "request":
+            update_request_contract_data(request_id, updated_contract_data)
+        elif source == "announcement":
+            proposal_id = source_context.get("proposalId") or request_id
+            announcement_id = source_context.get("announcementId") or ""
+            client_id = source_context.get("clientId") or ""
+
+            update_announcement_proposal_contract_data(
+                proposal_id,
+                updated_contract_data,
+            )
+
+            if client_id and announcement_id:
+                update_announcement_contract_data(
+                    client_id,
+                    announcement_id,
+                    updated_contract_data,
+                )
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Unsupported contract source"
+            }), 400
 
         return jsonify({
             "success": True,
             "paymentStatus": "paid",
-            "deliveryStatus": "paid_delivered"
+            "deliveryStatus": "paid_delivered",
+            "contractData": updated_contract_data,
+        }), 200
+
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
+@contract_routes.route("/verify-termination-payment", methods=["POST"])
+def verify_termination_payment_api():
+    try:
+        data = request.get_json(force=True)
+
+        payment_id = str(data.get("paymentId", "")).strip()
+        request_id = str(data.get("requestId", "")).strip()
+        paid_by = str(data.get("paidBy", "")).strip().lower()
+
+        if not payment_id:
+            return jsonify({"success": False, "error": "paymentId is required"}), 400
+
+        if not request_id:
+            return jsonify({"success": False, "error": "requestId is required"}), 400
+
+        if paid_by not in ("client", "freelancer"):
+            return jsonify({"success": False, "error": "paidBy must be client or freelancer"}), 400
+
+        response = requests.get(
+            f"https://api.moyasar.com/v1/payments/{payment_id}",
+            auth=(MOYASAR_SECRET_KEY, "")
+        )
+        payment = response.json()
+
+        if response.status_code < 200 or response.status_code >= 300:
+            return jsonify({"success": False, "error": payment}), 400
+
+        if payment.get("status") != "paid":
+            return jsonify({
+                "success": False,
+                "paymentStatus": payment.get("status", "failed"),
+            }), 400
+
+        source_context = get_contract_source_by_id(request_id, request_id)
+        if not source_context:
+            return jsonify({
+                "success": False,
+                "error": "Contract source not found"
+            }), 404
+
+        source = source_context.get("source")
+        source_data = source_context.get("data") or {}
+        contract_data = source_data.get("contractData")
+
+        if not isinstance(contract_data, dict):
+            return jsonify({
+                "success": False,
+                "error": "contractData is missing"
+            }), 400
+
+        updated_contract_data = dict(contract_data)
+        updated_approval_data = dict(updated_contract_data.get("approval") or {})
+        updated_termination = dict(updated_approval_data.get("termination") or {})
+        payment_map = dict(updated_contract_data.get("payment") or {})
+        amount_value = 0.0
+        try:
+            amount_value = float(str(payment_map.get("amount") or "").strip())
+        except (TypeError, ValueError):
+            amount_value = 0.0
+        compensation_amount = round(amount_value * 0.20, 2) if amount_value > 0 else 0.0
+        now_iso = datetime.now().isoformat()
+
+        updated_termination.update({
+            "requested": True,
+            "requestedBy": paid_by,
+            "requestedAt": now_iso,
+            "approved": True,
+            "approvedBy": paid_by,
+            "approvedAt": now_iso,
+            "mode": "paid_compensation",
+            "requiresCompensation": True,
+            "compensationPercentage": 20,
+            "compensationAmount": compensation_amount,
+            "compensationCurrency": payment_map.get("currency") or "SAR",
+            "paymentStatus": "paid",
+            "paymentTransactionId": payment.get("id"),
+            "paymentAmount": payment.get("amount"),
+            "paymentVerifiedAt": now_iso,
+            "rejected": False,
+            "rejectedBy": "",
+            "rejectedAt": "",
+        })
+        updated_approval_data["termination"] = updated_termination
+        updated_approval_data["contractStatus"] = "terminated"
+        updated_contract_data["approval"] = updated_approval_data
+
+        if source == "request":
+            update_request_contract_data(request_id, updated_contract_data)
+        elif source == "announcement":
+            proposal_id = source_context.get("proposalId") or request_id
+            announcement_id = source_context.get("announcementId") or ""
+            client_id = source_context.get("clientId") or ""
+
+            update_announcement_proposal_contract_data(
+                proposal_id,
+                updated_contract_data,
+            )
+
+            if client_id and announcement_id:
+                update_announcement_contract_data(
+                    client_id,
+                    announcement_id,
+                    updated_contract_data,
+                )
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Unsupported contract source"
+            }), 400
+
+        return jsonify({
+            "success": True,
+            "paymentStatus": "paid",
+            "contractStatus": "terminated",
+            "contractData": updated_contract_data,
         }), 200
 
     except Exception as error:

@@ -24,7 +24,10 @@ class MessagingController {
     'contract_approved',
     'contract_disapproved',
     'contract_termination_requested',
+    'contract_termination_approved',
+    'contract_termination_rejected',
     'contract_terminated',
+    'contract_payment_completed',
   };
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -93,10 +96,16 @@ class MessagingController {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
       final notification = message.notification;
       final data = message.data;
+      final origin = (data['notificationOrigin'] ?? '').toString().trim();
 
       debugPrint(
         '📬 Foreground message received: title=${notification?.title}, body=${notification?.body}',
       );
+
+      if (origin == 'firestore_contract_notification') {
+        debugPrint('ℹ️ Skipping duplicate foreground contract push banner');
+        return;
+      }
 
       if (notification != null) {
         final title = notification.title ?? 'New Message';
