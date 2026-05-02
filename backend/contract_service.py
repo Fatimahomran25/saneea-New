@@ -11,9 +11,22 @@ def build_contract_data(request):
             "description": request.get("description", "")
         },
         "payment": {
-            "amount": request.get("budget", 0),
-            "currency": "SAR"
-        },
+    "amount": request.get("budget", 0),
+    "currency": "SAR",
+    "paidAt": None
+},
+
+"progressData": {
+    "stage": "started",
+    "updatedAt": None,
+    "updatedBy": ""
+},
+"deliveryData": {
+    "status": "not_submitted",
+    "submittedAt": "",
+    "approvedAt": "",
+    "paidAt": ""
+},
         "timeline": {
             "deadline": request.get("deadline", "")
         },
@@ -38,7 +51,8 @@ CONTRACT AGREEMENT
 
 Contract Date: {contract_data["meta"]["createdAt"]}
 Contract Status: {contract_data["approval"]["contractStatus"]}
-
+Progress: {contract_data.get("progressData", {}).get("stage", "started")}
+Delivery: {contract_data.get("deliveryData", {}).get("status", "not_submitted")}
 This agreement is made between:
 
 First Party (Client): {contract_data["parties"]["clientName"]}

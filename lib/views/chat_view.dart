@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -14,12 +15,13 @@ import '../models/message_model.dart';
 import 'freelancer_client_profile_view.dart';
 import 'freelancer_profile.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:moyasar/moyasar.dart';
 
 String _friendlyErrorMessage(Object error) {
   final rawError = error.toString().replaceFirst('Exception: ', '').trim();
   final normalizedError = rawError.toLowerCase();
   final statusCode = error is int ? error : int.tryParse(rawError);
-
+  
   if (error is SocketException ||
       normalizedError.contains('socketexception') ||
       normalizedError.contains('failed host lookup') ||
@@ -86,7 +88,7 @@ class ChatView extends StatefulWidget {
 
 class _ChatViewState extends State<ChatView> {
   static const Color primary = Color(0xFF5A3E9E);
-
+  static const String moyasarPublishableKey = 'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;
   final ImagePicker _picker = ImagePicker();
@@ -666,6 +668,9 @@ class _ChatViewState extends State<ChatView> {
         const <String, dynamic>{};
     final contractDeadline = (timeline['deadline'] ?? '').toString();
     final hideTerminateButton = _hasContractDeadlinePassed(contractDeadline);
+    final deliveryData = _asMap(_contractData?['deliveryData']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final isPaidDelivered = deliveryStatus == 'paid_delivered';
     final isApprovedContract = currentContractStatus == 'approved';
     final cardTitleText = currentContractStatus == 'approved'
         ? 'Approved Contract'
@@ -789,7 +794,7 @@ class _ChatViewState extends State<ChatView> {
                       label: const Text('Download Contract'),
                     ),
                   ),
-                  if (!hideTerminateButton) ...[
+                  if (!hideTerminateButton && !isPaidDelivered) ...[
                     const SizedBox(width: 10),
                     Expanded(
                       child: ElevatedButton.icon(
@@ -805,8 +810,13 @@ class _ChatViewState extends State<ChatView> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
+
+
                         icon: const Icon(Icons.close_rounded),
+                    
                         label: const Text('Terminate'),
+
+                  
                       ),
                     ),
                   ],
@@ -1391,6 +1401,7 @@ class _ChatViewState extends State<ChatView> {
       case 'submitted':
       case 'changes_requested':
       case 'approved_awaiting_payment':
+      case 'paid_delivered':
         return normalized;
       case 'not_submitted':
       default:
@@ -1432,15 +1443,19 @@ class _ChatViewState extends State<ChatView> {
 
     final contractData = _contractData;
     if (contractData == null) return false;
+  final progressData = _asMap(contractData['progressData']);
+   final currentStage =
+    _normalizeContractProgressStage(progressData['stage']);
+final deliveryData = _asMap(contractData['deliveryData']);
+final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+final isPaidDelivered = deliveryStatus == 'paid_delivered';
+final isLocked = isPaidDelivered || contractStatus == 'completed';
 
-    final progressData = _asMap(contractData['progressData']);
-    final deliveryData = _asMap(contractData['deliveryData']);
-    final currentStage = _normalizeContractProgressStage(progressData['stage']);
-    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+if (isPaidDelivered || contractStatus == 'completed') return false;
 
-    return currentStage == 'completed' &&
-        (deliveryStatus == 'not_submitted' ||
-            deliveryStatus == 'changes_requested');
+return currentStage == 'completed' &&
+    (deliveryStatus == 'not_submitted' ||
+        deliveryStatus == 'changes_requested');
   }
 
   Future<void> _saveWorkflowContractData(
@@ -1952,17 +1967,23 @@ class _ChatViewState extends State<ChatView> {
     if (contractData == null) return const SizedBox.shrink();
 
     final shouldShowProgress =
-        contractStatus == 'approved' ||
-        contractStatus == 'termination_pending' ||
-        contractStatus == 'terminated';
+    contractStatus == 'approved' ||
+    contractStatus == 'completed' ||
+    contractStatus == 'termination_pending' ||
+    contractStatus == 'terminated';
 
     if (!shouldShowProgress) return const SizedBox.shrink();
 
     final progressData = _asMap(contractData['progressData']);
-    final currentStage = _normalizeContractProgressStage(progressData['stage']);
+    final currentStage =
+    _normalizeContractProgressStage(progressData['stage']);
     final currentStageIndex = _contractProgressIndex(currentStage);
     final currentStageColor = _contractProgressColor(currentStage);
     final showClientTimeline = currentUserRole == 'client';
+final deliveryData = _asMap(contractData['deliveryData']);
+final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+final isPaidDelivered = deliveryStatus == 'paid_delivered';
+final isLocked = isPaidDelivered || contractStatus == 'completed';
 
     final progressContent = Container(
       width: double.infinity,
@@ -2083,9 +2104,9 @@ class _ChatViewState extends State<ChatView> {
                   ),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(14),
-                    onTap: _isSavingContract
+                   onTap: (_isSavingContract || isLocked)
                         ? null
-                        : () => _updateContractProgress(stage),
+                      : () => _updateContractProgress(stage),
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
@@ -2162,39 +2183,65 @@ class _ChatViewState extends State<ChatView> {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
 
-    final approval = _asMap(contractData['approval']);
-    final contractStatus = (approval['contractStatus'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    if (contractStatus != 'approved') {
-      return const SizedBox.shrink();
-    }
+ final approval = _asMap(contractData['approval']);
+final contractStatus = (approval['contractStatus'] ?? '')
+    .toString()
+    .trim()
+    .toLowerCase();
 
-    final meta = _asMap(contractData['meta']);
-    final service = _asMap(contractData['service']);
-    final payment = _asMap(contractData['payment']);
-    final timeline = _asMap(contractData['timeline']);
-    final title = (meta['title'] ?? 'Approved Contract').toString().trim();
-    final description = (service['description'] ?? '').toString().trim();
-    final amount = (payment['amount'] ?? '').toString().trim();
-    final deadline = (timeline['deadline'] ?? '').toString().trim();
+final deliveryData = _asMap(contractData['deliveryData']);
+final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+final isPaidDelivered = deliveryStatus == 'paid_delivered';
 
+if (contractStatus != 'approved' &&
+    contractStatus != 'completed' &&
+    !isPaidDelivered) {
+  return const SizedBox.shrink();
+}
+
+final meta = _asMap(contractData['meta']);
+final service = _asMap(contractData['service']);
+final payment = _asMap(contractData['payment']);
+final timeline = _asMap(contractData['timeline']);
+final progressData = _asMap(contractData['progressData']);
+final progressStage = _normalizeContractProgressStage(progressData['stage']);
+
+// 👇 إذا الدفع تم، اعتبره Completed حتى لو progressData غلط
+final isProgressCompleted =
+    progressStage == 'completed' || isPaidDelivered;
+
+final title = (meta['title'] ?? 'Approved Contract').toString().trim();
+final description = (service['description'] ?? '').toString().trim();
+final amount = (payment['amount'] ?? '').toString().trim();
+final deadline = (timeline['deadline'] ?? '').toString().trim();
+
+final isCompleted =
+    contractStatus == 'completed' || isPaidDelivered || isProgressCompleted;
+final hideTerminateButton = _hasContractDeadlinePassed(deadline);
+final isLocked = isPaidDelivered || contractStatus == 'completed';
+final isClientView = _currentUserRole() == 'client';
     return Container(
       width: double.infinity,
       margin: margin,
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F2FB),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: primary.withOpacity(0.16)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+  color: isCompleted
+    ? const Color(0xFFF3E8FF) 
+    : const Color(0xFFF6F2FB),
+  borderRadius: BorderRadius.circular(18),
+  border: Border.all(
+  color: Colors.transparent,
+),
+  boxShadow: [
+    BoxShadow(
+      color: isCompleted
+    ? const Color(0xFF7C3AED).withOpacity(0.15)
+          
+          : Colors.black.withOpacity(0.05),
+      blurRadius: 12,
+      offset: const Offset(0, 2),
+    ),
+  ],
+),
       child: Column(
         children: [
           Padding(
@@ -2205,8 +2252,8 @@ class _ChatViewState extends State<ChatView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Approved Contract',
+                      Text(
+                    isCompleted ? 'Completed Contract' : 'Approved Contract',
                         style: TextStyle(
                           color: primary,
                           fontSize: 15,
@@ -2220,13 +2267,15 @@ class _ChatViewState extends State<ChatView> {
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE8F5E9),
+                          color: isCompleted
+    ? const Color(0xFF7C3AED).withOpacity(0.12)
+    : const Color(0xFFE8F5E9),
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: const Text(
-                          'Approved',
+                        child: Text(
+                       isCompleted ? 'Completed' : 'Approved',
                           style: TextStyle(
-                            color: Color(0xFF2E7D32),
+                            color: isCompleted ? const Color(0xFF7C3AED) : const Color(0xFF2E7D32),
                             fontWeight: FontWeight.w600,
                             fontSize: 12.5,
                           ),
@@ -2283,20 +2332,30 @@ class _ChatViewState extends State<ChatView> {
                   ],
                   const SizedBox(height: 12),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (amount.isNotEmpty)
-                        _buildPinnedContractMetaChip('Amount: $amount SAR'),
-                      if (deadline.isNotEmpty)
-                        _buildPinnedContractMetaChip('Deadline: $deadline'),
-                    ],
-                  ),
-                  _buildDeliverySection(contractStatus),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
+  spacing: 8,
+  runSpacing: 8,
+  children: [
+    if (amount.isNotEmpty)
+      _buildPinnedContractMetaChip('Amount: $amount SAR'),
+    if (deadline.isNotEmpty)
+      _buildPinnedContractMetaChip('Deadline: $deadline'),
+  ],
+),
+
+ if (isClientView) ...[
+  const SizedBox(height: 12),
+  _buildContractProgressSection(
+    contractStatus: contractStatus,
+    currentUserRole: 'client',
+  ),
+],
+
+if (!isLocked) _buildDeliverySection(contractStatus),
+
+const SizedBox(height: 12),
+SizedBox(
+  width: double.infinity,
+  child: OutlinedButton.icon(
                       onPressed: _downloadCurrentContract,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: primary,
@@ -2314,30 +2373,46 @@ class _ChatViewState extends State<ChatView> {
                       label: const Text('Download Contract'),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isTerminatingContract
-                          ? null
-                          : _requestTermination,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFC75A5A),
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(0, 44),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: const Icon(Icons.close_rounded),
-                      label: const Text('Terminate'),
-                    ),
-                  ),
-                ],
-              ),
+       if (isPaidDelivered) ...[
+  const SizedBox(height: 12),
+  SizedBox(
+    width: double.infinity,
+    child: ElevatedButton.icon(
+      onPressed: () {
+        print("Open Rating Screen");
+      },
+      icon: const Icon(Icons.star),
+      label: const Text('Rate & Review'),
+    ),
+  ),
+],
+                 if (!isPaidDelivered && !hideTerminateButton) ...[
+  const SizedBox(height: 10),
+  SizedBox(
+    width: double.infinity,
+    child: ElevatedButton.icon(
+      onPressed: _isTerminatingContract
+          ? null
+          : _requestTermination,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFFC75A5A),
+        foregroundColor: Colors.white,
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      icon: const Icon(Icons.close_rounded),
+      label: const Text('Terminate'),
+    ),
+  ),
+],
+              ],      
+             ), 
             ),
           ],
+
         ],
       ),
     );
@@ -2357,9 +2432,9 @@ class _ChatViewState extends State<ChatView> {
         .toString()
         .trim()
         .toLowerCase();
-    if (contractStatus != 'approved') {
-      return const SizedBox.shrink();
-    }
+    if (contractStatus != 'approved' && contractStatus != 'completed') {
+  return const SizedBox.shrink();
+}
 
     return Container(
       width: double.infinity,
@@ -2470,6 +2545,87 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
+Future<void> _openMoyasarPayment() async {
+  final contractData = _contractData;
+  if (contractData == null) return;
+
+  final payment = _asMap(contractData['payment']);
+  final amountText = (payment['amount'] ?? '').toString().trim();
+  final amount = double.tryParse(amountText);
+
+  if (amount == null || amount <= 0) {
+    await _showErrorDialog('Invalid payment amount');
+    return;
+  }
+
+  final amountInHalalas = (amount * 100).round();
+
+  final paymentConfig = PaymentConfig(
+    publishableApiKey: moyasarPublishableKey,
+    amount: amountInHalalas,
+    description: 'Contract Payment',
+  );
+
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('Payment')),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: CreditCard(
+            config: paymentConfig,
+            onPaymentResult: (result) async {
+              if (result is PaymentResponse &&
+                  result.status == PaymentStatus.paid) {
+                await _verifyPayment(result.id);
+
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Payment successful')),
+                  );
+                }
+              } else {
+                await _showErrorDialog('Payment failed');
+              }
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _verifyPayment(String paymentId) async {
+  final chatDoc = await FirebaseFirestore.instance
+      .collection('chat')
+      .doc(widget.chatId)
+      .get();
+
+  final requestId = _extractRequestId(chatDoc.data());
+
+  print('PAYMENT ID: $paymentId');
+  print('REQUEST ID: $requestId');
+  print('VERIFY URL: ${ApiConfig.baseUrl}/verify-payment');
+
+  final response = await http.post(
+    Uri.parse('${ApiConfig.baseUrl}/verify-payment'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'paymentId': paymentId,
+      'requestId': requestId,
+      'paidBy': _controller.currentUserId,
+    }),
+  );
+
+  print('VERIFY STATUS: ${response.statusCode}');
+  print('VERIFY BODY: ${response.body}');
+
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Exception('Payment verification failed');
+  }
+}
   Widget _buildDeliverySection(String contractStatus) {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
@@ -2592,7 +2748,7 @@ class _ChatViewState extends State<ChatView> {
               ),
             ),
             const SizedBox(height: 12),
-          ] else ...[
+       ] else if (deliveryStatus != 'paid_delivered') ...[
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -2765,7 +2921,7 @@ class _ChatViewState extends State<ChatView> {
               ),
             ),
           ],
-          if (deliveryStatus == 'approved_awaiting_payment') ...[
+         if (deliveryStatus == 'approved_awaiting_payment' && isClient) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
@@ -2793,13 +2949,20 @@ class _ChatViewState extends State<ChatView> {
                       color: Colors.black54,
                       fontSize: 12.5,
                       height: 1.35,
+
+
                     ),
                   ),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: null,
+                      onPressed: _isSavingContract
+                    ? null
+                     : () {
+                      debugPrint('PAY NOW CLICKED');
+                     _openMoyasarPayment();
+                     },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primary,
                         foregroundColor: Colors.white,

@@ -410,3 +410,14 @@ def create_approved_contract_chat_message(
         "unreadCountClient": unread_count_client,
         "unreadCountFreelancer": unread_count_freelancer,
     }, merge=True)
+
+def get_termination_grace_period_minutes(data=None, default_minutes=30):
+    if not data:
+        return default_minutes
+
+    minutes = data.get("terminationGraceMinutes")
+
+    if minutes is None:
+        return default_minutes
+
+    return minutes

@@ -1,4 +1,8 @@
 from flask import Blueprint, jsonify, request, send_file
+import os
+import requests
+from firebase_admin import firestore
+import firebase_service
 from firebase_service import get_request_by_id
 from pdf_service import generate_contract_pdf
 
@@ -442,3 +446,64 @@ def download_contract_pdf_api():
             "success": False,
             "error": str(error)
         }), 500
+
+
+
+MOYASAR_SECRET_KEY = "sk_test_c4eiqi5WGWheVnQFws8m6CEcLQqAebHyM64o46U1"
+
+
+@contract_routes.route("/verify-payment", methods=["POST"])
+def verify_payment_api():
+    try:
+        data = request.get_json(force=True)
+
+        payment_id = str(data.get("paymentId", "")).strip()
+        request_id = str(data.get("requestId", "")).strip()
+        paid_by = str(data.get("paidBy", "")).strip()
+
+        if not payment_id:
+            return jsonify({"success": False, "error": "paymentId is required"}), 400
+
+        if not request_id:
+            return jsonify({"success": False, "error": "requestId is required"}), 400
+
+        response = requests.get(
+            f"https://api.moyasar.com/v1/payments/{payment_id}",
+            auth=(MOYASAR_SECRET_KEY, "")
+        )
+
+        payment = response.json()
+
+        if response.status_code < 200 or response.status_code >= 300:
+            return jsonify({"success": False, "error": payment}), 400
+
+        if payment.get("status") != "paid":
+            return jsonify({
+                "success": False,
+                "paymentStatus": payment.get("status", "failed"),
+                "deliveryStatus": "approved_awaiting_payment"
+            }), 400
+
+        firebase_service.db.collection("requests").document(request_id).update({
+            "contractData.paymentData": {
+                "paymentStatus": "paid",
+                "transactionId": payment.get("id"),
+                "paidAt": firestore.SERVER_TIMESTAMP,
+                "paidBy": paid_by,
+                "amount": payment.get("amount")
+            },
+            "contractData.deliveryData.status": "paid_delivered",
+            "contractData.progressData.stage": "completed",
+            "contractData.progressData.updatedAt": firestore.SERVER_TIMESTAMP,
+            "contractData.progressData.updatedBy": "system",
+            "contractData.approval.contractStatus": "completed"
+        })
+
+        return jsonify({
+            "success": True,
+            "paymentStatus": "paid",
+            "deliveryStatus": "paid_delivered"
+        }), 200
+
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
