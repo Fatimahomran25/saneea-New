@@ -97,7 +97,7 @@ class RequestNotificationItem {
       case 'contract_termination_rejected':
         return 'rejected your termination request';
       case 'contract_payment_completed':
-        return 'completed the contract payment';
+        return 'The client completed the payment successfully';
       default:
         return '';
     }

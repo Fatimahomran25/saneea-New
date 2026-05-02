@@ -3070,7 +3070,7 @@ class _ChatViewState extends State<ChatView> {
 
     await _createContractNotification(
       type: 'contract_payment_completed',
-      actionText: 'completed the contract payment',
+      actionText: 'The client completed the payment successfully',
       requestId: requestId,
       chatData: chatData,
       contractData: returnedContractData is Map

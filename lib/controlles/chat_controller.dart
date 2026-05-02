@@ -540,6 +540,8 @@ class ChatController {
               otherUserRole = 'unknown';
             }
 
+            final chatPreviewText = _chatPreviewText(data);
+
             final userDoc = await _firestore
                 .collection('users')
                 .doc(otherUserId)
@@ -552,7 +554,7 @@ class ChatController {
                 'otherUserRole': otherUserRole,
                 'otherUserName': 'Unknown user',
                 'otherUserPhoto': '',
-                'lastMessage': data['lastMessage'] ?? '',
+                'lastMessage': chatPreviewText,
                 'updatedAt': data['updatedAt'] != null
                     ? (data['updatedAt'] as Timestamp).toDate()
                     : null,
@@ -583,7 +585,7 @@ class ChatController {
               'otherUserRole': otherUserRole,
               'otherUserName': otherUserName,
               'otherUserPhoto': otherUserPhoto,
-              'lastMessage': data['lastMessage'] ?? '',
+              'lastMessage': chatPreviewText,
               'updatedAt': data['updatedAt'] != null
                   ? (data['updatedAt'] as Timestamp).toDate()
                   : null,
@@ -627,5 +629,62 @@ class ChatController {
 
           return uniqueChats;
         });
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    return value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+  }
+
+  String _chatPreviewText(Map<String, dynamic> chatData) {
+    final contractData = _asMap(chatData['contractData']);
+    if (contractData.isNotEmpty) {
+      final approval = _asMap(contractData['approval']);
+      final deliveryData = _asMap(contractData['deliveryData']);
+      final paymentData = _asMap(contractData['paymentData']);
+      final contractStatus = (approval['contractStatus'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final deliveryStatus = (deliveryData['status'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final paymentStatus = (paymentData['paymentStatus'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      if (contractStatus == 'completed' ||
+          deliveryStatus == 'paid_delivered' ||
+          paymentStatus == 'paid') {
+        return 'Completed Contract';
+      }
+
+      if (contractStatus == 'termination_pending') {
+        return 'Termination Pending';
+      }
+
+      if (contractStatus == 'terminated') {
+        return 'Terminated Contract';
+      }
+
+      if (deliveryStatus == 'approved_awaiting_payment') {
+        return 'Awaiting Payment';
+      }
+
+      if (deliveryStatus == 'submitted') {
+        return 'Work Submitted';
+      }
+
+      if (deliveryStatus == 'changes_requested') {
+        return 'Changes Requested';
+      }
+
+      if (contractStatus == 'approved') {
+        return 'Approved Contract';
+      }
+    }
+
+    return (chatData['lastMessage'] ?? '').toString();
   }
 }
