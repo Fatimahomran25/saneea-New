@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import 'favorite_heart_button.dart';
+
 //تمت
 class FreelancerClientProfileView extends StatelessWidget {
   final String clientId;
@@ -57,6 +59,7 @@ class FreelancerClientProfileView extends StatelessWidget {
 
   Widget _reviewTile({
     required String name,
+    required String reviewerProfileUrl,
     required int rating,
     required String text,
   }) {
@@ -84,7 +87,18 @@ class FreelancerClientProfileView extends StatelessWidget {
                 color: const Color(0x66B8A9D9).withOpacity(0.6),
               ),
             ),
-            child: const Icon(Icons.person_outline, size: 20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: reviewerProfileUrl.trim().isNotEmpty
+                  ? Image.network(
+                      reviewerProfileUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) {
+                        return const Icon(Icons.person_outline, size: 20);
+                      },
+                    )
+                  : const Icon(Icons.person_outline, size: 20),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -133,7 +147,67 @@ class FreelancerClientProfileView extends StatelessWidget {
         .limit(50)
         .get();
 
-    return snap.docs.map((e) => e.data()).toList();
+    final missingReviewerIds = <String>{};
+    final baseReviews = snap.docs.map((e) => e.data()).toList();
+
+    for (final review in baseReviews) {
+      final reviewerProfileUrl =
+          ((review['reviewerProfileUrl'] ??
+                      review['senderProfileUrl'] ??
+                      review['senderProfileImage']) ??
+                  '')
+              .toString()
+              .trim();
+      final reviewerId = (review['reviewerId'] ?? '').toString().trim();
+
+      if (reviewerProfileUrl.isEmpty && reviewerId.isNotEmpty) {
+        missingReviewerIds.add(reviewerId);
+      }
+    }
+
+    final resolvedUrls = <String, String>{};
+    if (missingReviewerIds.isNotEmpty) {
+      final userDocs = await Future.wait(
+        missingReviewerIds.map((reviewerId) {
+          return FirebaseFirestore.instance
+              .collection('users')
+              .doc(reviewerId)
+              .get();
+        }),
+      );
+
+      for (final userDoc in userDocs) {
+        final userData = userDoc.data();
+        if (userData == null) continue;
+        final reviewerProfileUrl =
+            ((userData['photoUrl'] ?? userData['profile']) ?? '')
+                .toString()
+                .trim();
+        if (reviewerProfileUrl.isNotEmpty) {
+          resolvedUrls[userDoc.id] = reviewerProfileUrl;
+        }
+      }
+    }
+
+    return baseReviews.map((review) {
+      final enrichedReview = Map<String, dynamic>.from(review);
+      final reviewerProfileUrl =
+          ((enrichedReview['reviewerProfileUrl'] ??
+                      enrichedReview['senderProfileUrl'] ??
+                      enrichedReview['senderProfileImage']) ??
+                  '')
+              .toString()
+              .trim();
+      final reviewerId = (enrichedReview['reviewerId'] ?? '').toString().trim();
+
+      if (reviewerProfileUrl.isEmpty &&
+          reviewerId.isNotEmpty &&
+          resolvedUrls.containsKey(reviewerId)) {
+        enrichedReview['reviewerProfileUrl'] = resolvedUrls[reviewerId];
+      }
+
+      return enrichedReview;
+    }).toList();
   }
 
   @override
@@ -152,11 +226,11 @@ class FreelancerClientProfileView extends StatelessWidget {
           return Scaffold(
             backgroundColor: Colors.white,
             appBar: AppBar(
-              title: const Text('Client Profile'),
+              title: const Text('Profile'),
+              centerTitle: true,
               backgroundColor: Colors.white,
               foregroundColor: primary,
               elevation: 0,
-              centerTitle: true,
             ),
             body: Center(child: Text('Error: ${snapshot.error}')),
           );
@@ -168,11 +242,11 @@ class FreelancerClientProfileView extends StatelessWidget {
           return Scaffold(
             backgroundColor: Colors.white,
             appBar: AppBar(
-              title: const Text('Client Profile'),
+              title: const Text('Profile'),
+              centerTitle: true,
               backgroundColor: Colors.white,
               foregroundColor: primary,
               elevation: 0,
-              centerTitle: true,
             ),
             body: const Center(child: Text('Client profile not found')),
           );
@@ -193,11 +267,27 @@ class FreelancerClientProfileView extends StatelessWidget {
         return Scaffold(
           backgroundColor: Colors.white,
           appBar: AppBar(
-            title: const Text('Client Profile'),
+            title: const Text('Profile'),
+            centerTitle: true,
             backgroundColor: Colors.white,
             foregroundColor: primary,
             elevation: 0,
-            centerTitle: true,
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: FavoriteHeartButton(
+                  favoriteUserId: clientId,
+                  favoriteUserName: displayName,
+                  favoriteUserRole: 'client',
+                  favoriteUserProfileImage: photoUrl,
+                  serviceField: 'Client',
+                  rating: rating,
+                  iconSize: 24,
+                  padding: const EdgeInsets.all(10),
+                  backgroundColor: const Color(0xFFF6F2FB),
+                ),
+              ),
+            ],
           ),
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -328,6 +418,12 @@ class FreelancerClientProfileView extends StatelessWidget {
                             ...reviews.map((review) {
                               final reviewerName =
                                   (review['reviewerName'] ?? 'User').toString();
+                              final reviewerProfileUrl =
+                                  ((review['reviewerProfileUrl'] ??
+                                              review['senderProfileUrl'] ??
+                                              review['senderProfileImage']) ??
+                                          '')
+                                      .toString();
                               final reviewText = (review['text'] ?? '')
                                   .toString();
 
@@ -340,6 +436,7 @@ class FreelancerClientProfileView extends StatelessWidget {
 
                               return _reviewTile(
                                 name: reviewerName,
+                                reviewerProfileUrl: reviewerProfileUrl,
                                 rating: reviewRating.clamp(0, 5),
                                 text: reviewText,
                               );

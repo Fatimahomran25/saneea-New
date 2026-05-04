@@ -1,5 +1,6 @@
 import os
 import json
+import traceback
 from openai import OpenAI
 from datetime import datetime, timedelta
 
@@ -294,118 +295,123 @@ Instructions:
 
 
 def generate_contract_from_data(request_data):
-    print("AI working")
+    print("DEBUG CONTROLLER TRACEBACK VERSION ACTIVE")
+    try:
+        print("AI working")
+        service_data = {
+            "description": request_data.get("description"),
+            "aiText": None,
+        }
+        proposal_text = request_data.get("proposalText")
+        if isinstance(proposal_text, str) and proposal_text.strip():
+            service_data["proposalText"] = proposal_text.strip()
 
-    service_data = {
-        "description": request_data.get("description"),
-        "aiText": None,
-    }
-    proposal_text = request_data.get("proposalText")
-    if isinstance(proposal_text, str) and proposal_text.strip():
-        service_data["proposalText"] = proposal_text.strip()
-
-    ai_result = generate_contract_ai({
-        "source": request_data.get("source"),
-        "announcementId": request_data.get("announcementId"),
-        "proposalId": request_data.get("proposalId"),
-        "proposalText": request_data.get("proposalText"),
-        "client": request_data.get("clientName") or request_data.get("client"),
-        "freelancer": request_data.get("freelancerName") or request_data.get("freelancer"),
-        "service_type": request_data.get("serviceType") or request_data.get("category"),
-        "description": request_data.get("description"),
-        "amount": request_data.get("amount") or request_data.get("budget"),
-        "currency": request_data.get("currency"),
-        "deadline": request_data.get("deadline"),
-        "extra_requirements": request_data.get("extraRequirements"),
-    })
-
-    print("AI RESULT =>", ai_result)
-
-    created_at = datetime.now()
-
-    contract_data = {
-        "parties": {
-            "clientName": request_data.get("clientName") or request_data.get("client", "Client"),
-            "freelancerName": request_data.get("freelancerName") or request_data.get("freelancer", "Freelancer"),
-        },
-        "meta": {
-            "title": ai_result["title"],
-            "summary": ai_result.get("summary", []),
-            "warnings": ai_result.get("warnings", []),
-            "source": "ai",
-            "model": OPENAI_MODEL,
-            "createdAt": created_at.strftime("%d/%m/%Y"),
-            "createdAtIso": created_at.isoformat(),
-            "terminationEligibleUntil": (
-                created_at
-                + timedelta(
-                    minutes=get_termination_grace_period_minutes(
-                        default_minutes=DEFAULT_TERMINATION_GRACE_PERIOD_MINUTES
-                    )
-                )
-            ).isoformat(),
-        },
-        "approval": {
-            "clientApproved": False,
-            "freelancerApproved": False,
-            "contractStatus": "draft",
-            "edited": False,
-        },
-        "signatures": {
-            "clientSignature": None,
-            "freelancerSignature": None,
-        },
-        "service": service_data,
-        "payment": {
+        ai_result = generate_contract_ai({
+            "source": request_data.get("source"),
+            "announcementId": request_data.get("announcementId"),
+            "proposalId": request_data.get("proposalId"),
+            "proposalText": request_data.get("proposalText"),
+            "client": request_data.get("clientName") or request_data.get("client"),
+            "freelancer": request_data.get("freelancerName") or request_data.get("freelancer"),
+            "service_type": request_data.get("serviceType") or request_data.get("category"),
+            "description": request_data.get("description"),
             "amount": request_data.get("amount") or request_data.get("budget"),
             "currency": request_data.get("currency"),
-        },
-        "timeline": {
             "deadline": request_data.get("deadline"),
-        },
-        "progressData": {
-            "stage": "started",
-            "updatedAt": created_at.isoformat(),
-            "updatedBy": "",
-        },
-        "deliveryData": {
-            "status": "not_submitted",
-            "previewImageUrls": [],
-            "submittedBy": "",
-            "submittedAt": "",
-            "changesRequestedBy": "",
-            "changesRequestedAt": "",
-            "approvedBy": "",
-            "approvedAt": "",
-        },
-        "adminReview": {
-            "status": "none",
-            "requestedBy": "",
-            "requestedAt": "",
-            "reasonType": "",
-            "reasonText": "",
-            "relatedArea": "",
-        },
-        "customClauses": [
-            {
-                "title": clause.get("title", ""),
-                "content": clause.get("text", ""),
-                "category": clause.get("category", "other"),
-                "optional": clause.get("optional", False),
-                "source": "ai",
-            }
-            for clause in ai_result.get("clauses", [])
-            if isinstance(clause, dict)
-        ],
-    }
-    contract_data["service"]["aiText"] = ai_result["contractText"]
+            "extra_requirements": request_data.get("extraRequirements"),
+        })
 
-    return {
-        "success": True,
-        "contractData": contract_data,
-        "contractText": ai_result["contractText"],
-        "summary": ai_result.get("summary", []),
-    }
+        print("AI RESULT =>", ai_result)
+
+        created_at = datetime.now()
+
+        contract_data = {
+            "parties": {
+                "clientName": request_data.get("clientName") or request_data.get("client", "Client"),
+                "freelancerName": request_data.get("freelancerName") or request_data.get("freelancer", "Freelancer"),
+            },
+            "meta": {
+                "title": ai_result["title"],
+                "summary": ai_result.get("summary", []),
+                "warnings": ai_result.get("warnings", []),
+                "source": "ai",
+                "model": OPENAI_MODEL,
+                "createdAt": created_at.strftime("%d/%m/%Y"),
+                "createdAtIso": created_at.isoformat(),
+                "terminationEligibleUntil": (
+                    created_at
+                    + timedelta(
+                        minutes=get_termination_grace_period_minutes(
+                            default_minutes=DEFAULT_TERMINATION_GRACE_PERIOD_MINUTES
+                        )
+                    )
+                ).isoformat(),
+            },
+            "approval": {
+                "clientApproved": False,
+                "freelancerApproved": False,
+                "contractStatus": "draft",
+                "edited": False,
+            },
+            "signatures": {
+                "clientSignature": None,
+                "freelancerSignature": None,
+            },
+            "service": service_data,
+            "payment": {
+                "amount": request_data.get("amount") or request_data.get("budget"),
+                "currency": request_data.get("currency"),
+            },
+            "timeline": {
+                "deadline": request_data.get("deadline"),
+            },
+            "progressData": {
+                "stage": "started",
+                "updatedAt": created_at.isoformat(),
+                "updatedBy": "",
+            },
+            "deliveryData": {
+                "status": "not_submitted",
+                "previewImageUrls": [],
+                "submittedBy": "",
+                "submittedAt": "",
+                "changesRequestedBy": "",
+                "changesRequestedAt": "",
+                "approvedBy": "",
+                "approvedAt": "",
+            },
+            "adminReview": {
+                "status": "none",
+                "requestedBy": "",
+                "requestedAt": "",
+                "reasonType": "",
+                "reasonText": "",
+                "relatedArea": "",
+            },
+            "customClauses": [
+                {
+                    "title": clause.get("title", ""),
+                    "content": clause.get("text", ""),
+                    "category": clause.get("category", "other"),
+                    "optional": clause.get("optional", False),
+                    "source": "ai",
+                }
+                for clause in ai_result.get("clauses", [])
+                if isinstance(clause, dict)
+            ],
+        }
+        contract_data["service"]["aiText"] = ai_result["contractText"]
+
+        return {
+            "success": True,
+            "contractData": contract_data,
+            "contractText": ai_result["contractText"],
+            "summary": ai_result.get("summary", []),
+        }
+    except Exception as error:
+        print("ERROR in AI contract generation:", error)
+        traceback.print_exc()
+        raise
 
 
 def generate_contract_from_request_id(request_id, proposal_id=None):

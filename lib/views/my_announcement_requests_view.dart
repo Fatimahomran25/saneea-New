@@ -6,6 +6,7 @@ import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
 import 'chat_view.dart';
 import 'freelancer_home.dart';
+import 'chat_action_button.dart';
 
 class MyAnnouncementRequestsView extends StatefulWidget {
   final bool fromAnnouncements;
@@ -231,31 +232,9 @@ class _MyAnnouncementRequestsViewState
     required bool isLoading,
     required VoidCallback onPressed,
   }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 42,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-        ),
-        onPressed: onPressed,
-        child: hasChat
-            ? const Icon(Icons.chat_bubble_outline, size: 18)
-            : isLoading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(Icons.chat_bubble_outline, size: 18),
-      ),
+    return ChatActionButton(
+      onPressed: onPressed,
+      isLoading: !hasChat && isLoading,
     );
   }
 

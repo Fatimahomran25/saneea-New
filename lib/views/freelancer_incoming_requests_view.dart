@@ -5,6 +5,7 @@ import '../controlles/freelancer_requests_controller.dart';
 import 'freelancer_client_profile_view.dart';
 import '../controlles/chat_controller.dart';
 import 'chat_view.dart';
+import 'chat_action_button.dart';
 
 class FreelancerIncomingRequestsView extends StatefulWidget {
   final String? initialRequestId;
@@ -123,23 +124,11 @@ class _FreelancerIncomingRequestsViewState
   }) {
     final storedChatId = (initialChatId ?? '').trim();
     if (storedChatId.isNotEmpty) {
-      return SizedBox(
-        width: double.infinity,
-        height: 42,
-        child: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: primary,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-          ),
-          onPressed: () => _openExistingChat(
-            requestId: requestId,
-            clientId: clientId,
-            clientName: clientName,
-          ),
-          child: const Icon(Icons.chat_bubble_outline, size: 18),
+      return ChatActionButton(
+        onPressed: () => _openExistingChat(
+          requestId: requestId,
+          clientId: clientId,
+          clientName: clientName,
         ),
       );
     }
@@ -152,35 +141,13 @@ class _FreelancerIncomingRequestsViewState
         final isLoading =
             snapshot.connectionState == ConnectionState.waiting && !hasChat;
 
-        return SizedBox(
-          width: double.infinity,
-          height: 42,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-              ),
-            ),
-            onPressed: () => _openExistingChat(
-              requestId: requestId,
-              clientId: clientId,
-              clientName: clientName,
-            ),
-            child: hasChat
-                ? const Icon(Icons.chat_bubble_outline, size: 18)
-                : isLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.chat_bubble_outline, size: 18),
+        return ChatActionButton(
+          onPressed: () => _openExistingChat(
+            requestId: requestId,
+            clientId: clientId,
+            clientName: clientName,
           ),
+          isLoading: !hasChat && isLoading,
         );
       },
     );

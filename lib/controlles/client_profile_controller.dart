@@ -109,9 +109,72 @@ class ClientProfileController extends ChangeNotifier {
         .limit(50)
         .get();
 
-    return snap.docs
-        .map((doc) => ClientReviewModel.fromFirestore(doc.data()))
+    final enrichedReviews = await _withResolvedReviewerProfileUrls(snap.docs);
+
+    return enrichedReviews
+        .map((data) => ClientReviewModel.fromFirestore(data))
         .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> _withResolvedReviewerProfileUrls(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) async {
+    final missingReviewerIds = <String>{};
+
+    for (final doc in docs) {
+      final data = doc.data();
+      final reviewerProfileUrl = ((data['reviewerProfileUrl'] ??
+                  data['senderProfileUrl'] ??
+                  data['senderProfileImage']) ??
+              '')
+          .toString()
+          .trim();
+      final reviewerId = (data['reviewerId'] ?? '').toString().trim();
+
+      if (reviewerProfileUrl.isEmpty && reviewerId.isNotEmpty) {
+        missingReviewerIds.add(reviewerId);
+      }
+    }
+
+    final resolvedUrls = <String, String>{};
+    if (missingReviewerIds.isNotEmpty) {
+      final userDocs = await Future.wait(
+        missingReviewerIds.map((reviewerId) {
+          return _db.collection('users').doc(reviewerId).get();
+        }),
+      );
+
+      for (final userDoc in userDocs) {
+        final userData = userDoc.data();
+        if (userData == null) continue;
+        final reviewerId = userDoc.id;
+        final profileUrl = ((userData['photoUrl'] ?? userData['profile']) ?? '')
+            .toString()
+            .trim();
+        if (profileUrl.isNotEmpty) {
+          resolvedUrls[reviewerId] = profileUrl;
+        }
+      }
+    }
+
+    return docs.map((doc) {
+      final data = Map<String, dynamic>.from(doc.data());
+      final reviewerProfileUrl = ((data['reviewerProfileUrl'] ??
+                  data['senderProfileUrl'] ??
+                  data['senderProfileImage']) ??
+              '')
+          .toString()
+          .trim();
+      final reviewerId = (data['reviewerId'] ?? '').toString().trim();
+
+      if (reviewerProfileUrl.isEmpty &&
+          reviewerId.isNotEmpty &&
+          resolvedUrls.containsKey(reviewerId)) {
+        data['reviewerProfileUrl'] = resolvedUrls[reviewerId];
+      }
+
+      return data;
+    }).toList();
   }
 
   double _avgRating(List<ClientReviewModel> list) {

@@ -98,6 +98,8 @@ class RequestNotificationItem {
         return 'rejected your termination request';
       case 'contract_payment_completed':
         return 'The client completed the payment successfully';
+      case 'rating_review':
+        return 'sent you a rating and review';
       default:
         return '';
     }
@@ -119,6 +121,8 @@ class RequestNotificationItem {
       case 'contract_termination_rejected':
       case 'contract_payment_completed':
         return 'Contract Agreement';
+      case 'rating_review':
+        return 'Completed service review';
       default:
         return '';
     }

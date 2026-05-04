@@ -18,6 +18,7 @@ import 'chat_list_view.dart';
 import '../controlles/notification_navigation_service.dart';
 import '../controlles/request_notifications_controller.dart';
 import 'request_notifications_sheet.dart';
+import 'favorites_list_view.dart';
 
 class ClientHomeScreen extends StatefulWidget {
   const ClientHomeScreen({super.key});
@@ -28,6 +29,7 @@ class ClientHomeScreen extends StatefulWidget {
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> {
   static const Color _primary = Color(0xFF5A3E9E);
+  static const Color _inactiveNav = Color(0xFF9A92B8);
 
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _categoryScrollController = ScrollController();
@@ -188,6 +190,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const ContractsListScreen()),
+    );
+  }
+
+  void _openFavorites() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FavoritesListView()),
     );
   }
 
@@ -705,6 +714,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         primary: _primary,
         onCenterTap: _openAnnouncement,
         onContractsTap: _openContracts,
+        onFavoritesTap: _openFavorites,
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -1206,12 +1216,40 @@ class _BottomNavigationBar extends StatelessWidget {
   final Color primary;
   final VoidCallback onCenterTap;
   final VoidCallback onContractsTap;
+  final VoidCallback onFavoritesTap;
 
   const _BottomNavigationBar({
     required this.primary,
     required this.onCenterTap,
     required this.onContractsTap,
+    required this.onFavoritesTap,
   });
+
+  Widget _filledCircle({
+    required Color color,
+    required IconData icon,
+    required double iconSize,
+    required double dimension,
+  }) {
+    return Container(
+      width: dimension,
+      height: dimension,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Icon(icon, color: Colors.white, size: iconSize),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1246,7 +1284,11 @@ class _BottomNavigationBar extends StatelessWidget {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    Icon(Icons.forum_outlined, color: primary, size: 28),
+                    Icon(
+                      Icons.forum_outlined,
+                      color: _ClientHomeScreenState._inactiveNav,
+                      size: 28,
+                    ),
                     if (unreadCount > 0)
                       Positioned(
                         right: -8,
@@ -1287,14 +1329,19 @@ class _BottomNavigationBar extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const MyRequestsView()),
               );
             },
-            child: Icon(Icons.inbox_outlined, color: primary, size: 28),
+            child: Icon(
+              Icons.inbox_outlined,
+              color: _ClientHomeScreenState._inactiveNav,
+              size: 28,
+            ),
           ),
           GestureDetector(
             onTap: onCenterTap,
-            child: CircleAvatar(
-              radius: 30,
-              backgroundColor: primary,
-              child: const Icon(Icons.add, size: 34, color: Colors.white),
+            child: _filledCircle(
+              color: primary,
+              icon: Icons.add_rounded,
+              iconSize: 32,
+              dimension: 60,
             ),
           ),
           GestureDetector(
@@ -1305,13 +1352,26 @@ class _BottomNavigationBar extends StatelessWidget {
               child: Center(
                 child: Icon(
                   Icons.description_outlined,
-                  color: primary,
+                  color: _ClientHomeScreenState._inactiveNav,
                   size: 27,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 26),
+          GestureDetector(
+            onTap: onFavoritesTap,
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: Icon(
+                  Icons.favorite_border_rounded,
+                  color: _ClientHomeScreenState._inactiveNav,
+                  size: 27,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1325,6 +1385,7 @@ class FreelancerCardSimple extends StatelessWidget {
   final String photoUrl;
   final VoidCallback onTap;
   final Widget? requestAction;
+  final Widget? trailingTopAction;
 
   final double imageRadius;
   final double nameFontSize;
@@ -1340,6 +1401,7 @@ class FreelancerCardSimple extends StatelessWidget {
     required this.photoUrl,
     required this.onTap,
     this.requestAction,
+    this.trailingTopAction,
     this.imageRadius = 24,
     this.nameFontSize = 15,
     this.roleFontSize = 14,
@@ -1381,13 +1443,24 @@ class FreelancerCardSimple extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                name,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: nameFontSize,
-                  color: Colors.black,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: nameFontSize,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                  if (trailingTopAction != null) ...[
+                    const SizedBox(width: 6),
+                    trailingTopAction!,
+                  ],
+                ],
               ),
               const SizedBox(height: 4),
               Text(
@@ -1430,7 +1503,10 @@ class FreelancerCardSimple extends StatelessWidget {
         ),
         if (requestAction != null) ...[
           const SizedBox(width: 12),
-          requestAction!,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [if (requestAction != null) requestAction!],
+          ),
         ],
       ],
     );

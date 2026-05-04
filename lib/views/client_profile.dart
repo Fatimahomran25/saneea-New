@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../controlles/client_profile_controller.dart';
+import 'favorite_heart_button.dart';
 
 class ClientProfile extends StatelessWidget {
   final String? userId;
@@ -105,19 +106,36 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
+        title: const Text('Profile'),
+        centerTitle: true,
         backgroundColor: Colors.white,
+        foregroundColor: ClientProfile.kPurple,
         elevation: 0,
-        leading: const BackButton(color: Colors.black),
-        actions: c.isOwnProfile
-            ? [
-                IconButton(
-                  tooltip: "Log out",
-                  onPressed: () => c.logout(context),
-                  icon: const Icon(Icons.logout, color: Colors.red),
-                ),
-                const SizedBox(width: 6),
-              ]
-            : null,
+        actions: [
+          if (!c.isOwnProfile && c.profile != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: FavoriteHeartButton(
+                favoriteUserId: c.profile!.uid,
+                favoriteUserName: c.profile!.name,
+                favoriteUserRole: 'client',
+                favoriteUserProfileImage: c.profile!.photoUrl ?? '',
+                serviceField: 'Client',
+                rating: c.profile!.rating,
+                iconSize: 24,
+                padding: const EdgeInsets.all(10),
+                backgroundColor: const Color(0xFFF6F2FB),
+              ),
+            ),
+          if (c.isOwnProfile) ...[
+            IconButton(
+              tooltip: "Log out",
+              onPressed: () => c.logout(context),
+              icon: const Icon(Icons.logout, color: Colors.red),
+            ),
+            const SizedBox(width: 6),
+          ],
+        ],
       ),
       body: c.isOwnProfile
           ? _buildOwnProfile(context, c, p, purple, avatar)
@@ -262,6 +280,7 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
                                     padding: const EdgeInsets.only(bottom: 12),
                                     child: _ReviewFigmaTile(
                                       name: r.reviewerName,
+                                      reviewerProfileUrl: r.reviewerProfileUrl,
                                       rating: r.rating,
                                       text: r.text,
                                     ),
@@ -460,6 +479,7 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: _ReviewFigmaTile(
                         name: r.reviewerName,
+                        reviewerProfileUrl: r.reviewerProfileUrl,
                         rating: r.rating,
                         text: r.text,
                       ),
@@ -862,11 +882,13 @@ class _ReadOnlyBlock extends StatelessWidget {
 class _ReviewFigmaTile extends StatelessWidget {
   const _ReviewFigmaTile({
     required this.name,
+    required this.reviewerProfileUrl,
     required this.rating,
     required this.text,
   });
 
   final String name;
+  final String reviewerProfileUrl;
   final int rating;
   final String text;
 
@@ -893,7 +915,18 @@ class _ReviewFigmaTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: ClientProfile.kBorder.withOpacity(0.6)),
             ),
-            child: const Icon(Icons.person_outline, size: 20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: reviewerProfileUrl.trim().isNotEmpty
+                  ? Image.network(
+                      reviewerProfileUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) {
+                        return const Icon(Icons.person_outline, size: 20);
+                      },
+                    )
+                  : const Icon(Icons.person_outline, size: 20),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/recommendation_model.dart';
+import 'favorite_heart_button.dart';
 import 'request_action_button.dart';
 
 //تمت
@@ -125,11 +126,27 @@ class ClientFreelancerProfileView extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Freelancer Profile'),
+        title: const Text('Profile'),
+        centerTitle: true,
         backgroundColor: Colors.white,
         foregroundColor: primary,
         elevation: 0,
-        centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: FavoriteHeartButton(
+              favoriteUserId: freelancer.id,
+              favoriteUserName: freelancer.name,
+              favoriteUserRole: 'freelancer',
+              favoriteUserProfileImage: freelancer.profileImage ?? '',
+              serviceField: freelancer.serviceField,
+              rating: freelancer.rating,
+              iconSize: 24,
+              padding: const EdgeInsets.all(10),
+              backgroundColor: const Color(0xFFF6F2FB),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),

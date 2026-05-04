@@ -13,6 +13,7 @@ import '../controlles/chat_controller.dart';
 import '../controlles/notification_navigation_service.dart';
 import '../controlles/request_notifications_controller.dart';
 import 'request_notifications_sheet.dart';
+import 'favorites_list_view.dart';
 
 class FreelancerHomeView extends StatefulWidget {
   const FreelancerHomeView({super.key});
@@ -23,6 +24,7 @@ class FreelancerHomeView extends StatefulWidget {
 
 class _FreelancerHomeViewState extends State<FreelancerHomeView> {
   static const primary = Color(0xFF5A3E9E);
+  static const Color _inactiveNav = Color(0xFF9A92B8);
 
   final TextEditingController _searchController = TextEditingController();
   final FreelancerProfileController _profileController =
@@ -65,9 +67,14 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
   void _openContracts() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => const ContractsListScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const ContractsListScreen()),
+    );
+  }
+
+  void _openFavorites() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FavoritesListView()),
     );
   }
 
@@ -193,9 +200,15 @@ class _FreelancerHomeViewState extends State<FreelancerHomeView> {
       backgroundColor: Colors.white,
       bottomNavigationBar: _FreelancerBottomNavigationBar(
         primary: primary,
-        onChatsTap: () => _comingSoon('Chats'),
+        onChatsTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => ChatListView()),
+          );
+        },
         onHomeTap: () {},
         onContractsTap: _openContracts,
+        onFavoritesTap: _openFavorites,
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -724,13 +737,41 @@ class _FreelancerBottomNavigationBar extends StatelessWidget {
   final VoidCallback onChatsTap;
   final VoidCallback onHomeTap;
   final VoidCallback onContractsTap;
+  final VoidCallback onFavoritesTap;
 
   const _FreelancerBottomNavigationBar({
     required this.primary,
     required this.onChatsTap,
     required this.onHomeTap,
     required this.onContractsTap,
+    required this.onFavoritesTap,
   });
+
+  Widget _filledCircle({
+    required Color color,
+    required IconData icon,
+    required double iconSize,
+    required double dimension,
+  }) {
+    return Container(
+      width: dimension,
+      height: dimension,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Icon(icon, color: Colors.white, size: iconSize),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -756,16 +797,15 @@ class _FreelancerBottomNavigationBar extends StatelessWidget {
               final unreadCount = snapshot.data ?? 0;
 
               return GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => ChatListView()),
-                  );
-                },
+                onTap: onChatsTap,
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    Icon(Icons.chat_bubble_outline, color: primary, size: 26),
+                    Icon(
+                      Icons.forum_outlined,
+                      color: _FreelancerHomeViewState._inactiveNav,
+                      size: 28,
+                    ),
                     if (unreadCount > 0)
                       Positioned(
                         right: -8,
@@ -801,15 +841,40 @@ class _FreelancerBottomNavigationBar extends StatelessWidget {
           ),
           GestureDetector(
             onTap: onHomeTap,
-            child: CircleAvatar(
-              radius: 30,
-              backgroundColor: primary,
-              child: const Icon(Icons.home, size: 28, color: Colors.white),
+            child: _filledCircle(
+              color: primary,
+              icon: Icons.home_rounded,
+              iconSize: 25,
+              dimension: 50,
             ),
           ),
           GestureDetector(
             onTap: onContractsTap,
-            child: Icon(Icons.description_outlined, color: primary, size: 26),
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: Icon(
+                  Icons.description_outlined,
+                  color: _FreelancerHomeViewState._inactiveNav,
+                  size: 27,
+                ),
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: onFavoritesTap,
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: Icon(
+                  Icons.favorite_border_rounded,
+                  color: _FreelancerHomeViewState._inactiveNav,
+                  size: 27,
+                ),
+              ),
+            ),
           ),
         ],
       ),

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:saneea_app/views/client_home_screen.dart';
-import '../models/recommendation_model.dart';
-import '../controlles/recommendation_controller.dart';
-import 'freelancer_profile.dart';
 
+import '../models/recommendation_model.dart';
+import 'freelancer_profile.dart';
 import 'request_action_button.dart';
 
 class RecommendationResultsView extends StatefulWidget {
@@ -23,8 +22,6 @@ class RecommendationResultsView extends StatefulWidget {
 
 class _RecommendationResultsViewState extends State<RecommendationResultsView> {
   static const primary = Color(0xFF5A3E9E);
-
-  final RecommendationController _controller = RecommendationController();
 
   Widget _buildRatingStars(double rating) {
     return Row(
@@ -50,7 +47,6 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
         foregroundColor: primary,
         elevation: 0,
         centerTitle: true,
-
         actions: [
           IconButton(
             icon: const Icon(
@@ -81,7 +77,7 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
               separatorBuilder: (_, __) => const SizedBox(height: 14),
               itemBuilder: (context, index) {
                 final item = widget.results[index];
-                final f = item.freelancer;
+                final freelancer = item.freelancer;
 
                 return Container(
                   padding: const EdgeInsets.all(14),
@@ -96,12 +92,17 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                         radius: 28,
                         backgroundColor: Colors.white,
                         backgroundImage:
-                            f.profileImage != null && f.profileImage!.isNotEmpty
-                            ? NetworkImage(f.profileImage!)
+                            freelancer.profileImage != null &&
+                                freelancer.profileImage!.isNotEmpty
+                            ? NetworkImage(freelancer.profileImage!)
                             : null,
-                        child:
-                            (f.profileImage == null || f.profileImage!.isEmpty)
-                            ? const Icon(Icons.person, color: primary, size: 28)
+                        child: (freelancer.profileImage == null ||
+                                freelancer.profileImage!.isEmpty)
+                            ? const Icon(
+                                Icons.person,
+                                color: primary,
+                                size: 28,
+                              )
                             : null,
                       ),
                       const SizedBox(width: 14),
@@ -110,7 +111,9 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              f.name.isEmpty ? 'Freelancer' : f.name,
+                              freelancer.name.isEmpty
+                                  ? 'Freelancer'
+                                  : freelancer.name,
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
@@ -119,16 +122,13 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              f.serviceField,
+                              freelancer.serviceField,
                               style: const TextStyle(
                                 color: primary,
                                 fontSize: 14,
                               ),
                             ),
                             const SizedBox(height: 6),
-                            // 🔧 تعديل فاطمه
-                            // تم حذف عرض matchedWorks لأنه لم يعد مستخدم
-                            // واستبداله بعرض matchPercentage كنسبة مئوية
                             if (item.matchPercentage > 0)
                               Text(
                                 'Match: ${item.matchPercentage}%',
@@ -138,14 +138,8 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            // 🔧 نهاية تعديلات فاطمه
                             const SizedBox(height: 6),
-                            // 🔧 تعديل فاطمه (بداية التعديل)
-                            // تم تغيير شكل عرض الخبرة:
-                            // - حذف Container
-                            // - تغيير النص من Experience إلى Experienced
-                            // - جعله نص عادي بنفس ستايل Match
-                            if (item.freelancer.hasExperience)
+                            if (freelancer.hasExperience)
                               const Text(
                                 'Experienced',
                                 style: TextStyle(
@@ -154,8 +148,6 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-
-                            // 🔧 تعديل فاطمه (نهاية التعديل)
                             _buildRatingStars(item.rating),
                             const SizedBox(height: 6),
                             InkWell(
@@ -163,8 +155,9 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) =>
-                                        FreelancerProfileView(userId: f.id),
+                                    builder: (_) => FreelancerProfileView(
+                                      userId: freelancer.id,
+                                    ),
                                   ),
                                 );
                               },
@@ -183,11 +176,11 @@ class _RecommendationResultsViewState extends State<RecommendationResultsView> {
                       ),
                       const SizedBox(width: 10),
                       SendRequestButton(
-                        freelancerId: f.id,
-                        freelancerName: f.name,
+                        freelancerId: freelancer.id,
+                        freelancerName: freelancer.name,
                         iconOnly: true,
                         onChanged: () {
-                          setState(() {}); // 🔥 يخلي الصفحة تحدث نفسها
+                          setState(() {});
                         },
                       ),
                     ],

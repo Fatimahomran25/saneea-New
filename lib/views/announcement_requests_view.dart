@@ -4,6 +4,7 @@ import '../controlles/chat_controller.dart';
 import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
 import 'chat_view.dart';
+import 'chat_action_button.dart';
 
 class AnnouncementRequestsView extends StatefulWidget {
   final String announcementId;
@@ -115,32 +116,12 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
         final isLoading =
             proposalSnapshot.connectionState == ConnectionState.waiting;
 
-        return SizedBox(
-          width: double.infinity,
-          height: 42,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-              ),
-            ),
-            onPressed: () => _openAcceptedProposalChat(
-              request: request,
-              initialChatId: proposalChatId,
-            ),
-            child: isLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.chat_bubble_outline, size: 18),
+        return ChatActionButton(
+          onPressed: () => _openAcceptedProposalChat(
+            request: request,
+            initialChatId: proposalChatId,
           ),
+          isLoading: isLoading,
         );
       },
     );
@@ -173,6 +154,7 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,

@@ -28,6 +28,7 @@ class MessagingController {
     'contract_termination_rejected',
     'contract_terminated',
     'contract_payment_completed',
+    'rating_review',
   };
 
   final FirebaseAuth _auth = FirebaseAuth.instance;

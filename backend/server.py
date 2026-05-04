@@ -1,9 +1,12 @@
 print("FILE STARTED")
 
 import os
+from dotenv import load_dotenv
 
 os.environ["HF_HOME"] = "D:/huggingface"
 os.environ["TRANSFORMERS_CACHE"] = "D:/huggingface"
+load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from flask import Flask
 

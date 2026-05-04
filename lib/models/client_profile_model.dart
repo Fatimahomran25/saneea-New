@@ -80,11 +80,13 @@ class ClientProfileModel {
 
 class ClientReviewModel {
   final String reviewerName;
+  final String reviewerProfileUrl;
   final int rating; // 1..5
   final String text;
 
   const ClientReviewModel({
     required this.reviewerName,
+    required this.reviewerProfileUrl,
     required this.rating,
     required this.text,
   });
@@ -95,6 +97,11 @@ class ClientReviewModel {
 
     return ClientReviewModel(
       reviewerName: (data['reviewerName'] ?? 'User').toString(),
+      reviewerProfileUrl: ((data['reviewerProfileUrl'] ??
+                  data['senderProfileUrl'] ??
+                  data['senderProfileImage']) ??
+              '')
+          .toString(),
       rating: ratingInt.clamp(0, 5),
       text: (data['text'] ?? '').toString(),
     );

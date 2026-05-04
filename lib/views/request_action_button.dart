@@ -5,6 +5,7 @@ import 'anouncment_view.dart';
 import 'my_requests_view.dart';
 import '../views/chat_view.dart';
 import '../controlles/chat_controller.dart';
+import 'chat_action_button.dart';
 
 class SendRequestButton extends StatefulWidget {
   final String freelancerId;
@@ -321,17 +322,8 @@ class _SendRequestButtonState extends State<SendRequestButton> {
     // 🔹 الحالة الثانية: زر كبير (مثلاً داخل شاشة ثانية)
     return SizedBox(
       width: double.infinity,
-      height: 40,
-      child: ElevatedButton(
+      child: ChatActionButton(
         onPressed: () => _openExistingChat(chatId),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-        ),
-        child: const Icon(Icons.chat_bubble_outline, size: 20),
       ),
     );
   }

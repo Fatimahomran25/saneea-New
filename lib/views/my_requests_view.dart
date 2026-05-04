@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../views/chat_view.dart';
 import '../controlles/chat_controller.dart';
 import 'anouncment_view.dart';
+import 'chat_action_button.dart';
 
 class MyRequestsView extends StatefulWidget {
   final String? initialRequestId;
@@ -174,35 +175,10 @@ class _MyRequestsViewState extends State<MyRequestsView> {
     bool isEnabled = true,
     bool isLoading = false,
   }) {
-    return IgnorePointer(
-      ignoring: !isEnabled,
-      child: Opacity(
-        opacity: isEnabled ? 1 : 0.7,
-        child: SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF5A3E9E),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            onPressed: onPressed,
-            child: isLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Text('Chat'),
-          ),
-        ),
-      ),
+    return ChatActionButton(
+      onPressed: onPressed,
+      isEnabled: isEnabled,
+      isLoading: isLoading,
     );
   }
 

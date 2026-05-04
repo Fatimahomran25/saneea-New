@@ -96,5 +96,8 @@ app.*.symbols
 app.*.map.json
 
 .venv/
+.env
+*.env
+backend/.env
 
 backend/serviceAccountKey.json

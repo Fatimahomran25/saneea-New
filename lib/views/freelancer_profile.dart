@@ -8,6 +8,7 @@ import '../models/freelancer_profile_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../controlles/recommendation_controller.dart';
 import 'request_action_button.dart';
+import 'favorite_heart_button.dart';
 //تمت
 
 class FreelancerProfileView extends StatefulWidget {
@@ -591,6 +592,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                                 padding: const EdgeInsets.only(bottom: 12),
                                 child: _ReviewFigmaTile(
                                   name: r.reviewerName,
+                                  reviewerProfileUrl: r.reviewerProfileUrl,
                                   rating: r.rating,
                                   text: r.text,
                                 ),
@@ -1024,6 +1026,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: _ReviewFigmaTile(
                         name: r.reviewerName,
+                        reviewerProfileUrl: r.reviewerProfileUrl,
                         rating: r.rating,
                         text: r.text,
                       ),
@@ -1089,10 +1092,27 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
           return Scaffold(
             backgroundColor: Colors.white,
             appBar: AppBar(
+              title: const Text('Profile'),
+              centerTitle: true,
               backgroundColor: Colors.white,
+              foregroundColor: _FreelancerProfileViewState.kPurple,
               elevation: 0,
-              leading: const BackButton(color: Colors.black),
               actions: [
+                if (!_isOwnProfile && c.profile != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: FavoriteHeartButton(
+                      favoriteUserId: c.profile!.uid,
+                      favoriteUserName: c.profile!.fullName,
+                      favoriteUserRole: 'freelancer',
+                      favoriteUserProfileImage: c.profile!.photoUrl ?? '',
+                      serviceField: c.profile!.serviceField ?? '',
+                      rating: c.profile!.rating,
+                      iconSize: 24,
+                      padding: const EdgeInsets.all(10),
+                      backgroundColor: const Color(0xFFF6F2FB),
+                    ),
+                  ),
                 if (_isOwnProfile)
                   Padding(
                     padding: const EdgeInsets.only(right: 12),
@@ -1915,11 +1935,13 @@ class _StarsReadOnly extends StatelessWidget {
 class _ReviewFigmaTile extends StatelessWidget {
   const _ReviewFigmaTile({
     required this.name,
+    required this.reviewerProfileUrl,
     required this.rating,
     required this.text,
   });
 
   final String name;
+  final String reviewerProfileUrl;
   final int rating;
   final String text;
 
@@ -1948,7 +1970,18 @@ class _ReviewFigmaTile extends StatelessWidget {
                 color: const Color(0x66B8A9D9).withOpacity(0.6),
               ),
             ),
-            child: const Icon(Icons.person_outline, size: 20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: reviewerProfileUrl.trim().isNotEmpty
+                  ? Image.network(
+                      reviewerProfileUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) {
+                        return const Icon(Icons.person_outline, size: 20);
+                      },
+                    )
+                  : const Icon(Icons.person_outline, size: 20),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(

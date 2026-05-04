@@ -139,11 +139,13 @@ class ExperienceModel {
 
 class FreelancerReviewModel {
   final String reviewerName;
+  final String reviewerProfileUrl;
   final int rating;
   final String text;
 
   const FreelancerReviewModel({
     required this.reviewerName,
+    required this.reviewerProfileUrl,
     required this.rating,
     required this.text,
   });
@@ -154,6 +156,11 @@ class FreelancerReviewModel {
 
     return FreelancerReviewModel(
       reviewerName: (data['reviewerName'] ?? 'User').toString(),
+      reviewerProfileUrl: ((data['reviewerProfileUrl'] ??
+                  data['senderProfileUrl'] ??
+                  data['senderProfileImage']) ??
+              '')
+          .toString(),
       rating: ratingInt.clamp(0, 5),
       text: (data['text'] ?? '').toString(),
     );

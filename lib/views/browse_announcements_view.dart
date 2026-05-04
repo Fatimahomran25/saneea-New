@@ -529,11 +529,20 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            clientName.isEmpty
-                ? 'Client service requests'
-                : "$clientName's service requests",
-            style: const TextStyle(color: primary, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  clientName.isEmpty
+                      ? 'Client service requests'
+                      : "$clientName's service requests",
+                  style: const TextStyle(
+                    color: primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           Text(

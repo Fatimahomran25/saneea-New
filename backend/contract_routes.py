@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request, send_file
 import os
 import requests
+import traceback
 from datetime import datetime
 from firebase_admin import firestore
 import firebase_service
@@ -88,6 +89,7 @@ def generate_contract():
 @contract_routes.route("/generate-contract-from-request-id", methods=["POST"])
 def generate_contract_api():
     try:
+        print("DEBUG ROUTE TRACEBACK VERSION ACTIVE")
         data = request.get_json(force=True)
         request_id = data.get("requestId", "")
         proposal_id = data.get("proposalId", "")
@@ -102,6 +104,8 @@ def generate_contract_api():
         return jsonify(result), 200
 
     except Exception as error:
+        print("ERROR in /generate-contract-from-request-id:", error)
+        traceback.print_exc()
         return jsonify({
             "success": False,
             "error": str(error)
