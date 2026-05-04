@@ -90,6 +90,7 @@ class _ChatViewState extends State<ChatView> {
   static const String contractDisplayTitle = 'Freelancer Service Agreement';
   static const String moyasarPublishableKey =
       'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
+  static const Duration _panelSwitchDuration = Duration(milliseconds: 220);
   static const double _pinnedPanelHeaderMinHeight = 92;
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;
@@ -109,6 +110,7 @@ class _ChatViewState extends State<ChatView> {
   bool _isApprovedContractPanelExpanded = false;
   bool _isFreelancerProgressPanelExpanded = false;
   bool _isWorkProgressSheetOpen = false;
+  bool _isSwitchingPanels = false;
   bool _isLoadingContractData = true;
   bool _isContractPreviewExpanded = true;
   bool _isGenerateContractSectionOpen = false;
@@ -2026,26 +2028,58 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
-  void _toggleApprovedContractPanelSize() {
-    final nextExpanded = !_isApprovedContractPanelExpanded;
-    setState(() {
-      _isApprovedContractPanelExpanded = nextExpanded;
-      if (nextExpanded) {
+  Future<void> _switchPanels({
+    required bool openApprovedContract,
+    required bool openFreelancerProgress,
+    required bool openWorkProgressSheet,
+  }) async {
+    if (!mounted || _isSwitchingPanels) return;
+
+    final shouldCloseFirst =
+        (openApprovedContract &&
+            (_isFreelancerProgressPanelExpanded || _isWorkProgressSheetOpen)) ||
+        (openFreelancerProgress &&
+            (_isApprovedContractPanelExpanded || _isWorkProgressSheetOpen)) ||
+        (openWorkProgressSheet &&
+            (_isApprovedContractPanelExpanded ||
+                _isFreelancerProgressPanelExpanded));
+
+    if (shouldCloseFirst) {
+      setState(() {
+        _isSwitchingPanels = true;
+        _isApprovedContractPanelExpanded = false;
         _isFreelancerProgressPanelExpanded = false;
         _isWorkProgressSheetOpen = false;
-      }
+      });
+
+      await Future.delayed(_panelSwitchDuration);
+      if (!mounted) return;
+    }
+
+    setState(() {
+      _isApprovedContractPanelExpanded = openApprovedContract;
+      _isFreelancerProgressPanelExpanded = openFreelancerProgress;
+      _isWorkProgressSheetOpen = openWorkProgressSheet;
+      _isSwitchingPanels = false;
     });
   }
 
-  void _toggleFreelancerProgressPanel() {
+  Future<void> _toggleApprovedContractPanelSize() {
+    final nextExpanded = !_isApprovedContractPanelExpanded;
+    return _switchPanels(
+      openApprovedContract: nextExpanded,
+      openFreelancerProgress: false,
+      openWorkProgressSheet: false,
+    );
+  }
+
+  Future<void> _toggleFreelancerProgressPanel() {
     final nextExpanded = !_isFreelancerProgressPanelExpanded;
-    setState(() {
-      _isFreelancerProgressPanelExpanded = nextExpanded;
-      if (nextExpanded) {
-        _isApprovedContractPanelExpanded = false;
-        _isWorkProgressSheetOpen = false;
-      }
-    });
+    return _switchPanels(
+      openApprovedContract: false,
+      openFreelancerProgress: nextExpanded,
+      openWorkProgressSheet: false,
+    );
   }
 
   bool _shouldShowWorkProgressAction() {
@@ -2074,18 +2108,12 @@ class _ChatViewState extends State<ChatView> {
       return Future.value();
     }
 
-    if (mounted) {
-      final nextOpen = !_isWorkProgressSheetOpen;
-      setState(() {
-        _isWorkProgressSheetOpen = nextOpen;
-        if (nextOpen) {
-          _isApprovedContractPanelExpanded = false;
-          _isFreelancerProgressPanelExpanded = false;
-        }
-      });
-    }
-
-    return Future.value();
+    final nextOpen = !_isWorkProgressSheetOpen;
+    return _switchPanels(
+      openApprovedContract: false,
+      openFreelancerProgress: false,
+      openWorkProgressSheet: nextOpen,
+    );
   }
 
   Widget _buildReviewActionSection() {
@@ -3212,7 +3240,9 @@ class _ChatViewState extends State<ChatView> {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: IconButton(
-                      onPressed: _toggleApprovedContractPanelSize,
+                      onPressed: _isSwitchingPanels
+                          ? null
+                          : _toggleApprovedContractPanelSize,
                       icon: Icon(
                         _isApprovedContractPanelExpanded
                             ? Icons.keyboard_arrow_up_rounded
@@ -3504,7 +3534,9 @@ class _ChatViewState extends State<ChatView> {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: IconButton(
-                      onPressed: _toggleFreelancerProgressPanel,
+                      onPressed: _isSwitchingPanels
+                          ? null
+                          : _toggleFreelancerProgressPanel,
                       icon: Icon(
                         _isFreelancerProgressPanelExpanded
                             ? Icons.keyboard_arrow_up_rounded
@@ -6808,7 +6840,7 @@ class _ChatViewState extends State<ChatView> {
                       : const Color(0xFFF6F2FB),
                   shape: const CircleBorder(),
                   child: InkWell(
-                    onTap: _openWorkProgressSheet,
+                    onTap: _isSwitchingPanels ? null : _openWorkProgressSheet,
                     customBorder: const CircleBorder(),
                     splashColor: primary.withOpacity(0.12),
                     highlightColor: primary.withOpacity(0.08),
