@@ -2027,14 +2027,24 @@ class _ChatViewState extends State<ChatView> {
   }
 
   void _toggleApprovedContractPanelSize() {
+    final nextExpanded = !_isApprovedContractPanelExpanded;
     setState(() {
-      _isApprovedContractPanelExpanded = !_isApprovedContractPanelExpanded;
+      _isApprovedContractPanelExpanded = nextExpanded;
+      if (nextExpanded) {
+        _isFreelancerProgressPanelExpanded = false;
+        _isWorkProgressSheetOpen = false;
+      }
     });
   }
 
   void _toggleFreelancerProgressPanel() {
+    final nextExpanded = !_isFreelancerProgressPanelExpanded;
     setState(() {
-      _isFreelancerProgressPanelExpanded = !_isFreelancerProgressPanelExpanded;
+      _isFreelancerProgressPanelExpanded = nextExpanded;
+      if (nextExpanded) {
+        _isApprovedContractPanelExpanded = false;
+        _isWorkProgressSheetOpen = false;
+      }
     });
   }
 
@@ -2065,8 +2075,13 @@ class _ChatViewState extends State<ChatView> {
     }
 
     if (mounted) {
+      final nextOpen = !_isWorkProgressSheetOpen;
       setState(() {
-        _isWorkProgressSheetOpen = !_isWorkProgressSheetOpen;
+        _isWorkProgressSheetOpen = nextOpen;
+        if (nextOpen) {
+          _isApprovedContractPanelExpanded = false;
+          _isFreelancerProgressPanelExpanded = false;
+        }
       });
     }
 
