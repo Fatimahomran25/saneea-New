@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:saneea_app/views/client_home_screen.dart';
@@ -9,6 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../controlles/recommendation_controller.dart';
 import 'request_action_button.dart';
 import 'favorite_heart_button.dart';
+import 'report_flag_button.dart';
 //تمت
 
 class FreelancerProfileView extends StatefulWidget {
@@ -1089,6 +1091,13 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
       child: AnimatedBuilder(
         animation: c,
         builder: (context, _) {
+          final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+          final viewedFreelancerId =
+              c.profile?.uid ?? widget.userId?.trim() ?? '';
+          final showProfileReportAction =
+              viewedFreelancerId.isNotEmpty &&
+              currentUserId != viewedFreelancerId;
+
           return Scaffold(
             backgroundColor: Colors.white,
             appBar: AppBar(
@@ -1112,6 +1121,20 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                       padding: const EdgeInsets.all(10),
                       backgroundColor: const Color(0xFFF6F2FB),
                     ),
+                  ),
+                if (showProfileReportAction)
+                  ReportFlagButton(
+                    onPressed: () {
+                      final profile = c.profile;
+                      if (profile == null) return;
+                      showReportIssueDialog(
+                        context: context,
+                        source: 'profile',
+                        reportedUserId: profile.uid,
+                        reportedUserName: profile.fullName,
+                        reportedUserRole: 'freelancer',
+                      );
+                    },
                   ),
                 if (_isOwnProfile)
                   Padding(

@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'favorite_heart_button.dart';
+import 'report_flag_button.dart';
 
 //تمت
 class FreelancerClientProfileView extends StatelessWidget {
@@ -263,6 +265,8 @@ class FreelancerClientProfileView extends StatelessWidget {
         final rawRating = data['rating'];
         final rating = rawRating is num ? rawRating.toDouble() : 0.0;
         final photoUrl = (data['photoUrl'] ?? data['profile'] ?? '').toString();
+        final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+        final showReportAction = currentUserId != clientId;
 
         return Scaffold(
           backgroundColor: Colors.white,
@@ -287,6 +291,19 @@ class FreelancerClientProfileView extends StatelessWidget {
                   backgroundColor: const Color(0xFFF6F2FB),
                 ),
               ),
+              if (showReportAction)
+                ReportFlagButton(
+                  padding: const EdgeInsets.only(right: 12),
+                  onPressed: () {
+                    showReportIssueDialog(
+                      context: context,
+                      source: 'profile',
+                      reportedUserId: clientId,
+                      reportedUserName: displayName,
+                      reportedUserRole: 'client',
+                    );
+                  },
+                ),
             ],
           ),
           body: SingleChildScrollView(

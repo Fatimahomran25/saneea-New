@@ -13,6 +13,7 @@ import '../controlles/chat_controller.dart';
 import '../models/message_model.dart';
 import 'freelancer_client_profile_view.dart';
 import 'freelancer_profile.dart';
+import 'report_flag_button.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:moyasar/moyasar.dart';
 
@@ -20,6 +21,12 @@ String _friendlyErrorMessage(Object error) {
   final rawError = error.toString().replaceFirst('Exception: ', '').trim();
   final normalizedError = rawError.toLowerCase();
   final statusCode = error is int ? error : int.tryParse(rawError);
+
+  if (error is TimeoutException ||
+      normalizedError.contains('timeout') ||
+      normalizedError.contains('timed out')) {
+    return 'Check your internet or server';
+  }
 
   if (error is SocketException ||
       normalizedError.contains('socketexception') ||
@@ -90,14 +97,20 @@ class _ChatViewState extends State<ChatView> {
   static const String contractDisplayTitle = 'Freelancer Service Agreement';
   static const String moyasarPublishableKey =
       'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
+  static const Duration _contractRequestTimeout = Duration(seconds: 25);
   static const Duration _panelSwitchDuration = Duration(milliseconds: 220);
   static const double _pinnedPanelHeaderMinHeight = 92;
+  static const double _chatPanelRadius = 16;
+  static const double _chatPanelInnerRadius = 14;
+  static const Color _chatPanelShellBackground = Color(0xFFF6F3FB);
+  static const Color _chatPanelBackground = Colors.white;
+  static const Color _chatPanelSurface = Color(0xFFF8F4FD);
+  static const Color _chatPanelBorder = Color(0xFFE7DFF4);
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;
   final ImagePicker _picker = ImagePicker();
   final ChatController _controller = ChatController();
   final TextEditingController _messageController = TextEditingController();
-  final GlobalKey<FormState> _contractFormKey = GlobalKey<FormState>();
   Map<String, dynamic>? _contractData;
   Map<String, dynamic>? _currentUserReviewData;
   bool _isGeneratingContract = false;
@@ -113,8 +126,8 @@ class _ChatViewState extends State<ChatView> {
   bool _isSwitchingPanels = false;
   bool _isLoadingContractData = true;
   bool _isContractPreviewExpanded = true;
-  bool _isGenerateContractSectionOpen = false;
   bool _isAddingClause = false;
+  int _selectedApprovedPanelTab = 0;
   Timer? _terminationCountdownTimer;
   String? _contractError;
   String _editableServiceDescription = '';
@@ -158,6 +171,54 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> _showErrorDialog(String message) {
     return _showErrorDialogForContext(context, message);
+  }
+
+  Uri _backendUri(String endpointPath, {Map<String, String>? queryParameters}) {
+    final normalizedBaseUrl = ApiConfig.baseUrl.endsWith('/')
+        ? ApiConfig.baseUrl.substring(0, ApiConfig.baseUrl.length - 1)
+        : ApiConfig.baseUrl;
+    final uri = Uri.parse('$normalizedBaseUrl/$endpointPath');
+
+    if (queryParameters == null || queryParameters.isEmpty) {
+      return uri;
+    }
+
+    return uri.replace(queryParameters: queryParameters);
+  }
+
+  Future<http.Response> _postContractApi({
+    required String endpointPath,
+    required Map<String, dynamic> body,
+    required String logLabel,
+    Duration? timeout,
+  }) async {
+    final uri = _backendUri(endpointPath);
+    final encodedBody = jsonEncode(body);
+
+    debugPrint('$logLabel request URL: $uri');
+    debugPrint('$logLabel request body: $encodedBody');
+
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: encodedBody,
+          )
+          .timeout(timeout ?? _contractRequestTimeout);
+
+      debugPrint('$logLabel status code: ${response.statusCode}');
+      debugPrint('$logLabel response body: ${response.body}');
+      return response;
+    } on TimeoutException catch (error) {
+      debugPrint('$logLabel request URL: $uri');
+      debugPrint('$logLabel exception: $error');
+      rethrow;
+    } catch (error) {
+      debugPrint('$logLabel request URL: $uri');
+      debugPrint('$logLabel exception: $error');
+      rethrow;
+    }
   }
 
   Future<void> _openDeliveryPreviewImage(String imageUrl) {
@@ -685,11 +746,13 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> _openReviewEditor({bool isEditing = false}) async {
     final existingReview = _currentUserReviewData;
-    final initialRating = (() {
-      final rawRating = existingReview?['rating'];
-      final parsedRating = rawRating is num ? rawRating.toInt() : 5;
-      return parsedRating.clamp(1, 5);
-    })();
+    final initialRating = isEditing
+        ? (() {
+            final rawRating = existingReview?['rating'];
+            final parsedRating = rawRating is num ? rawRating.toInt() : 0;
+            return parsedRating.clamp(0, 5);
+          })()
+        : 0;
     final initialText =
         (existingReview?['reviewText'] ?? existingReview?['text'] ?? '')
             .toString();
@@ -1249,14 +1312,6 @@ class _ChatViewState extends State<ChatView> {
     final requestId = message.requestId.trim().isNotEmpty
         ? message.requestId.trim()
         : widget.chatId;
-    final timeline =
-        (_contractData?['timeline'] as Map<String, dynamic>?) ??
-        const <String, dynamic>{};
-    final contractDeadline = (timeline['deadline'] ?? '').toString();
-    final hideTerminateButton = _hasContractDeadlinePassed(contractDeadline);
-    final deliveryData = _asMap(_contractData?['deliveryData']);
-    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
-    final isPaidDelivered = deliveryStatus == 'paid_delivered';
     final isApprovedContract = currentContractStatus == 'approved';
     final cardTitleText = currentContractStatus == 'approved'
         ? 'Approved Contract'
@@ -1303,21 +1358,17 @@ class _ChatViewState extends State<ChatView> {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF6F2FB),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: primary.withOpacity(0.16)),
+        decoration: _chatPanelDecoration(
+          backgroundColor: _chatPanelBackground,
+          borderColor: primary.withOpacity(0.16),
+          showShadow: false,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               cardTitleText,
-              style: const TextStyle(
-                color: primary,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-              ),
+              style: _chatPanelTitleStyle.copyWith(fontSize: 15),
             ),
             const SizedBox(height: 8),
             Container(
@@ -1378,27 +1429,6 @@ class _ChatViewState extends State<ChatView> {
                       label: const Text('Download Contract'),
                     ),
                   ),
-                  if (!hideTerminateButton && !isPaidDelivered) ...[
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _isTerminatingContract
-                            ? null
-                            : _requestTermination,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFC75A5A),
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(0, 44),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: const Icon(Icons.close_rounded),
-                        label: const Text('Terminate'),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ],
@@ -1441,12 +1471,10 @@ class _ChatViewState extends State<ChatView> {
             debugPrint('Generate Contract proposalId: $proposalId');
             debugPrint('Generate Contract announcementId: $announcementId');
 
-            final response = await http.post(
-              Uri.parse(
-                '${ApiConfig.baseUrl}/generate-contract-from-request-id',
-              ),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(requestBody),
+            final response = await _postContractApi(
+              endpointPath: 'generate-contract-from-request-id',
+              body: requestBody,
+              logLabel: 'Generate contract',
             );
 
             if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -1556,47 +1584,102 @@ class _ChatViewState extends State<ChatView> {
   Widget _buildGenerateContractSection() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Generate Contract',
-                  style: TextStyle(color: primary, fontWeight: FontWeight.w600),
-                ),
-              ),
-              Material(
-                color: const Color(0xFFF4F1FA),
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: () {
-                    setState(() {
-                      _isGenerateContractSectionOpen =
-                          !_isGenerateContractSectionOpen;
-                    });
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Icon(
-                      _isGenerateContractSectionOpen
-                          ? Icons.keyboard_arrow_down_rounded
-                          : Icons.keyboard_arrow_up_rounded,
-                      color: primary,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (_isGenerateContractSectionOpen) ...[
-            const SizedBox(height: 10),
-            _buildGenerateButton(),
-          ],
-        ],
+      child: _buildGenerateButton(),
+    );
+  }
+
+  List<BoxShadow> get _chatPanelShadow => [
+    BoxShadow(
+      color: const Color(0xFF22113C).withOpacity(0.05),
+      blurRadius: 16,
+      offset: const Offset(0, 4),
+    ),
+  ];
+
+  TextStyle get _chatPanelTitleStyle => const TextStyle(
+    color: primary,
+    fontWeight: FontWeight.w700,
+    fontSize: 14.5,
+  );
+
+  TextStyle get _chatPanelSubtitleStyle => const TextStyle(
+    color: Colors.black54,
+    fontSize: 12.5,
+    height: 1.35,
+    fontWeight: FontWeight.w600,
+  );
+
+  TextStyle get _chatPanelBodyStyle =>
+      const TextStyle(color: Colors.black87, fontSize: 12.5, height: 1.4);
+
+  BoxDecoration _chatPanelDecoration({
+    Color? backgroundColor,
+    Color? borderColor,
+    double radius = _chatPanelRadius,
+    bool showShadow = true,
+  }) {
+    return BoxDecoration(
+      color: backgroundColor ?? _chatPanelBackground,
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(color: borderColor ?? _chatPanelBorder),
+      boxShadow: showShadow ? _chatPanelShadow : const [],
+    );
+  }
+
+  Widget _buildChatPanelContainer({
+    required Widget child,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(16),
+    EdgeInsetsGeometry? margin,
+    Color? backgroundColor,
+    Color? borderColor,
+    double radius = _chatPanelRadius,
+    bool showShadow = true,
+  }) {
+    return Container(
+      width: double.infinity,
+      margin: margin,
+      padding: padding,
+      decoration: _chatPanelDecoration(
+        backgroundColor: backgroundColor,
+        borderColor: borderColor,
+        radius: radius,
+        showShadow: showShadow,
       ),
+      child: child,
+    );
+  }
+
+  Widget _buildChatPanelSurface({
+    required Widget child,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(12),
+    EdgeInsetsGeometry? margin,
+    Color? backgroundColor,
+    Color? borderColor,
+    double radius = _chatPanelInnerRadius,
+  }) {
+    return _buildChatPanelContainer(
+      padding: padding,
+      margin: margin,
+      backgroundColor: backgroundColor ?? _chatPanelSurface,
+      borderColor: borderColor ?? primary.withOpacity(0.10),
+      radius: radius,
+      showShadow: false,
+      child: child,
+    );
+  }
+
+  Widget _buildChatPanelHeader({required String title, String? subtitle}) {
+    final normalizedSubtitle = (subtitle ?? '').trim();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: _chatPanelTitleStyle),
+        if (normalizedSubtitle.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(normalizedSubtitle, style: _chatPanelSubtitleStyle),
+        ],
+      ],
     );
   }
 
@@ -1604,26 +1687,14 @@ class _ChatViewState extends State<ChatView> {
     required String title,
     required List<Widget> children,
   }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: primary.withOpacity(0.12)),
-      ),
+    return _buildChatPanelContainer(
+      padding: const EdgeInsets.all(14),
+      showShadow: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: primary,
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 8),
+          Text(title, style: _chatPanelTitleStyle.copyWith(fontSize: 14)),
+          const SizedBox(height: 10),
           ...children,
         ],
       ),
@@ -1645,8 +1716,11 @@ class _ChatViewState extends State<ChatView> {
         const <String, dynamic>{};
 
     if (_isEditingContract) {
-      final formState = _contractFormKey.currentState;
-      if (formState != null && !formState.validate()) {
+      final descriptionValidationError = _validateContractDescription(
+        _editableServiceDescription,
+      );
+      if (descriptionValidationError != null) {
+        _showErrorDialog(descriptionValidationError);
         return;
       }
 
@@ -1701,14 +1775,14 @@ class _ChatViewState extends State<ChatView> {
 
         final requestId = _extractRequestId(chatDoc.data());
 
-        final response = await http.post(
-          Uri.parse('${ApiConfig.baseUrl}/update-contract'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
+        final response = await _postContractApi(
+          endpointPath: 'update-contract',
+          body: {
             'requestId': requestId,
             'role': _currentUserRole(),
             'contractData': updatedContractData,
-          }),
+          },
+          logLabel: 'Update contract',
         );
 
         if (!mounted) return;
@@ -1786,7 +1860,7 @@ class _ChatViewState extends State<ChatView> {
       decoration: InputDecoration(
         isDense: true,
         filled: true,
-        fillColor: const Color(0xFFF8F6FC),
+        fillColor: _chatPanelSurface,
         suffixIcon: suffixIcon,
         counterText: '',
         contentPadding: const EdgeInsets.symmetric(
@@ -1795,11 +1869,11 @@ class _ChatViewState extends State<ChatView> {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: primary.withOpacity(0.12)),
+          borderSide: const BorderSide(color: _chatPanelBorder),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: primary.withOpacity(0.12)),
+          borderSide: const BorderSide(color: _chatPanelBorder),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -1900,14 +1974,17 @@ class _ChatViewState extends State<ChatView> {
     final explicitDeadline = _parseContractDateTime(
       meta['terminationEligibleUntil'],
     );
-    if (explicitDeadline == null) return null;
+    final effectiveDeadline =
+        explicitDeadline ??
+        (startedAt != null ? startedAt.add(const Duration(minutes: 3)) : null);
+    if (effectiveDeadline == null) return null;
 
     final now = DateTime.now();
-    final isExpired = now.isAfter(explicitDeadline);
+    final isExpired = now.isAfter(effectiveDeadline);
     final totalDuration = startedAt != null
-        ? explicitDeadline.difference(startedAt)
+        ? effectiveDeadline.difference(startedAt)
         : null;
-    final remainingDuration = explicitDeadline.difference(now);
+    final remainingDuration = effectiveDeadline.difference(now);
     final remainingMinutes = remainingDuration.inMinutes.clamp(0, 1000000);
     final hours = remainingMinutes ~/ 60;
     final minutes = remainingMinutes % 60;
@@ -2132,34 +2209,91 @@ class _ChatViewState extends State<ChatView> {
             .toString()
             .trim();
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: primary.withOpacity(0.12)),
-      ),
+    if (hasSubmittedReview && !_isLoadingReviewData) {
+      return _buildChatPanelContainer(
+        padding: const EdgeInsets.all(14),
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 36),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Rating & Review',
+                    style: _chatPanelTitleStyle.copyWith(fontSize: 14),
+                  ),
+                  const SizedBox(height: 10),
+                  if (existingText.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(existingText, style: _chatPanelBodyStyle),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: List.generate(5, (index) {
+                      return Icon(
+                        index < existingRating ? Icons.star : Icons.star_border,
+                        color: Colors.amber,
+                        size: 18,
+                      );
+                    }),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 0,
+              child: IconButton(
+                tooltip: 'Edit Review',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                visualDensity: VisualDensity.compact,
+                onPressed: _isSavingReview
+                    ? null
+                    : () => _openReviewEditor(isEditing: true),
+                icon: const Icon(Icons.edit_outlined, color: primary, size: 22),
+              ),
+            ),
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: IconButton(
+                tooltip: 'Delete Review',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                visualDensity: VisualDensity.compact,
+                onPressed: _isSavingReview ? null : _confirmDeleteReview,
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Color(0xFFC75A5A),
+                  size: 22,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _buildChatPanelContainer(
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Rating & Review',
-            style: TextStyle(
-              color: primary,
-              fontWeight: FontWeight.w700,
-              fontSize: 13.5,
-            ),
+            style: _chatPanelTitleStyle.copyWith(fontSize: 14),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Text(
             hasSubmittedReview
                 ? 'You already reviewed this completed service. You can edit or delete your review.'
                 : 'This service is completed. You can now rate and review the other user.',
-            style: const TextStyle(
+            style: _chatPanelSubtitleStyle.copyWith(
               color: Colors.black54,
-              fontSize: 12.5,
-              height: 1.35,
+              fontWeight: FontWeight.w500,
             ),
           ),
           if (_isLoadingReviewData) ...[
@@ -2199,66 +2333,6 @@ class _ChatViewState extends State<ChatView> {
                 label: const Text('Rate & Review'),
               ),
             ),
-          ] else ...[
-            const SizedBox(height: 12),
-            Row(
-              children: List.generate(5, (index) {
-                return Icon(
-                  index < existingRating ? Icons.star : Icons.star_border,
-                  color: Colors.amber,
-                  size: 18,
-                );
-              }),
-            ),
-            if (existingText.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                existingText,
-                style: const TextStyle(
-                  color: Colors.black87,
-                  fontSize: 12.5,
-                  height: 1.35,
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _isSavingReview
-                        ? null
-                        : () => _openReviewEditor(isEditing: true),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: primary,
-                      side: BorderSide(color: primary.withOpacity(0.22)),
-                      minimumSize: const Size(0, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Edit Review'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isSavingReview ? null : _confirmDeleteReview,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFC75A5A),
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size(0, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete Review'),
-                  ),
-                ),
-              ],
-            ),
           ],
         ],
       ),
@@ -2293,6 +2367,50 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
+  String _deliveryStatusLabel(String status) {
+    switch (_normalizeDeliveryStatus(status)) {
+      case 'submitted':
+        return 'Submitted';
+      case 'changes_requested':
+        return 'Changes Requested';
+      case 'approved_awaiting_payment':
+        return 'Approved Awaiting Payment';
+      case 'paid_delivered':
+        return 'Paid Delivered';
+      case 'not_submitted':
+      default:
+        return 'Not Submitted';
+    }
+  }
+
+  String _deliveryStatusMessage({
+    required String status,
+    required bool isClientView,
+    required bool canSubmit,
+  }) {
+    switch (_normalizeDeliveryStatus(status)) {
+      case 'submitted':
+        return isClientView
+            ? 'The freelancer submitted work and it is ready for your review.'
+            : 'The submitted work is waiting for client review.';
+      case 'changes_requested':
+        return isClientView
+            ? 'Changes have been requested. Waiting for an updated submission.'
+            : 'Changes were requested. Review the feedback and resubmit when ready.';
+      case 'approved_awaiting_payment':
+        return isClientView
+            ? 'Delivery is approved. Complete payment to unlock the final work.'
+            : 'Delivery is approved and waiting for the client to complete payment.';
+      case 'paid_delivered':
+        return 'The final work is available to access and download.';
+      case 'not_submitted':
+      default:
+        return canSubmit
+            ? 'No work has been submitted yet. You can upload the completed work for review.'
+            : 'No work has been submitted yet.';
+    }
+  }
+
   String _normalizeAdminReviewStatus(dynamic value) {
     final normalized = (value ?? '').toString().trim().toLowerCase();
     switch (normalized) {
@@ -2316,8 +2434,26 @@ class _ChatViewState extends State<ChatView> {
         return 'Inappropriate content';
       case 'abuse_or_manipulation':
         return 'Abuse or manipulation';
+      case 'general_issue':
+        return 'General issue';
       default:
         return 'General issue';
+    }
+  }
+
+  String _contractReviewReasonLabel(String reasonType) {
+    switch ((reasonType).trim().toLowerCase()) {
+      case 'no_response':
+        return 'No response from the other party';
+      case 'mismatched_delivery':
+        return 'Delivered work does not match the agreement';
+      case 'party_disagreement':
+        return 'Disagreement between both parties';
+      case 'payment_delivery_issue':
+        return 'Payment or delivery issue';
+      case 'other_contract_issue':
+      default:
+        return 'Other contract issue';
     }
   }
 
@@ -2356,14 +2492,14 @@ class _ChatViewState extends State<ChatView> {
         .get();
     final requestId = _extractRequestId(chatDoc.data());
 
-    final response = await http.post(
-      Uri.parse('${ApiConfig.baseUrl}/update-contract'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final response = await _postContractApi(
+      endpointPath: 'update-contract',
+      body: {
         'requestId': requestId,
         'role': _currentUserRole(),
         'contractData': updatedContractData,
-      }),
+      },
+      logLabel: 'Save workflow contract',
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -2580,10 +2716,10 @@ class _ChatViewState extends State<ChatView> {
     if (contractData == null) return;
 
     const options = <Map<String, String>>[
-      {'value': 'no_response', 'label': 'No response'},
       {'value': 'delivery_dispute', 'label': 'Delivery dispute'},
       {'value': 'inappropriate_content', 'label': 'Inappropriate content'},
       {'value': 'abuse_or_manipulation', 'label': 'Abuse or manipulation'},
+      {'value': 'general_issue', 'label': 'General issue'},
     ];
 
     final selectedReason = await showDialog<String>(
@@ -2759,6 +2895,815 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
+  Future<String> _resolveRequestIdForContractReview() async {
+    final cachedRequestId = (_requestId ?? '').trim();
+    if (cachedRequestId.isNotEmpty) {
+      return cachedRequestId;
+    }
+
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+    final requestId = _extractRequestId(chatDoc.data());
+    _requestId = requestId;
+    return requestId;
+  }
+
+  String _contractTerminationReportDocumentId({
+    required String requestId,
+    required String reporterId,
+  }) {
+    return 'termination_${requestId}_$reporterId';
+  }
+
+  String _terminationAdminReviewReasonLabel(String reasonType) {
+    switch (reasonType.trim().toLowerCase()) {
+      case 'no_response':
+        return 'No response from the other party';
+      case 'mismatched_delivery':
+        return 'Delivered work does not match the agreement';
+      case 'party_disagreement':
+        return 'Disagreement between both parties';
+      default:
+        return 'Contract review';
+    }
+  }
+
+  Future<void> _openContractTerminationAdminReviewSheet() async {
+    final currentUserId = (_controller.currentUserId ?? '').trim();
+    final otherPartyId = widget.otherUserId.trim();
+
+    if (currentUserId.isEmpty || otherPartyId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('User information is not available for this review.'),
+        ),
+      );
+      return;
+    }
+
+    final detailsController = TextEditingController();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    String? selectedReason;
+    bool isSubmitting = false;
+    bool isSheetActive = true;
+
+    const reasonOptions = <Map<String, String>>[
+      {
+        'value': 'no_response',
+        'label': 'No response from the other party',
+      },
+      {
+        'value': 'mismatched_delivery',
+        'label': 'Delivered work does not match the agreement',
+      },
+      {
+        'value': 'party_disagreement',
+        'label': 'Disagreement between both parties',
+      },
+    ];
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (sheetContext, setSheetState) {
+              Future<void> submitReview() async {
+                if (selectedReason == null || selectedReason!.trim().isEmpty) {
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      const SnackBar(
+                        content: Text('Choose a reason before submitting'),
+                      ),
+                    );
+                  return;
+                }
+
+                if (isSheetActive) {
+                  setSheetState(() {
+                    isSubmitting = true;
+                  });
+                }
+
+                try {
+                  final requestId = await _resolveRequestIdForContractReview();
+                  final contractData = _contractData;
+                  final meta = _asMap(contractData?['meta']);
+                  final approval = _asMap(contractData?['approval']);
+                  final contractId = (meta['contractId'] ?? requestId)
+                      .toString()
+                      .trim();
+                  final contractStatus = (approval['contractStatus'] ?? '')
+                      .toString()
+                      .trim()
+                      .toLowerCase();
+
+                  final currentUserDoc = await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(currentUserId)
+                      .get();
+                  final currentUserData =
+                      currentUserDoc.data() ?? <String, dynamic>{};
+                  final reporterName = _displayName(currentUserData, 'User');
+                  final otherPartyName = widget.otherUserName.trim().isEmpty
+                      ? 'User'
+                      : widget.otherUserName.trim();
+
+                  final reviewRef = FirebaseFirestore.instance
+                      .collection('contract_reports')
+                      .doc(
+                        _contractTerminationReportDocumentId(
+                          requestId: requestId,
+                          reporterId: currentUserId,
+                        ),
+                      );
+
+                  await reviewRef.set({
+                    'type': 'contract_review',
+                    'reasonType': selectedReason,
+                    'reasonLabel': _terminationAdminReviewReasonLabel(
+                      selectedReason!,
+                    ),
+                    'details': detailsController.text.trim(),
+                    'requestId': requestId,
+                    'contractId': contractId.isEmpty ? requestId : contractId,
+                    'chatId': widget.chatId,
+                    'reporterId': currentUserId,
+                    'reporterName': reporterName,
+                    'otherPartyId': otherPartyId,
+                    'otherPartyName': otherPartyName,
+                    'otherUserId': otherPartyId,
+                    'contractStatus': contractStatus,
+                    'status': 'requested',
+                    'createdAt': FieldValue.serverTimestamp(),
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  }, SetOptions(merge: true));
+
+                  isSheetActive = false;
+                  if (Navigator.of(sheetContext).canPop()) {
+                    Navigator.of(sheetContext).pop();
+                  }
+
+                  if (!mounted) return;
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      const SnackBar(
+                        content: Text('Contract review request submitted'),
+                      ),
+                    );
+                } catch (e) {
+                  if (!mounted) return;
+                  debugPrint('Termination contract review error: $e');
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Failed to submit contract review: ${_friendlyErrorMessage(e)}',
+                        ),
+                      ),
+                    );
+                } finally {
+                  if (isSheetActive) {
+                    setSheetState(() {
+                      isSubmitting = false;
+                    });
+                  }
+                }
+              }
+
+              return SafeArea(
+                top: false,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 12,
+                    right: 12,
+                    bottom:
+                        MediaQuery.of(sheetContext).viewInsets.bottom + 12,
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Request Admin Review',
+                          style: TextStyle(
+                            color: primary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Choose the reason for requesting admin review.',
+                          style: TextStyle(
+                            color: Colors.black87,
+                            fontSize: 13.5,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ...reasonOptions.map((option) {
+                          final value = option['value']!;
+                          final label = option['label']!;
+                          final isSelected = selectedReason == value;
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: isSubmitting
+                                  ? null
+                                  : () {
+                                      setSheetState(() {
+                                        selectedReason = value;
+                                      });
+                                    },
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? const Color(0xFFF2EAFB)
+                                      : const Color(0xFFF8F6FC),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? primary
+                                        : primary.withOpacity(0.12),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isSelected
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_off,
+                                      color: primary,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        label,
+                                        style: const TextStyle(
+                                          color: Colors.black87,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: detailsController,
+                          maxLines: 4,
+                          enabled: !isSubmitting,
+                          decoration: InputDecoration(
+                            labelText: 'Add details for the admin',
+                            alignLabelWithHint: true,
+                            filled: true,
+                            fillColor: const Color(0xFFF8F6FC),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide(
+                                color: primary.withOpacity(0.12),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide(
+                                color: primary.withOpacity(0.12),
+                              ),
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(16),
+                              ),
+                              borderSide: BorderSide(color: primary),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: isSubmitting
+                                    ? null
+                                    : () {
+                                        isSheetActive = false;
+                                        Navigator.of(sheetContext).pop();
+                                      },
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: primary,
+                                  side: BorderSide(
+                                    color: primary.withOpacity(0.20),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                child: const Text('Cancel'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: isSubmitting ? null : submitReview,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                child: isSubmitting
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Submit'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      detailsController.dispose();
+    }
+  }
+
+  Future<Map<String, dynamic>?> _loadTerminationContractReview() async {
+    final reporterId = (_controller.currentUserId ?? '').trim();
+    if (reporterId.isEmpty) return null;
+
+    final requestId = await _resolveRequestIdForContractReview();
+    final reviewDoc = await FirebaseFirestore.instance
+        .collection('contract_reports')
+        .doc(
+          _contractTerminationReportDocumentId(
+            requestId: requestId,
+            reporterId: reporterId,
+          ),
+        )
+        .get();
+
+    if (!reviewDoc.exists) return null;
+
+    return <String, dynamic>{'reviewId': reviewDoc.id, ...?reviewDoc.data()};
+  }
+
+  Future<void> _showTerminationContractReviewStatusDialog(
+    Map<String, dynamic> reviewData,
+  ) {
+    final normalizedStatus = (reviewData['status'] ?? 'requested')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final reasonLabel =
+        (reviewData['reasonLabel'] ??
+                _contractReviewReasonLabel(
+                  (reviewData['reasonType'] ?? '').toString(),
+                ))
+            .toString();
+    final details = (reviewData['details'] ?? '').toString().trim();
+    final statusTitle = normalizedStatus == 'resolved'
+        ? 'Contract Review Resolved'
+        : normalizedStatus == 'under_review'
+        ? 'Contract Review In Progress'
+        : 'Contract Review Requested';
+
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(statusTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                normalizedStatus == 'resolved'
+                    ? 'This contract review has already been resolved.'
+                    : 'Your contract review request has already been submitted.',
+                style: const TextStyle(
+                  color: Colors.black87,
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Reason: $reasonLabel',
+                style: const TextStyle(color: Colors.black87, fontSize: 12.5),
+              ),
+              if (details.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Details: $details',
+                  style: const TextStyle(
+                    color: Colors.black54,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            OutlinedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: primary,
+                side: BorderSide(color: primary.withOpacity(0.24)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openTerminationContractReviewSheet() async {
+    final currentUserId = (_controller.currentUserId ?? '').trim();
+    if (currentUserId.isEmpty) {
+      await _showErrorDialog('Current user not found');
+      return;
+    }
+
+    final normalizedOtherUserId = widget.otherUserId.trim();
+    if (normalizedOtherUserId.isEmpty) {
+      await _showErrorDialog('The other user is not available');
+      return;
+    }
+
+    const options = <Map<String, String>>[
+      {'value': 'no_response', 'label': 'No response from the other party'},
+      {
+        'value': 'mismatched_delivery',
+        'label': 'Delivered work does not match the agreement',
+      },
+      {
+        'value': 'party_disagreement',
+        'label': 'Disagreement between both parties',
+      },
+    ];
+
+    final detailsController = TextEditingController();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    String selectedReason = '';
+    bool isSubmitting = false;
+    bool isSheetActive = true;
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (sheetBodyContext, setSheetState) {
+              final bottomInset = MediaQuery.of(
+                sheetBodyContext,
+              ).viewInsets.bottom;
+
+              Future<void> submitReviewRequest() async {
+                if (selectedReason.trim().isEmpty) {
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      const SnackBar(
+                        content: Text('Choose a reason before submitting'),
+                      ),
+                    );
+                  return;
+                }
+
+                if (isSheetActive) {
+                  setSheetState(() {
+                    isSubmitting = true;
+                  });
+                }
+
+                try {
+                  final requestId = await _resolveRequestIdForContractReview();
+                  final contractData = _contractData;
+                  final meta = _asMap(contractData?['meta']);
+                  final approval = _asMap(contractData?['approval']);
+                  final contractId = (meta['contractId'] ?? requestId)
+                      .toString()
+                      .trim();
+                  final contractStatus = (approval['contractStatus'] ?? '')
+                      .toString()
+                      .trim()
+                      .toLowerCase();
+                  final reviewRef = FirebaseFirestore.instance
+                      .collection('contract_reports')
+                      .doc(
+                        _contractTerminationReportDocumentId(
+                          requestId: requestId,
+                          reporterId: currentUserId,
+                        ),
+                      );
+                  final existingReview = await reviewRef.get();
+
+                  final payload = <String, dynamic>{
+                    'type': 'contract_review',
+                    'source': 'contract_termination',
+                    'reasonType': selectedReason,
+                    'reasonLabel': _contractReviewReasonLabel(selectedReason),
+                    'details': detailsController.text.trim(),
+                    'requestId': requestId,
+                    'contractId': contractId.isEmpty ? requestId : contractId,
+                    'chatId': widget.chatId,
+                    'reporterId': currentUserId,
+                    'reportedUserId': normalizedOtherUserId,
+                    'otherUserId': normalizedOtherUserId,
+                    'contractStatus': contractStatus,
+                    'status': 'requested',
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  };
+
+                  if (!existingReview.exists) {
+                    payload['createdAt'] = FieldValue.serverTimestamp();
+                  }
+
+                  await reviewRef.set(payload, SetOptions(merge: true));
+
+                  if (!mounted) return;
+                  isSheetActive = false;
+                  if (Navigator.of(sheetContext).canPop()) {
+                    Navigator.of(sheetContext).pop();
+                  }
+                  if (!mounted) return;
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      const SnackBar(
+                        content: Text('Contract review request submitted'),
+                      ),
+                    );
+                } catch (e) {
+                  if (!mounted) return;
+                  debugPrint('Termination contract review error: $e');
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Failed to submit contract review: ${_friendlyErrorMessage(e)}',
+                        ),
+                      ),
+                    );
+                } finally {
+                  if (isSheetActive) {
+                    setSheetState(() {
+                      isSubmitting = false;
+                    });
+                  }
+                }
+              }
+
+              return SafeArea(
+                top: false,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(20, 14, 20, 20 + bottomInset),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 42,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD8D3E5),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Request Admin Review',
+                          style: TextStyle(
+                            color: Colors.black87,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Choose the reason for requesting admin review.',
+                          style: TextStyle(
+                            color: Colors.black54,
+                            fontSize: 12.5,
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ...options.map((option) {
+                          final value = option['value']!;
+                          final label = option['label']!;
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: selectedReason == value
+                                    ? primary.withOpacity(0.26)
+                                    : _chatPanelBorder,
+                              ),
+                            ),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: isSubmitting
+                                  ? null
+                                  : () {
+                                      setSheetState(() {
+                                        selectedReason = value;
+                                      });
+                                    },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Radio<String>(
+                                      value: value,
+                                      groupValue: selectedReason,
+                                      onChanged: isSubmitting
+                                          ? null
+                                          : (nextValue) {
+                                              setSheetState(() {
+                                                selectedReason =
+                                                    nextValue ?? '';
+                                              });
+                                            },
+                                      activeColor: primary,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(
+                                      Icons.support_agent_outlined,
+                                      size: 18,
+                                      color: primary,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        label,
+                                        style: const TextStyle(
+                                          color: Colors.black87,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: detailsController,
+                          maxLines: 4,
+                          minLines: 3,
+                          enabled: !isSubmitting,
+                          decoration: InputDecoration(
+                            labelText: 'Add details for the admin',
+                            alignLabelWithHint: true,
+                            filled: true,
+                            fillColor: _chatPanelSurface,
+                            contentPadding: const EdgeInsets.all(12),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(
+                                color: _chatPanelBorder,
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(
+                                color: _chatPanelBorder,
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: primary),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: isSubmitting
+                                ? null
+                                : submitReviewRequest,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: primary,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size(0, 46),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: isSubmitting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('Submit Review Request'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ).whenComplete(() {
+        isSheetActive = false;
+      });
+    } finally {
+      detailsController.dispose();
+    }
+  }
+
+  Future<void> _handleTerminationContractAdminReviewAction() async {
+    try {
+      final existingReview = await _loadTerminationContractReview();
+
+      if (existingReview != null) {
+        await _showTerminationContractReviewStatusDialog(existingReview);
+        return;
+      }
+
+      await _openTerminationContractReviewSheet();
+    } catch (e) {
+      if (!mounted) return;
+      debugPrint('Handle termination contract review action error: $e');
+      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    }
+  }
+
   IconData _contractProgressIcon(String stage) {
     switch (_normalizeContractProgressStage(stage)) {
       case 'processing':
@@ -2804,14 +3749,14 @@ class _ChatViewState extends State<ChatView> {
       updatedProgressData['updatedBy'] = _currentUserRole();
       updatedContractData['progressData'] = updatedProgressData;
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/update-contract'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final response = await _postContractApi(
+        endpointPath: 'update-contract',
+        body: {
           'requestId': requestId,
           'role': _currentUserRole(),
           'contractData': updatedContractData,
-        }),
+        },
+        logLabel: 'Update contract progress',
       );
 
       if (!mounted) return;
@@ -2853,6 +3798,7 @@ class _ChatViewState extends State<ChatView> {
     required String contractStatus,
     required String currentUserRole,
     bool showSectionTitle = true,
+    Color? surfaceColor,
   }) {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
@@ -2881,14 +3827,10 @@ class _ChatViewState extends State<ChatView> {
         deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
     final isLocked = isPaidDelivered || contractStatus == 'completed';
 
-    final progressContent = Container(
-      width: double.infinity,
+    final progressContent = _buildChatPanelSurface(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: currentStageColor.withOpacity(0.14)),
-      ),
+      backgroundColor: surfaceColor ?? _chatPanelSurface,
+      borderColor: currentStageColor.withOpacity(0.14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3007,7 +3949,7 @@ class _ChatViewState extends State<ChatView> {
                       width: double.infinity,
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F3F4),
+                        color: _chatPanelBackground,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: isCurrent
@@ -3083,9 +4025,9 @@ class _ChatViewState extends State<ChatView> {
           width: 34,
           height: 34,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _chatPanelSurface,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: primary.withOpacity(0.10)),
+            border: Border.all(color: _chatPanelBorder),
           ),
           child: const Icon(Icons.timeline_rounded, size: 18, color: primary),
         ),
@@ -3121,6 +4063,7 @@ class _ChatViewState extends State<ChatView> {
   Widget _buildPinnedApprovedContractCard({
     EdgeInsetsGeometry margin = const EdgeInsets.fromLTRB(12, 8, 12, 8),
     double? expandedBodyMaxHeight,
+    bool fillAvailableHeight = false,
   }) {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
@@ -3160,29 +4103,39 @@ class _ChatViewState extends State<ChatView> {
         deliveryStatus == 'paid_delivered' ||
         contractStatus == 'completed' ||
         paymentStatus == 'paid';
-    final hideTerminateButton = _hasContractDeadlinePassed(deadline);
     final isLocked = isPaidDelivered || contractStatus == 'completed';
     final isClientView = _currentUserRole() == 'client';
-    final terminationGraceData = _terminationGracePeriodData();
+    final approvedPanelBody = Column(
+      mainAxisSize: fillAvailableHeight ? MainAxisSize.max : MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+          child: _buildApprovedPanelTabs(),
+        ),
+        const SizedBox(height: 12),
+        if (fillAvailableHeight)
+          Expanded(
+            child: _buildApprovedPanelTabContent(
+              expandedBodyMaxHeight: expandedBodyMaxHeight ?? 320,
+            ),
+          )
+        else
+          _buildApprovedPanelTabContent(
+            expandedBodyMaxHeight: expandedBodyMaxHeight ?? 320,
+          ),
+      ],
+    );
     return Container(
       width: double.infinity,
       margin: margin,
-      decoration: BoxDecoration(
-        color: isCompleted ? const Color(0xFFF3E8FF) : const Color(0xFFF6F2FB),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.transparent),
-        boxShadow: [
-          BoxShadow(
-            color: isCompleted
-                ? const Color(0xFF7C3AED).withOpacity(0.15)
-                : Colors.black.withOpacity(0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 2),
-          ),
-        ],
+      decoration: _chatPanelDecoration(
+        backgroundColor: _chatPanelShellBackground,
+        borderColor: _chatPanelBorder,
+        radius: 18,
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: fillAvailableHeight ? MainAxisSize.max : MainAxisSize.min,
         children: [
           ConstrainedBox(
             constraints: const BoxConstraints(
@@ -3199,9 +4152,7 @@ class _ChatViewState extends State<ChatView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          isCompleted
-                              ? 'Completed Contract'
-                              : 'Approved Contract',
+                          'Order Workspace',
                           style: TextStyle(
                             color: primary,
                             fontSize: 15,
@@ -3235,9 +4186,11 @@ class _ChatViewState extends State<ChatView> {
                     ),
                   ),
                   Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(999),
+                    decoration: _chatPanelDecoration(
+                      backgroundColor: _chatPanelSurface,
+                      borderColor: _chatPanelBorder,
+                      radius: 999,
+                      showShadow: false,
                     ),
                     child: IconButton(
                       onPressed: _isSwitchingPanels
@@ -3260,212 +4213,10 @@ class _ChatViewState extends State<ChatView> {
           ),
           if (_isApprovedContractPanelExpanded) ...[
             Divider(height: 1, color: primary.withOpacity(0.08)),
-            _buildContractScrollShell(
-              controller: _approvedContractPanelScrollController,
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-              maxHeight: expandedBodyMaxHeight ?? 320,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    contractDisplayTitle,
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                    ),
-                  ),
-                  if (description.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      description,
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (amount.isNotEmpty)
-                        _buildPinnedContractMetaChip(
-                          icon: Icons.payments_outlined,
-                          label: 'Amount',
-                          value: '$amount SAR',
-                        ),
-                      if (deadline.isNotEmpty)
-                        _buildPinnedContractMetaChip(
-                          icon: Icons.event_outlined,
-                          label: 'Deadline',
-                          value: deadline,
-                        ),
-                    ],
-                  ),
-                  if (terminationGraceData != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAF8),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color:
-                              (terminationGraceData['indicatorColor']
-                                  as Color?) ??
-                              const Color(0xFF43A047),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Free Termination Window',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color:
-                                  (terminationGraceData['indicatorColor']
-                                      as Color?) ??
-                                  const Color(0xFF43A047),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            width: 64,
-                            height: 64,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                CircularProgressIndicator(
-                                  value:
-                                      (terminationGraceData['progress']
-                                          as double?) ??
-                                      0,
-                                  strokeWidth: 5.5,
-                                  backgroundColor: const Color(0xFFE6E6E6),
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    (terminationGraceData['indicatorColor']
-                                            as Color?) ??
-                                        const Color(0xFF43A047),
-                                  ),
-                                ),
-                                Text(
-                                  (terminationGraceData['label'] ?? '')
-                                      .toString(),
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.black87,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                    height: 1.1,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'Direct termination is available during this period.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.black54,
-                              fontSize: 12,
-                              height: 1.3,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-
-                  if (!isLocked) _buildDeliverySection(contractStatus),
-                  if (!isLocked) _buildAdminReviewSection(contractStatus),
-
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _downloadCurrentContract,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: primary,
-                        side: BorderSide(
-                          color: primary.withOpacity(0.22),
-                          width: 1,
-                        ),
-                        minimumSize: const Size(0, 44),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: const Icon(Icons.download_rounded),
-                      label: const Text('Download Contract'),
-                    ),
-                  ),
-                  if (canDownloadFinalWork ||
-                      (!isClientView &&
-                          deliveryStatus == 'approved_awaiting_payment')) ...[
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: canDownloadFinalWork
-                            ? (isClientView
-                                  ? _downloadDeliveredWork
-                                  : _handleFinalWorkAction)
-                            : _showWorkReleaseAfterPaymentDialog,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: primary,
-                          side: BorderSide(
-                            color: primary.withOpacity(0.22),
-                            width: 1,
-                          ),
-                          minimumSize: const Size(0, 44),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: const Icon(Icons.file_download_outlined),
-                        label: const Text('Download Work'),
-                      ),
-                    ),
-                  ],
-                  if (_isContractCompletedForReview(contractData)) ...[
-                    const SizedBox(height: 12),
-                    _buildReviewActionSection(),
-                  ],
-                  if (!isCompleted && !hideTerminateButton) ...[
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isTerminatingContract
-                            ? null
-                            : _requestTermination,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFC75A5A),
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(0, 44),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: const Icon(Icons.close_rounded),
-                        label: const Text('Terminate'),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
+            if (fillAvailableHeight)
+              Expanded(child: approvedPanelBody)
+            else
+              approvedPanelBody,
           ],
         ],
       ),
@@ -3494,17 +4245,10 @@ class _ChatViewState extends State<ChatView> {
     return Container(
       width: double.infinity,
       margin: margin,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F2FB),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: primary.withOpacity(0.16)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+      decoration: _chatPanelDecoration(
+        backgroundColor: _chatPanelShellBackground,
+        borderColor: _chatPanelBorder,
+        radius: 18,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -3529,9 +4273,11 @@ class _ChatViewState extends State<ChatView> {
                     ),
                   ),
                   Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(999),
+                    decoration: _chatPanelDecoration(
+                      backgroundColor: _chatPanelSurface,
+                      borderColor: _chatPanelBorder,
+                      radius: 999,
+                      showShadow: false,
                     ),
                     child: IconButton(
                       onPressed: _isSwitchingPanels
@@ -3606,15 +4352,44 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
-  Widget _buildPinnedApprovedContractScrollable() {
-    final maxPanelHeight = MediaQuery.of(context).size.height * 0.48;
-
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: maxPanelHeight),
-      child: SingleChildScrollView(
+  Widget _buildPinnedApprovedContractScrollable({
+    bool overlayExpandedPanel = false,
+  }) {
+    if (!overlayExpandedPanel) {
+      return SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: _buildPinnedApprovedContractCard(margin: EdgeInsets.zero),
-      ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final screenHeight = MediaQuery.of(context).size.height;
+        final availableHeight = constraints.maxHeight;
+        final cappedPanelHeight = availableHeight > screenHeight * 0.95
+            ? screenHeight * 0.95
+            : availableHeight;
+        final maxPanelHeight = cappedPanelHeight > 8
+            ? cappedPanelHeight - 8
+            : cappedPanelHeight;
+        final maxExpandedBodyHeight =
+            maxPanelHeight - _pinnedPanelHeaderMinHeight - 18;
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: SizedBox(
+              height: maxPanelHeight,
+              child: _buildPinnedApprovedContractCard(
+                margin: EdgeInsets.zero,
+                expandedBodyMaxHeight: maxExpandedBodyHeight,
+                fillAvailableHeight: true,
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -3770,22 +4545,18 @@ class _ChatViewState extends State<ChatView> {
     final chatData = chatDoc.data();
     final requestId = _extractRequestId(chatData);
 
-    print('PAYMENT ID: $paymentId');
-    print('REQUEST ID: $requestId');
-    print('VERIFY URL: ${ApiConfig.baseUrl}/verify-payment');
+    debugPrint('Verify payment paymentId: $paymentId');
+    debugPrint('Verify payment requestId: $requestId');
 
-    final response = await http.post(
-      Uri.parse('${ApiConfig.baseUrl}/verify-payment'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final response = await _postContractApi(
+      endpointPath: 'verify-payment',
+      body: {
         'paymentId': paymentId,
         'requestId': requestId,
         'paidBy': _controller.currentUserId,
-      }),
+      },
+      logLabel: 'Verify payment',
     );
-
-    print('VERIFY STATUS: ${response.statusCode}');
-    print('VERIFY BODY: ${response.body}');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -3824,14 +4595,14 @@ class _ChatViewState extends State<ChatView> {
     final chatData = chatDoc.data();
     final requestId = _extractRequestId(chatData);
 
-    final response = await http.post(
-      Uri.parse('${ApiConfig.baseUrl}/verify-termination-payment'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final response = await _postContractApi(
+      endpointPath: 'verify-termination-payment',
+      body: {
         'paymentId': paymentId,
         'requestId': requestId,
         'paidBy': _currentUserRole(),
-      }),
+      },
+      logLabel: 'Verify termination payment',
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -3883,28 +4654,30 @@ class _ChatViewState extends State<ChatView> {
     final isClient = _currentUserRole() == 'client';
     final isFreelancer = _currentUserRole() == 'freelancer';
     final canSubmit = _canFreelancerSubmitWork(contractStatus);
+    final showEmptyState =
+        deliveryStatus == 'not_submitted' && previewImageUrls.isEmpty;
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F6FC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: primary.withOpacity(0.12)),
-      ),
+    return _buildChatPanelContainer(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Work Delivery',
-            style: TextStyle(
-              color: primary,
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-            ),
+          Text(
+            'Submitted Work',
+            style: _chatPanelTitleStyle.copyWith(fontSize: 14),
           ),
           const SizedBox(height: 10),
+          if (showEmptyState) ...[
+            const Text(
+              'No work has been submitted yet.',
+              style: TextStyle(
+                color: Colors.black87,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           if (isFreelancer &&
               !canSubmit &&
               (deliveryStatus == 'not_submitted' ||
@@ -4106,24 +4879,14 @@ class _ChatViewState extends State<ChatView> {
           ],
           if (deliveryStatus == 'approved_awaiting_payment' && isClient) ...[
             const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
+            _buildChatPanelSurface(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: primary.withOpacity(0.14)),
-              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Payment',
-                    style: TextStyle(
-                      color: primary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.5,
-                    ),
+                    style: _chatPanelTitleStyle.copyWith(fontSize: 13.5),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -4163,24 +4926,14 @@ class _ChatViewState extends State<ChatView> {
           ],
           if (deliveryStatus == 'approved_awaiting_payment' && !isClient) ...[
             const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
+            _buildChatPanelSurface(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: primary.withOpacity(0.14)),
-              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Final Work Release',
-                    style: TextStyle(
-                      color: primary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.5,
-                    ),
+                    style: _chatPanelTitleStyle.copyWith(fontSize: 13.5),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -4217,6 +4970,26 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
+  Widget _buildChatHeaderAdminReviewAction({
+    EdgeInsetsGeometry padding = const EdgeInsets.only(right: 8),
+  }) {
+    return ReportFlagButton(
+      padding: padding,
+      onPressed: () {
+        unawaited(
+          showReportIssueDialog(
+            context: context,
+            source: 'chat',
+            reportedUserId: widget.otherUserId,
+            reportedUserName: widget.otherUserName,
+            reportedUserRole: widget.otherUserRole,
+            chatId: widget.chatId,
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildAdminReviewSection(String contractStatus) {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
@@ -4238,25 +5011,15 @@ class _ChatViewState extends State<ChatView> {
         adminReviewStatus != 'resolved' &&
         adminReviewRequestedBy == _currentUserRole();
 
-    return Container(
-      width: double.infinity,
+    return _buildChatPanelContainer(
       margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F6FC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: primary.withOpacity(0.12)),
-      ),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Admin Review',
-            style: TextStyle(
-              color: primary,
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-            ),
+            style: _chatPanelTitleStyle.copyWith(fontSize: 14),
           ),
           const SizedBox(height: 10),
           if (adminReviewStatus != 'none') ...[
@@ -4355,29 +5118,1128 @@ class _ChatViewState extends State<ChatView> {
     required IconData icon,
     required String label,
     required String value,
+    bool expand = false,
   }) {
     return Container(
+      width: expand ? double.infinity : null,
+      constraints: const BoxConstraints(minHeight: 62),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.72),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: primary.withOpacity(0.08)),
+      decoration: _chatPanelDecoration(
+        backgroundColor: _chatPanelSurface,
+        borderColor: _chatPanelBorder,
+        radius: 14,
+        showShadow: false,
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: primary.withOpacity(0.82)),
-          const SizedBox(width: 8),
-          Text(
-            '$label: $value',
-            style: const TextStyle(
-              color: Colors.black87,
-              fontWeight: FontWeight.w600,
-              fontSize: 12.5,
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: primary.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 16, color: primary.withOpacity(0.82)),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.black54,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    height: 1.25,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildApprovedPanelContentCard({
+    required String title,
+    String? subtitle,
+    required List<Widget> children,
+  }) {
+    final normalizedSubtitle = (subtitle ?? '').trim();
+
+    return _buildChatPanelContainer(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildChatPanelHeader(title: title, subtitle: normalizedSubtitle),
+          if (children.isNotEmpty) ...[const SizedBox(height: 12), ...children],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApprovedPanelTabs() {
+    const tabs = <String>['Contract', 'Deliverables', 'Review & Rate'];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: primary.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: List.generate(tabs.length, (index) {
+          final isSelected = _selectedApprovedPanelTab == index;
+
+          return Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: index == 0 ? 0 : 2,
+                right: index == tabs.length - 1 ? 0 : 2,
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () {
+                    if (_selectedApprovedPanelTab == index) return;
+                    setState(() {
+                      _selectedApprovedPanelTab = index;
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOut,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected ? primary : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      tabs[index],
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : primary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildApprovedPanelTabContent({
+    required double expandedBodyMaxHeight,
+  }) {
+    switch (_selectedApprovedPanelTab) {
+      case 0:
+        return _buildApprovedContractTab(
+          expandedBodyMaxHeight: expandedBodyMaxHeight,
+        );
+      case 1:
+        return _buildApprovedWorkProgressTab();
+      case 2:
+        return _buildApprovedReviewTab();
+      default:
+        return _buildApprovedContractTab(
+          expandedBodyMaxHeight: expandedBodyMaxHeight,
+        );
+    }
+  }
+
+  Widget _buildApprovedContractTab({required double expandedBodyMaxHeight}) {
+    final contractData = _contractData;
+    if (contractData == null) return const SizedBox.shrink();
+
+    final service = _asMap(contractData['service']);
+    final payment = _asMap(contractData['payment']);
+    final timeline = _asMap(contractData['timeline']);
+    final description = (service['description'] ?? '').toString().trim();
+    final amount = (payment['amount'] ?? '').toString().trim();
+    final deadline = (timeline['deadline'] ?? '').toString().trim();
+    final terminationSection = _buildContractTerminationSection();
+    final hasTerminationSection = terminationSection is! SizedBox;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final contentHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : expandedBodyMaxHeight;
+
+        return _buildContractScrollShell(
+          controller: _approvedContractPanelScrollController,
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+          maxHeight: contentHeight,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildChatPanelContainer(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      contractDisplayTitle,
+                      style: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    if (description.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        description,
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                    if (amount.isNotEmpty || deadline.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      LayoutBuilder(
+                        builder: (context, metaConstraints) {
+                          final showInlineCards =
+                              amount.isNotEmpty &&
+                              deadline.isNotEmpty &&
+                              metaConstraints.maxWidth >= 300;
+
+                          if (showInlineCards) {
+                            return Row(
+                              children: [
+                                Expanded(
+                                  child: _buildPinnedContractMetaChip(
+                                    icon: Icons.payments_outlined,
+                                    label: 'Amount',
+                                    value: '$amount SAR',
+                                    expand: true,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _buildPinnedContractMetaChip(
+                                    icon: Icons.event_outlined,
+                                    label: 'Deadline',
+                                    value: deadline,
+                                    expand: true,
+                                  ),
+                                ),
+                              ],
+                            );
+                          }
+
+                          return Column(
+                            children: [
+                              if (amount.isNotEmpty)
+                                _buildPinnedContractMetaChip(
+                                  icon: Icons.payments_outlined,
+                                  label: 'Amount',
+                                  value: '$amount SAR',
+                                  expand: true,
+                                ),
+                              if (amount.isNotEmpty && deadline.isNotEmpty)
+                                const SizedBox(height: 10),
+                              if (deadline.isNotEmpty)
+                                _buildPinnedContractMetaChip(
+                                  icon: Icons.event_outlined,
+                                  label: 'Deadline',
+                                  value: deadline,
+                                  expand: true,
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _downloadCurrentContract,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          side: BorderSide(
+                            color: primary.withOpacity(0.22),
+                            width: 1,
+                          ),
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.download_rounded),
+                        label: const Text('Download Contract'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              if (hasTerminationSection) ...[
+                const SizedBox(height: 14),
+                _buildChatPanelContainer(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Contract Termination',
+                        style: _chatPanelTitleStyle.copyWith(fontSize: 14),
+                      ),
+                      const SizedBox(height: 12),
+                      terminationSection,
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildContractTerminationSection() {
+    final contractData = _contractData;
+    if (contractData == null) return const SizedBox.shrink();
+
+    final approval = _asMap(contractData['approval']);
+    final contractStatus = (approval['contractStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final termination =
+        (approval['termination'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    final paymentData = _asMap(contractData['paymentData']);
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final paymentStatus = (paymentData['paymentStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final isPaidDelivered =
+        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+    final isCompleted = contractStatus == 'completed' || isPaidDelivered;
+    final showTerminateButton = !isCompleted;
+    final terminationGraceData = _terminationGracePeriodData();
+    final terminationRequested = termination['requested'] == true;
+    final terminationRequestedBy = (termination['requestedBy'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final terminationRejected = termination['rejected'] == true;
+    final terminationRejectedBy = (termination['rejectedBy'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final terminationMode = (termination['mode'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final currentUserRole = _currentUserRole();
+    final otherPartyLabel = currentUserRole == 'client'
+        ? 'freelancer'
+        : 'client';
+    final requesterLabel = terminationRequestedBy == 'client'
+        ? 'client'
+        : terminationRequestedBy == 'freelancer'
+        ? 'freelancer'
+        : 'other party';
+    final currentUserRequestedTermination =
+        terminationRequestedBy == currentUserRole;
+    final currentUserMutualRequestRejected =
+        contractStatus == 'approved' &&
+        terminationRejected &&
+        terminationMode == 'mutual_rejected' &&
+        terminationRequestedBy == currentUserRole &&
+        terminationRejectedBy.isNotEmpty &&
+        terminationRejectedBy != currentUserRole;
+    final showApproveTerminationButton =
+        contractStatus == 'termination_pending' &&
+        terminationRequested &&
+        !currentUserRequestedTermination;
+    final showRejectTerminationButton =
+        contractStatus == 'termination_pending' &&
+        terminationRequested &&
+        !currentUserRequestedTermination;
+    final showCancelTerminationButton =
+        contractStatus == 'termination_pending' &&
+        terminationRequested &&
+        currentUserRequestedTermination;
+    final terminationIndicatorColor =
+        (terminationGraceData?['indicatorColor'] as Color?) ??
+        const Color(0xFF43A047);
+    final isTerminationGraceExpired =
+        (terminationGraceData?['isExpired'] as bool?) ?? false;
+    final terminationCountdownLabel = (terminationGraceData?['label'] ?? '')
+        .toString();
+    final terminationGraceSubtitle =
+        (terminationGraceData?['subtitle'] ??
+                'Direct termination is available during this period.')
+            .toString();
+    Future<void> handleAdminReviewOptionTap() async {
+      await _openContractTerminationAdminReviewSheet();
+    }
+
+    Widget buildTerminationOptionSheetTile({
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required Future<void> Function()? onTap,
+      bool enabled = true,
+      Color accentColor = const Color(0xFFC75A5A),
+    }) {
+      final action = onTap;
+      final canTap = enabled && action != null;
+
+      return ListTile(
+        enabled: canTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        leading: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: accentColor.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: accentColor, size: 20),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: canTap ? Colors.black87 : Colors.black45,
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            subtitle,
+            style: TextStyle(
+              color: canTap ? Colors.black54 : Colors.black38,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+        ),
+        trailing: Icon(
+          Icons.chevron_right_rounded,
+          color: accentColor.withOpacity(canTap ? 0.9 : 0.4),
+          size: 22,
+        ),
+        onTap: canTap
+            ? () {
+                unawaited(action!());
+              }
+            : null,
+      );
+    }
+
+    Future<void> openTerminationOptionsSheet() {
+      final canOpenPaymentOption =
+          !_isTerminatingContract && !_isSavingContract;
+      final canOpenMutualOption = !_isTerminatingContract && !_isSavingContract;
+      final canOpenAdminReviewOption = !_isSavingContract;
+
+      return showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (sheetContext) {
+          Future<void> runSheetAction(Future<void> Function() action) async {
+            Navigator.of(sheetContext).pop();
+            await action();
+          }
+
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD8D3E5),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Termination Options',
+                    style: TextStyle(
+                      color: Colors.black87,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Choose how you want to proceed with this contract.',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 12.5,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  buildTerminationOptionSheetTile(
+                    icon: Icons.payments_outlined,
+                    title: 'Terminate with Payment',
+                    subtitle: 'Pay the required fee to end the contract.',
+                    onTap: canOpenPaymentOption
+                        ? () => runSheetAction(
+                            _openTerminationCompensationPayment,
+                          )
+                        : null,
+                  ),
+                  Divider(height: 1, color: primary.withOpacity(0.08)),
+                  buildTerminationOptionSheetTile(
+                    icon: Icons.handshake_outlined,
+                    title: 'Mutual Agreement',
+                    subtitle:
+                        'Send a termination request for the other party to approve.',
+                    onTap: canOpenMutualOption
+                        ? () => runSheetAction(
+                            () => _requestTermination(forcePaidMode: 'mutual'),
+                          )
+                        : null,
+                    accentColor: const Color(0xFFB86A4A),
+                  ),
+                  Divider(height: 1, color: primary.withOpacity(0.08)),
+                  buildTerminationOptionSheetTile(
+                    icon: Icons.support_agent_outlined,
+                    title: 'Request Admin Review',
+                    subtitle: 'Ask the admin to review the contract issue.',
+                    onTap: canOpenAdminReviewOption
+                        ? () => runSheetAction(handleAdminReviewOptionTap)
+                        : null,
+                    accentColor: const Color(0xFFB45A4F),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    Widget buildTerminateActionTrigger() {
+      final isEnabled = !_isTerminatingContract;
+
+      return Tooltip(
+        message: 'Terminate Contract',
+        triggerMode: TooltipTriggerMode.tap,
+        showDuration: const Duration(seconds: 2),
+        waitDuration: Duration.zero,
+        preferBelow: false,
+        child: Opacity(
+          opacity: isEnabled ? 1 : 0.58,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: isEnabled ? _requestTermination : null,
+              customBorder: const CircleBorder(),
+              child: Ink(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFC75A5A).withOpacity(0.10),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFFC75A5A).withOpacity(0.22),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFC75A5A).withOpacity(0.08),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: Color(0xFFC75A5A),
+                  size: 18,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildExpiredTerminationUi() {
+      return Column(
+        key: const ValueKey('termination_expired_ui'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text(
+                'Free Window Ended',
+                style: TextStyle(
+                  color: Color(0xFFC75A5A),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color.fromARGB(
+                    255,
+                    223,
+                    41,
+                    16,
+                  ).withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: const Color.fromARGB(
+                      255,
+                      223,
+                      41,
+                      16,
+                    ).withOpacity(0.22),
+                  ),
+                ),
+                child: const Text(
+                  'Fee Required',
+                  style: TextStyle(
+                    color: Color.fromARGB(255, 223, 41, 16),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'The free termination period has ended.',
+            style: TextStyle(
+              color: Colors.black54,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          if (showTerminateButton) ...[
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: (_isTerminatingContract || _isSavingContract)
+                  ? null
+                  : () {
+                      unawaited(openTerminationOptionsSheet());
+                    },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFC75A5A),
+                backgroundColor: Colors.transparent,
+                side: BorderSide(
+                  color: const Color(0xFFC75A5A).withOpacity(0.24),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                minimumSize: const Size(0, 38),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              label: const Text('Choose termination option'),
+            ),
+          ],
+        ],
+      );
+    }
+
+    Widget buildActiveTerminationUi() {
+      return Column(
+        key: const ValueKey('termination_active_ui'),
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'Free Termination Window',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: terminationIndicatorColor,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: terminationIndicatorColor.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: terminationIndicatorColor.withOpacity(0.26),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: terminationIndicatorColor.withOpacity(0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: IntrinsicHeight(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.access_time_rounded,
+                    color: terminationIndicatorColor,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    width: 1,
+                    color: terminationIndicatorColor.withOpacity(0.20),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    terminationCountdownLabel,
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      height: 1,
+                    ),
+                  ),
+                  if (terminationCountdownLabel.trim().toLowerCase() !=
+                      'expired') ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      'left',
+                      style: TextStyle(
+                        color: terminationIndicatorColor,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            terminationGraceSubtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.black54,
+              fontSize: 12,
+              height: 1.3,
+            ),
+          ),
+          if (showTerminateButton) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: buildTerminateActionTrigger(),
+            ),
+          ],
+        ],
+      );
+    }
+
+    Widget buildTerminationGraceCard() {
+      if (isTerminationGraceExpired) {
+        return Container(
+          key: const ValueKey('termination_expired_card'),
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF6F6),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: const Color(0xFFC75A5A).withOpacity(0.18),
+            ),
+            boxShadow: _chatPanelShadow,
+          ),
+          child: buildExpiredTerminationUi(),
+        );
+      }
+
+      return Container(
+        key: const ValueKey('termination_active_card'),
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF6FBF7),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: terminationIndicatorColor.withOpacity(0.32),
+          ),
+          boxShadow: _chatPanelShadow,
+        ),
+        child: buildActiveTerminationUi(),
+      );
+    }
+
+    final hasTerminationUi =
+        terminationGraceData != null ||
+        showTerminateButton ||
+        currentUserMutualRequestRejected ||
+        showApproveTerminationButton ||
+        showCancelTerminationButton;
+
+    if (!hasTerminationUi) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (terminationGraceData != null) ...[buildTerminationGraceCard()],
+        if (showTerminateButton && terminationGraceData == null) ...[
+          Align(
+            alignment: Alignment.centerRight,
+            child: buildTerminateActionTrigger(),
+          ),
+        ],
+        if (currentUserMutualRequestRejected) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFFD54F)),
+            ),
+            child: Text(
+              'The $otherPartyLabel rejected your mutual termination request. You can continue with paid termination (20%).',
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 12.5,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (!isTerminationGraceExpired) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isTerminatingContract
+                    ? null
+                    : _openTerminationCompensationPayment,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFC75A5A),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.payments_outlined),
+                label: const Text('Terminate with 20%'),
+              ),
+            ),
+          ],
+        ],
+        if (showApproveTerminationButton) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFFD54F)),
+            ),
+            child: Text(
+              'The $requesterLabel requested termination for this contract. You can approve or reject this request.',
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 12.5,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+        if (showCancelTerminationButton) ...[
+          const SizedBox(height: 12),
+          _buildChatPanelSurface(
+            padding: const EdgeInsets.all(12),
+            borderColor: primary.withOpacity(0.16),
+            child: Text(
+              'You requested termination for this contract. Please wait for the $otherPartyLabel to respond.',
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 12.5,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+        if (showApproveTerminationButton) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isTerminatingContract
+                      ? null
+                      : _approveTermination,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFC75A5A),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.check_rounded),
+                  label: const Text('Approve Termination'),
+                ),
+              ),
+              if (showRejectTerminationButton) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isTerminatingContract
+                        ? null
+                        : _rejectTermination,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                      side: const BorderSide(color: Colors.redAccent),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.close_rounded),
+                    label: const Text('Reject'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+        if (showCancelTerminationButton) ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isTerminatingContract ? null : _cancelTermination,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.redAccent,
+                side: const BorderSide(color: Colors.redAccent),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.undo_rounded),
+              label: const Text('Cancel Termination'),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildApprovedWorkProgressTab() {
+    final contractData = _contractData;
+    if (contractData == null) return const SizedBox.shrink();
+
+    final approval = _asMap(contractData['approval']);
+    final contractStatus = (approval['contractStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final paymentData = _asMap(contractData['paymentData']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final paymentStatus = (paymentData['paymentStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final canDownloadFinalWork =
+        deliveryStatus == 'paid_delivered' ||
+        contractStatus == 'completed' ||
+        paymentStatus == 'paid';
+    final isClientView = _currentUserRole() == 'client';
+    final shouldShowWorkProgress = _shouldShowWorkProgressAction();
+    final canSubmit = _canFreelancerSubmitWork(contractStatus);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final contentHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 320.0;
+
+        return _buildContractScrollShell(
+          controller: _approvedContractPanelScrollController,
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+          maxHeight: contentHeight,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: shouldShowWorkProgress
+                ? [
+                    _buildApprovedPanelContentCard(
+                      title: 'Delivery Status',
+                      subtitle: _deliveryStatusLabel(deliveryStatus),
+                      children: [
+                        Text(
+                          _deliveryStatusMessage(
+                            status: deliveryStatus,
+                            isClientView: isClientView,
+                            canSubmit: canSubmit,
+                          ),
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 12.5,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    _buildDeliverySection(contractStatus),
+                    if (canDownloadFinalWork) ...[
+                      const SizedBox(height: 14),
+                      _buildApprovedPanelContentCard(
+                        title: 'Final Delivery',
+                        subtitle: isClientView
+                            ? 'Access the delivered files here.'
+                            : 'Open or upload the delivered files here.',
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: isClientView
+                                  ? _downloadDeliveredWork
+                                  : _handleFinalWorkAction,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: primary,
+                                side: BorderSide(
+                                  color: primary.withOpacity(0.22),
+                                  width: 1,
+                                ),
+                                minimumSize: const Size(0, 44),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              icon: const Icon(Icons.file_download_outlined),
+                              label: const Text('Download Work'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ]
+                : [
+                    _buildApprovedPanelContentCard(
+                      title: 'Work Delivery',
+                      children: [
+                        const Text(
+                          'No work has been submitted yet.',
+                          style: TextStyle(
+                            color: Colors.black87,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildApprovedReviewTab() {
+    final contractData = _contractData;
+    if (contractData == null) return const SizedBox.shrink();
+
+    final reviewAvailable = _isContractCompletedForReview(_contractData);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final contentHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 320.0;
+
+        return _buildContractScrollShell(
+          controller: _approvedContractPanelScrollController,
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          maxHeight: contentHeight,
+          child: reviewAvailable
+              ? _buildReviewActionSection()
+              : _buildChatPanelContainer(
+                  padding: const EdgeInsets.all(16),
+                  backgroundColor: _chatPanelBackground,
+                  child: const Text(
+                    'Review will be available after the service is completed.',
+                    style: TextStyle(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+        );
+      },
     );
   }
 
@@ -4413,14 +6275,16 @@ class _ChatViewState extends State<ChatView> {
     required Widget child,
     double maxHeight = 250,
   }) {
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: maxHeight),
+    return SizedBox(
+      height: maxHeight,
       child: _buildContractScrollArea(
         controller: controller,
-        child: SingleChildScrollView(
-          controller: controller,
-          padding: padding,
-          child: child,
+        child: SizedBox.expand(
+          child: SingleChildScrollView(
+            controller: controller,
+            padding: padding,
+            child: child,
+          ),
         ),
       ),
     );
@@ -4445,20 +6309,9 @@ class _ChatViewState extends State<ChatView> {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    const Color(0xFFF6F2FB).withOpacity(0.0),
-                    const Color(0xFFF6F2FB).withOpacity(0.92),
+                    _chatPanelShellBackground.withOpacity(0.0),
+                    _chatPanelShellBackground.withOpacity(0.92),
                   ],
-                ),
-              ),
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Icon(
-                    Icons.expand_more_rounded,
-                    size: 16,
-                    color: primary.withOpacity(0.55),
-                  ),
                 ),
               ),
             ),
@@ -4839,15 +6692,15 @@ class _ChatViewState extends State<ChatView> {
     required Map<String, dynamic> data,
   }) async {
     try {
-      await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/send-notification-push'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      await _postContractApi(
+        endpointPath: 'send-notification-push',
+        body: {
           'receiverId': receiverId,
           'title': title,
           'body': body,
           'data': data,
-        }),
+        },
+        logLabel: 'Send notification push',
       );
     } catch (e) {
       debugPrint('Send notification push error: $e');
@@ -4933,14 +6786,14 @@ class _ChatViewState extends State<ChatView> {
       final chatData = chatDoc.data();
       final requestId = _extractRequestId(chatData);
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/approve-contract'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final response = await _postContractApi(
+        endpointPath: 'approve-contract',
+        body: {
           'requestId': requestId,
           'role': _currentUserRole(),
           'signatureData': signatureData,
-        }),
+        },
+        logLabel: 'Approve contract',
       );
 
       if (!mounted) return;
@@ -5114,15 +6967,15 @@ class _ChatViewState extends State<ChatView> {
       final chatData = chatDoc.data();
       final requestId = _extractRequestId(chatData);
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/request-termination'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final response = await _postContractApi(
+        endpointPath: 'request-termination',
+        body: {
           'requestId': requestId,
           'role': _currentUserRole(),
           if ((terminationMode ?? '').isNotEmpty)
             'terminationMode': terminationMode,
-        }),
+        },
+        logLabel: 'Request termination',
       );
 
       if (!mounted) return;
@@ -5201,10 +7054,10 @@ class _ChatViewState extends State<ChatView> {
 
       final requestId = _extractRequestId(chatDoc.data());
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/approve-termination'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
+      final response = await _postContractApi(
+        endpointPath: 'approve-termination',
+        body: {'requestId': requestId, 'role': _currentUserRole()},
+        logLabel: 'Approve termination',
       );
 
       if (!mounted) return;
@@ -5268,10 +7121,10 @@ class _ChatViewState extends State<ChatView> {
       final chatData = chatDoc.data();
       final requestId = _extractRequestId(chatData);
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/reject-termination'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
+      final response = await _postContractApi(
+        endpointPath: 'reject-termination',
+        body: {'requestId': requestId, 'role': _currentUserRole()},
+        logLabel: 'Reject termination',
       );
 
       if (!mounted) return;
@@ -5328,10 +7181,10 @@ class _ChatViewState extends State<ChatView> {
 
       final requestId = _extractRequestId(chatDoc.data());
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/cancel-termination'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
+      final response = await _postContractApi(
+        endpointPath: 'cancel-termination',
+        body: {'requestId': requestId, 'role': _currentUserRole()},
+        logLabel: 'Cancel termination',
       );
 
       if (!mounted) return;
@@ -5366,9 +7219,11 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> downloadContract(String requestId) async {
     try {
-      final url = Uri.parse(
-        "${ApiConfig.baseUrl}/download-contract-pdf?requestId=$requestId",
+      final url = _backendUri(
+        'download-contract-pdf',
+        queryParameters: {'requestId': requestId},
       );
+      debugPrint('Download contract URL: $url');
 
       final opened = await launchUrl(url);
 
@@ -5402,10 +7257,10 @@ class _ChatViewState extends State<ChatView> {
       final chatData = chatDoc.data();
       final requestId = _extractRequestId(chatData);
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/cancel-approval'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
+      final response = await _postContractApi(
+        endpointPath: 'cancel-approval',
+        body: {'requestId': requestId, 'role': _currentUserRole()},
+        logLabel: 'Cancel approval',
       );
 
       if (!mounted) return;
@@ -5474,10 +7329,10 @@ class _ChatViewState extends State<ChatView> {
       final chatData = chatDoc.data();
       final requestId = _extractRequestId(chatData);
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/disapprove-contract'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'requestId': requestId, 'role': _currentUserRole()}),
+      final response = await _postContractApi(
+        endpointPath: 'disapprove-contract',
+        body: {'requestId': requestId, 'role': _currentUserRole()},
+        logLabel: 'Disapprove contract',
       );
 
       if (!mounted) return;
@@ -5595,10 +7450,10 @@ class _ChatViewState extends State<ChatView> {
         body['role'] = _currentUserRole();
       }
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/$endpointPath'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
+      final response = await _postContractApi(
+        endpointPath: endpointPath,
+        body: body,
+        logLabel: logLabel,
       );
 
       if (!mounted) return;
@@ -5699,14 +7554,14 @@ class _ChatViewState extends State<ChatView> {
 
       final requestId = _extractRequestId(chatDoc.data());
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/update-contract'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final response = await _postContractApi(
+        endpointPath: 'update-contract',
+        body: {
           'requestId': requestId,
           'role': _currentUserRole(),
           'contractData': updatedContractData,
-        }),
+        },
+        logLabel: 'Delete clause update',
       );
 
       if (!mounted) return;
@@ -5817,9 +7672,6 @@ class _ChatViewState extends State<ChatView> {
         terminationRequestedBy == currentUserRole &&
         terminationRejectedBy.isNotEmpty &&
         terminationRejectedBy != currentUserRole;
-
-    final showTerminateButton =
-        contractStatus == 'approved' && !terminationRequested;
 
     final showApproveTerminationButton =
         contractStatus == 'termination_pending' &&
@@ -6113,26 +7965,22 @@ class _ChatViewState extends State<ChatView> {
     );
 
     if (!_isContractPreviewExpanded) {
-      return Container(
-        width: double.infinity,
+      return _buildChatPanelContainer(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8F6FC),
-          borderRadius: BorderRadius.circular(16),
-        ),
+        backgroundColor: _chatPanelSurface,
+        borderColor: _chatPanelBorder,
+        showShadow: false,
         child: header,
       );
     }
 
-    return Container(
-      width: double.infinity,
+    return _buildChatPanelContainer(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F6FC),
-        borderRadius: BorderRadius.circular(16),
-      ),
+      backgroundColor: _chatPanelSurface,
+      borderColor: _chatPanelBorder,
+      showShadow: false,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxPreviewHeight),
         child: Scrollbar(
@@ -6190,17 +8038,14 @@ class _ChatViewState extends State<ChatView> {
                   title: 'Service description',
                   children: [
                     _isEditingContract
-                        ? Form(
-                            key: _contractFormKey,
-                            child: _buildContractInput(
-                              initialValue: _editableServiceDescription,
-                              maxLength: 150,
-                              maxLines: 3,
-                              validator: _validateContractDescription,
-                              onChanged: (value) {
-                                _editableServiceDescription = value;
-                              },
-                            ),
+                        ? _buildContractInput(
+                            initialValue: _editableServiceDescription,
+                            maxLength: 150,
+                            maxLines: 3,
+                            validator: _validateContractDescription,
+                            onChanged: (value) {
+                              _editableServiceDescription = value;
+                            },
                           )
                         : Text(
                             (service['description'] ?? '')
@@ -6595,27 +8440,6 @@ class _ChatViewState extends State<ChatView> {
                     ),
                   ),
                 ],
-                if (showTerminateButton) ...[
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isTerminatingContract
-                          ? null
-                          : _requestTermination,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFC75A5A),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      icon: const Icon(Icons.close_rounded),
-                      label: const Text('Terminate'),
-                    ),
-                  ),
-                ],
                 if (currentUserMutualRequestRejected) ...[
                   const SizedBox(height: 12),
                   Container(
@@ -6832,7 +8656,7 @@ class _ChatViewState extends State<ChatView> {
         actions: [
           if (showWorkProgressAction)
             Padding(
-              padding: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.only(right: 8),
               child: Center(
                 child: Material(
                   color: _isWorkProgressSheetOpen
@@ -6867,6 +8691,9 @@ class _ChatViewState extends State<ChatView> {
                 ),
               ),
             ),
+          _buildChatHeaderAdminReviewAction(
+            padding: const EdgeInsets.only(right: 12),
+          ),
         ],
         title: GestureDetector(
           onTap: _openOtherUserProfile,
@@ -6973,49 +8800,63 @@ class _ChatViewState extends State<ChatView> {
                 : const SizedBox.shrink(key: ValueKey('work_progress_hidden')),
           ),
           Expanded(
-            child: StreamBuilder<List<MessageModel>>(
-              stream: _controller.getMessages(widget.chatId),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+            child: Stack(
+              children: [
+                StreamBuilder<List<MessageModel>>(
+                  stream: _controller.getMessages(widget.chatId),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Failed to load messages: ${snapshot.error}'),
-                  );
-                }
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text(
+                          'Failed to load messages: ${snapshot.error}',
+                        ),
+                      );
+                    }
 
-                final messages = snapshot.data ?? [];
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _scrollToBottom(jump: true);
-                });
+                    final messages = snapshot.data ?? [];
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      _scrollToBottom(jump: true);
+                    });
 
-                if (messages.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No messages yet.',
-                      style: TextStyle(fontSize: 15),
-                    ),
-                  );
-                }
+                    if (messages.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'No messages yet.',
+                          style: TextStyle(fontSize: 15),
+                        ),
+                      );
+                    }
 
-                return Scrollbar(
-                  controller: _scrollController,
-                  thumbVisibility: true,
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      return _buildMessageBubble(messages[index]);
-                    },
+                    return Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          return _buildMessageBubble(messages[index]);
+                        },
+                      ),
+                    );
+                  },
+                ),
+                if (!isKeyboardOpen &&
+                    showPinnedApprovedContract &&
+                    _isApprovedContractPanelExpanded)
+                  _buildPinnedApprovedContractScrollable(
+                    overlayExpandedPanel: true,
                   ),
-                );
-              },
+              ],
             ),
           ),
-          if (!isKeyboardOpen && showPinnedApprovedContract)
+          if (!isKeyboardOpen &&
+              showPinnedApprovedContract &&
+              !_isApprovedContractPanelExpanded)
             _buildPinnedApprovedContractScrollable(),
 
           SafeArea(
@@ -7504,7 +9345,7 @@ class _ReviewEditorSheetState extends State<_ReviewEditorSheet> {
   @override
   void initState() {
     super.initState();
-    _rating = widget.initialRating.clamp(1, 5);
+    _rating = widget.initialRating.clamp(0, 5);
     _textController = TextEditingController(text: widget.initialText);
   }
 
@@ -7518,12 +9359,20 @@ class _ReviewEditorSheetState extends State<_ReviewEditorSheet> {
     final reviewText = _textController.text.trim();
 
     if (_rating < 1 || _rating > 5) {
-      await _showErrorDialogForContext(context, 'Please select a star rating');
+      await _showErrorDialogForContext(context, 'Please select a rating');
       return;
     }
 
     if (reviewText.isEmpty) {
       await _showErrorDialogForContext(context, 'Please enter your review');
+      return;
+    }
+
+    if (reviewText.length > 100) {
+      await _showErrorDialogForContext(
+        context,
+        'Review must be 100 characters or less',
+      );
       return;
     }
 
@@ -7639,7 +9488,9 @@ class _ReviewEditorSheetState extends State<_ReviewEditorSheet> {
                   controller: _textController,
                   minLines: 4,
                   maxLines: 6,
+                  maxLength: 100,
                   textInputAction: TextInputAction.newline,
+                  inputFormatters: [LengthLimitingTextInputFormatter(100)],
                   decoration: InputDecoration(
                     hintText:
                         'Share your experience with this completed service.',

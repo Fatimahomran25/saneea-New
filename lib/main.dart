@@ -14,7 +14,7 @@ import 'views/signup.dart';
 import 'views/login.dart';
 import 'views/freelancer_home.dart';
 import 'views/client_home_screen.dart';
-import 'views/admin_home.dart';
+import 'views/admin_home_screen.dart';
 import 'views/password.dart'; // <-- ForgotPasswordScreen + ResetPasswordScreen
 
 import 'package:saneea_app/views/admin_profile.dart';

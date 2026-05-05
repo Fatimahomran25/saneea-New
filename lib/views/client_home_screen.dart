@@ -1286,7 +1286,7 @@ class _BottomNavigationBar extends StatelessWidget {
                   children: [
                     Icon(
                       Icons.forum_outlined,
-                      color: _ClientHomeScreenState._inactiveNav,
+                      color: const Color.fromARGB(255, 96, 63, 214),
                       size: 28,
                     ),
                     if (unreadCount > 0)
@@ -1331,7 +1331,7 @@ class _BottomNavigationBar extends StatelessWidget {
             },
             child: Icon(
               Icons.inbox_outlined,
-              color: _ClientHomeScreenState._inactiveNav,
+              color: const Color.fromARGB(255, 96, 63, 214),
               size: 28,
             ),
           ),
@@ -1352,7 +1352,7 @@ class _BottomNavigationBar extends StatelessWidget {
               child: Center(
                 child: Icon(
                   Icons.description_outlined,
-                  color: _ClientHomeScreenState._inactiveNav,
+                  color: const Color.fromARGB(255, 96, 63, 214),
                   size: 27,
                 ),
               ),
@@ -1366,7 +1366,7 @@ class _BottomNavigationBar extends StatelessWidget {
               child: Center(
                 child: Icon(
                   Icons.favorite_border_rounded,
-                  color: _ClientHomeScreenState._inactiveNav,
+                  color: const Color.fromARGB(255, 96, 63, 214),
                   size: 27,
                 ),
               ),

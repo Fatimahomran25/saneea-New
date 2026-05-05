@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../controlles/favorites_controller.dart';
 import '../models/favorite_user_model.dart';
 import 'client_profile.dart';
+import 'favorite_heart_button.dart';
 import 'freelancer_client_profile_view.dart';
 import 'freelancer_profile.dart';
 
@@ -15,44 +16,15 @@ class FavoritesListView extends StatefulWidget {
   State<FavoritesListView> createState() => _FavoritesListViewState();
 }
 
-class _FavoritesListViewState extends State<FavoritesListView>
-    with SingleTickerProviderStateMixin {
+class _FavoritesListViewState extends State<FavoritesListView> {
   static const Color primary = Color(0xFF5A3E9E);
   final FavoritesController _controller = FavoritesController();
   String _currentAccountType = '';
-  late final AnimationController _hintController;
-  late final Animation<Offset> _hintAnimation;
 
   @override
   void initState() {
     super.initState();
-    _hintController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 350),
-    );
-    _hintAnimation =
-        Tween<Offset>(begin: Offset.zero, end: const Offset(-0.18, 0)).animate(
-          CurvedAnimation(parent: _hintController, curve: Curves.easeInOut),
-        );
     _loadCurrentUserRole();
-
-    Future.delayed(const Duration(milliseconds: 1500), () async {
-      if (!mounted) return;
-      await _hintController.forward();
-      if (!mounted) return;
-      await _hintController.reverse();
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (!mounted) return;
-      await _hintController.forward();
-      if (!mounted) return;
-      _hintController.reverse();
-    });
-  }
-
-  @override
-  void dispose() {
-    _hintController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadCurrentUserRole() async {
@@ -181,157 +153,118 @@ class _FavoritesListViewState extends State<FavoritesListView>
               final item = favorites[index];
               final roleLabel = _formatRoleLabel(item);
 
-              Widget dismissible = ClipRRect(
+              return ClipRRect(
                 borderRadius: BorderRadius.circular(14),
-                child: Dismissible(
-                  key: ValueKey(item.favoriteUserId),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _openFavoriteProfile(item),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
                     decoration: BoxDecoration(
-                      color: Colors.red.shade400,
+                      color: const Color(0xFFF6F2FB),
                       borderRadius: BorderRadius.circular(14),
                     ),
-                    child: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.white,
-                    ),
-                  ),
-                  onDismissed: (_) =>
-                      _controller.removeFavorite(item.favoriteUserId),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => _openFavoriteProfile(item),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 16,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF6F2FB),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          CircleAvatar(
-                            radius: 20,
-                            backgroundColor: Colors.white,
-                            backgroundImage:
-                                item.favoriteUserProfileImage.isNotEmpty
-                                ? NetworkImage(item.favoriteUserProfileImage)
-                                : null,
-                            child: item.favoriteUserProfileImage.isEmpty
-                                ? const Icon(
-                                    Icons.person,
-                                    color: primary,
-                                    size: 24,
-                                  )
-                                : null,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  item.favoriteUserName.isEmpty
-                                      ? 'User'
-                                      : item.favoriteUserName,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: Colors.black,
-                                  ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundColor: Colors.white,
+                          backgroundImage:
+                              item.favoriteUserProfileImage.isNotEmpty
+                              ? NetworkImage(item.favoriteUserProfileImage)
+                              : null,
+                          child: item.favoriteUserProfileImage.isEmpty
+                              ? const Icon(
+                                  Icons.person,
+                                  color: primary,
+                                  size: 24,
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.favoriteUserName.isEmpty
+                                    ? 'User'
+                                    : item.favoriteUserName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: Colors.black,
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  roleLabel.trim().isEmpty ? '-' : roleLabel,
-                                  style: const TextStyle(
-                                    color: primary,
-                                    fontSize: 12,
-                                  ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                roleLabel.trim().isEmpty ? '-' : roleLabel,
+                                style: const TextStyle(
+                                  color: primary,
+                                  fontSize: 12,
                                 ),
-                                const SizedBox(height: 6),
-                                _buildStars(item.rating),
-                                const SizedBox(height: 6),
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    right: 10,
-                                    top: 3,
-                                  ),
-                                  child: SizedBox(
-                                    height: 28,
-                                    child: ElevatedButton(
-                                      onPressed: () =>
-                                          _openFavoriteProfile(item),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: primary,
-                                        foregroundColor: Colors.white,
-                                        elevation: 0,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        visualDensity: VisualDensity.compact,
+                              ),
+                              const SizedBox(height: 6),
+                              _buildStars(item.rating),
+                              const SizedBox(height: 6),
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  right: 10,
+                                  top: 3,
+                                ),
+                                child: SizedBox(
+                                  height: 28,
+                                  child: ElevatedButton(
+                                    onPressed: () => _openFavoriteProfile(item),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: primary,
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
                                       ),
-                                      child: const Text(
-                                        'View Profile',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.white,
-                                        ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    child: const Text(
+                                      'View Profile',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
                                       ),
                                     ),
                                   ),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                        FavoriteHeartButton(
+                          favoriteUserId: item.favoriteUserId,
+                          favoriteUserName: item.favoriteUserName,
+                          favoriteUserRole: item.favoriteUserRole,
+                          favoriteUserProfileImage:
+                              item.favoriteUserProfileImage,
+                          serviceField: item.serviceField,
+                          rating: item.rating,
+                          iconSize: 22,
+                          padding: const EdgeInsets.all(8),
+                          backgroundColor: Colors.white,
+                        ),
+                      ],
                     ),
                   ),
                 ),
               );
-
-              if (index == 0) {
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade400,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: const Icon(
-                            Icons.delete_outline,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                    SlideTransition(
-                      position: _hintAnimation,
-                      child: dismissible,
-                    ),
-                  ],
-                );
-              }
-
-              return dismissible;
             },
           );
         },

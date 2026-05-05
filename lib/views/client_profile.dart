@@ -1,11 +1,13 @@
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../controlles/client_profile_controller.dart';
 import 'favorite_heart_button.dart';
+import 'report_flag_button.dart';
 
 class ClientProfile extends StatelessWidget {
   final String? userId;
@@ -95,6 +97,8 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
 
     final p = c.profile!;
     final purple = ClientProfile.kPurple;
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final showProfileReportAction = currentUserId != p.uid;
 
     ImageProvider? avatar;
     if (c.pickedImageFile != null) {
@@ -126,6 +130,18 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
                 padding: const EdgeInsets.all(10),
                 backgroundColor: const Color(0xFFF6F2FB),
               ),
+            ),
+          if (showProfileReportAction)
+            ReportFlagButton(
+              onPressed: () {
+                showReportIssueDialog(
+                  context: context,
+                  source: 'profile',
+                  reportedUserId: p.uid,
+                  reportedUserName: p.name,
+                  reportedUserRole: 'client',
+                );
+              },
             ),
           if (c.isOwnProfile) ...[
             IconButton(
