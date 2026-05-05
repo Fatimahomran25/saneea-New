@@ -186,31 +186,93 @@ class _DashboardHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        const _AdminBrandBadge(),
+        const _AdminNotificationButton(),
       ],
     );
   }
 }
 
-class _AdminBrandBadge extends StatelessWidget {
-  const _AdminBrandBadge();
+class _AdminNotificationButton extends StatelessWidget {
+  const _AdminNotificationButton();
 
   static const Color _primaryPurple = Color(0xFF5A3E9E);
 
+  void _openNotifications(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.68,
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(26),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Notifications',
+                    style: TextStyle(
+                      color: Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {},
+                    child: const Text(
+                      'Mark all as read',
+                      style: TextStyle(
+                        color: _primaryPurple,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const Expanded(
+                child: Center(
+                  child: Text(
+                    'No notifications yet.',
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F2FB),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _primaryPurple.withOpacity(0.10)),
-      ),
-      child: const Icon(
-        Icons.dashboard_customize_rounded,
-        color: _primaryPurple,
-        size: 20,
+    return GestureDetector(
+      onTap: () => _openNotifications(context),
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF6F2FB),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _primaryPurple.withOpacity(0.10)),
+        ),
+        child: const Icon(
+          Icons.notifications_none_rounded,
+          color: _primaryPurple,
+          size: 22,
+        ),
       ),
     );
   }
@@ -245,49 +307,48 @@ class _OverviewSection extends StatelessWidget {
       stream: FirebaseFirestore.instance.collection('general_reports').snapshots(),
       builder: (context, generalSnapshot) {
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection('contract_reports')
-              .snapshots(),
+          stream: FirebaseFirestore.instance.collection('contract_reports').snapshots(),
           builder: (context, contractSnapshot) {
-            final generalDocs =
-                generalSnapshot.data?.docs ??
+            final generalDocs = generalSnapshot.data?.docs ??
                 <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-            final contractDocs =
-                contractSnapshot.data?.docs ??
+            final contractDocs = contractSnapshot.data?.docs ??
                 <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
             final isLoading =
                 generalSnapshot.connectionState == ConnectionState.waiting ||
-                contractSnapshot.connectionState == ConnectionState.waiting;
+                    contractSnapshot.connectionState == ConnectionState.waiting;
 
             final openCount = _countWithFallback(
               generalDocs,
               const {'open', 'submitted', 'pending'},
               fallback: 'open',
             );
+
             final underReviewCount =
                 _countWithFallback(
                   generalDocs,
                   const {'under_review'},
                   fallback: 'open',
                 ) +
-                _countWithFallback(
-                  contractDocs,
-                  const {'under_review'},
-                  fallback: 'requested',
-                );
+                    _countWithFallback(
+                      contractDocs,
+                      const {'under_review'},
+                      fallback: 'requested',
+                    );
+
             final contractReviewCount = contractDocs.length;
+
             final resolvedCount =
                 _countWithFallback(
                   generalDocs,
                   const {'resolved', 'valid'},
                   fallback: 'open',
                 ) +
-                _countWithFallback(
-                  contractDocs,
-                  const {'resolved'},
-                  fallback: 'requested',
-                );
+                    _countWithFallback(
+                      contractDocs,
+                      const {'resolved'},
+                      fallback: 'requested',
+                    );
 
             return GridView.count(
               crossAxisCount: 2,
@@ -295,7 +356,7 @@ class _OverviewSection extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 12,
               crossAxisSpacing: 12,
-              childAspectRatio: 1.32,
+              childAspectRatio: 1.22,
               children: [
                 _OverviewStatCard(
                   icon: Icons.outlined_flag_rounded,
@@ -342,7 +403,7 @@ class _OverviewStatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -357,37 +418,40 @@ class _OverviewStatCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 38,
-            height: 38,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
               color: const Color(0xFFF6F2FB),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: _primaryPurple, size: 20),
+            child: Icon(icon, color: _primaryPurple, size: 19),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Colors.black87,
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: FontWeight.w700,
             ),
           ),
-          Text(
-            label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.black.withOpacity(0.68),
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              height: 1.25,
+          const SizedBox(height: 3),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.black.withOpacity(0.68),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                height: 1.15,
+              ),
             ),
           ),
         ],
@@ -741,9 +805,9 @@ int _countWithFallback(
 
 String _normalizedStatus(dynamic value, {required String fallback}) {
   final text = (value ?? '').toString().trim().toLowerCase().replaceAll(
-    ' ',
-    '_',
-  );
+        ' ',
+        '_',
+      );
   if (text.isEmpty) {
     return fallback.trim().toLowerCase().replaceAll(' ', '_');
   }

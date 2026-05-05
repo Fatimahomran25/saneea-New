@@ -13,8 +13,6 @@ class AdminContractReviewsView extends StatefulWidget {
 }
 
 class _AdminContractReviewsViewState extends State<AdminContractReviewsView> {
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
   String _selectedFilter = 'All';
 
   static const List<String> _filters = [
@@ -24,12 +22,6 @@ class _AdminContractReviewsViewState extends State<AdminContractReviewsView> {
     'Resolved',
     'Dismissed',
   ];
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,71 +36,59 @@ class _AdminContractReviewsViewState extends State<AdminContractReviewsView> {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.white,
       ),
-      body: Column(
-        children: [
-          const AdminPageIntro(
-            eyebrow: 'Review Queue',
-            title: 'Contract Reviews',
-            subtitle:
-                'Review contract disputes and admin review requests in one clear, focused list.',
-          ),
-          AdminSearchField(
-            controller: _searchController,
-            hintText: 'Search contract reviews',
-            onChanged: (value) {
-              setState(() {
-                _searchQuery = value.trim().toLowerCase();
-              });
-            },
-          ),
-          _buildFilterChips(),
-          const SizedBox(height: 14),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('contract_reports')
-                  .orderBy('createdAt', descending: true)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const AdminLoadingState();
-                }
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            const SizedBox(height: 14),
+            _buildFilterChips(),
+            const SizedBox(height: 14),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('contract_reports')
+                    .orderBy('createdAt', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const AdminLoadingState();
+                  }
 
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const AdminEmptyState(
-                    icon: Icons.fact_check_outlined,
-                    title: 'No contract reviews yet.',
-                    subtitle: 'Contract review requests will appear here.',
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return const AdminEmptyState(
+                      icon: Icons.fact_check_outlined,
+                      title: 'No contract reviews yet.',
+                      subtitle: 'Contract review requests will appear here.',
+                    );
+                  }
+
+                  final reviews = snapshot.data!.docs
+                      .map((doc) => _ContractReviewCardData.fromDoc(doc))
+                      .where(_matchesFilter)
+                      .toList();
+
+                  if (reviews.isEmpty) {
+                    return const AdminEmptyState(
+                      icon: Icons.filter_alt_off_rounded,
+                      title: 'No matching contract reviews.',
+                      subtitle: 'Try switching filters.',
+                    );
+                  }
+
+                  return ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                    itemBuilder: (context, index) {
+                      final review = reviews[index];
+                      return _ContractReviewListCard(review: review);
+                    },
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemCount: reviews.length,
                   );
-                }
-
-                final reviews = snapshot.data!.docs
-                    .map((doc) => _ContractReviewCardData.fromDoc(doc))
-                    .where(_matchesFilter)
-                    .toList();
-
-                if (reviews.isEmpty) {
-                  return const AdminEmptyState(
-                    icon: Icons.filter_alt_off_rounded,
-                    title: 'No matching contract reviews.',
-                    subtitle:
-                        'Try switching filters to see other contract review requests.',
-                  );
-                }
-
-                return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                  itemBuilder: (context, index) {
-                    final review = reviews[index];
-                    return _ContractReviewListCard(review: review);
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemCount: reviews.length,
-                );
-              },
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -117,7 +97,7 @@ class _AdminContractReviewsViewState extends State<AdminContractReviewsView> {
     return SizedBox(
       height: 38,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         itemBuilder: (context, index) {
           final filter = _filters[index];
@@ -139,18 +119,6 @@ class _AdminContractReviewsViewState extends State<AdminContractReviewsView> {
   }
 
   bool _matchesFilter(_ContractReviewCardData review) {
-    final matchesSearch =
-        _searchQuery.isEmpty ||
-        review.reporterName.toLowerCase().contains(_searchQuery) ||
-        review.otherPartyName.toLowerCase().contains(_searchQuery) ||
-        review.reasonLabel.toLowerCase().contains(_searchQuery) ||
-        review.statusLabel.toLowerCase().contains(_searchQuery) ||
-        review.contractStatusLabel.toLowerCase().contains(_searchQuery);
-
-    if (!matchesSearch) {
-      return false;
-    }
-
     switch (_selectedFilter) {
       case 'Requested':
         return review.normalizedStatus == 'requested';
@@ -188,14 +156,14 @@ class _ContractReviewListCard extends StatelessWidget {
           );
         },
         child: Ink(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(16),
           decoration: adminCardDecoration(),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
                   color: kAdminSoftSurface,
                   borderRadius: BorderRadius.circular(999),
@@ -203,41 +171,43 @@ class _ContractReviewListCard extends StatelessWidget {
                 child: const Icon(
                   Icons.fact_check_outlined,
                   color: kAdminPrimary,
-                  size: 22,
+                  size: 20,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
                           child: Text(
                             review.reporterName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: kAdminTextPrimary,
-                              fontSize: 15.8,
+                              fontSize: 15.5,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         AdminStatusChip(
                           status: review.normalizedStatus,
                           label: review.statusLabel,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 5),
                     Text(
                       'Other party: ${review.otherPartyName}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: kAdminTextSecondary,
-                        fontSize: 13.25,
-                        height: 1.4,
+                        fontSize: 13,
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -245,7 +215,7 @@ class _ContractReviewListCard extends StatelessWidget {
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
-                        vertical: 10,
+                        vertical: 9,
                       ),
                       decoration: BoxDecoration(
                         color: kAdminSoftSurface,
@@ -257,42 +227,23 @@ class _ContractReviewListCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: kAdminTextPrimary,
-                          fontSize: 13.2,
-                          height: 1.4,
+                          fontSize: 13,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Row(
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        if (review.contractStatusRaw.isNotEmpty) ...[
-                          Flexible(
-                            child: AdminStatusChip(
-                              status: review.contractStatusRaw,
-                              label: review.contractStatusLabel,
-                            ),
+                        if (review.contractStatusRaw.isNotEmpty)
+                          AdminStatusChip(
+                            status: review.contractStatusRaw,
+                            label: review.contractStatusLabel,
                           ),
-                          const SizedBox(width: 8),
-                        ],
-                        Flexible(
-                          child: AdminMetaPill(
-                            label: review.createdAtLabel,
-                            icon: Icons.schedule_rounded,
-                          ),
-                        ),
-                        const Spacer(),
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: kAdminSoftSurface,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.arrow_forward_ios_rounded,
-                            color: kAdminPrimary,
-                            size: 15,
-                          ),
+                        AdminMetaPill(
+                          label: review.createdAtLabel,
+                          icon: Icons.schedule_rounded,
                         ),
                       ],
                     ),
@@ -334,8 +285,15 @@ class _ContractReviewCardData {
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
   ) {
     final data = doc.data();
-    final rawStatus = _firstFilled([data['status'], 'requested']);
-    final rawContractStatus = _firstFilled([data['contractStatus']]);
+
+    final rawStatus = _firstFilled([
+      data['status'],
+      'requested',
+    ]);
+
+    final rawContractStatus = _firstFilled([
+      data['contractStatus'],
+    ]);
 
     return _ContractReviewCardData(
       id: doc.id,
@@ -391,5 +349,6 @@ String _formatCreatedAt(dynamic value) {
   final day = dateTime.day.toString().padLeft(2, '0');
   final hour = dateTime.hour.toString().padLeft(2, '0');
   final minute = dateTime.minute.toString().padLeft(2, '0');
+
   return '$year-$month-$day $hour:$minute';
 }

@@ -215,118 +215,133 @@ class _AdminContractReviewDetailsViewState
     }
   }
 
-  Future<void> _showAdminActionsSheet({
-    required bool isAdminTerminated,
-  }) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: kAdminBorder,
-                      borderRadius: BorderRadius.circular(999),
+
+Future<void> _showAdminActionsSheet({
+  required bool isAdminTerminated,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.white,
+    isScrollControlled: true, // FIX
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) {
+      return SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.72,
+          minChildSize: 0.45,
+          maxChildSize: 0.90,
+          builder: (context, scrollController) {
+            return SingleChildScrollView(
+              controller: scrollController,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: kAdminBorder,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Admin Actions',
+                      style: TextStyle(
+                        color: kAdminPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Choose how you want to manage this contract review.',
+                      style: TextStyle(
+                        color: kAdminTextSecondary,
+                        fontSize: 13.5,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AdminActionSheetTile(
+                      icon: Icons.visibility_outlined,
+                      iconColor: kAdminWarning,
+                      title: 'Mark Under Review',
+                      subtitle: 'Move the case into active review.',
+                      enabled: !_isUpdatingStatus,
+                      onTap: _isUpdatingStatus
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              _updateStatus('under_review');
+                            },
+                    ),
+                    const Divider(height: 20, color: kAdminBorder),
+                    AdminActionSheetTile(
+                      icon: Icons.do_disturb_alt_outlined,
+                      iconColor: kAdminMuted,
+                      title: 'Dismiss / Invalid',
+                      subtitle: 'Close this review as dismissed or invalid.',
+                      enabled: !_isUpdatingStatus,
+                      onTap: _isUpdatingStatus
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              _updateStatus('dismissed');
+                            },
+                    ),
+                    const Divider(height: 20, color: kAdminBorder),
+                    AdminActionSheetTile(
+                      icon: Icons.task_alt_rounded,
+                      iconColor: kAdminSuccess,
+                      title: 'Mark Resolved',
+                      subtitle: 'Resolve the contract review case.',
+                      enabled: !_isUpdatingStatus,
+                      onTap: _isUpdatingStatus
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              _updateStatus('resolved');
+                            },
+                    ),
+                    const Divider(height: 20, color: kAdminBorder),
+                    AdminActionSheetTile(
+                      icon: Icons.gavel_rounded,
+                      iconColor: kAdminDanger,
+                      title: isAdminTerminated
+                          ? 'Contract Admin Terminated'
+                          : 'Admin Terminate Contract',
+                      subtitle: isAdminTerminated
+                          ? 'This contract has already been admin terminated.'
+                          : 'End the contract without using the payment flow.',
+                      enabled: !_isUpdatingStatus && !isAdminTerminated,
+                      onTap: _isUpdatingStatus || isAdminTerminated
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              _showAdminTerminateContractDialog();
+                            },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Admin Actions',
-                  style: TextStyle(
-                    color: kAdminPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Choose how you want to manage this contract review.',
-                  style: TextStyle(
-                    color: kAdminTextSecondary,
-                    fontSize: 13.5,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                AdminActionSheetTile(
-                  icon: Icons.visibility_outlined,
-                  iconColor: kAdminWarning,
-                  title: 'Mark Under Review',
-                  subtitle: 'Move the case into active review.',
-                  enabled: !_isUpdatingStatus,
-                  onTap: _isUpdatingStatus
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          _updateStatus('under_review');
-                        },
-                ),
-                const Divider(height: 20, color: kAdminBorder),
-                AdminActionSheetTile(
-                  icon: Icons.do_disturb_alt_outlined,
-                  iconColor: kAdminMuted,
-                  title: 'Dismiss / Invalid',
-                  subtitle: 'Close this review as dismissed or invalid.',
-                  enabled: !_isUpdatingStatus,
-                  onTap: _isUpdatingStatus
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          _updateStatus('dismissed');
-                        },
-                ),
-                const Divider(height: 20, color: kAdminBorder),
-                AdminActionSheetTile(
-                  icon: Icons.task_alt_rounded,
-                  iconColor: kAdminSuccess,
-                  title: 'Mark Resolved',
-                  subtitle: 'Resolve the contract review case.',
-                  enabled: !_isUpdatingStatus,
-                  onTap: _isUpdatingStatus
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          _updateStatus('resolved');
-                        },
-                ),
-                const Divider(height: 20, color: kAdminBorder),
-                AdminActionSheetTile(
-                  icon: Icons.gavel_rounded,
-                  iconColor: kAdminDanger,
-                  title: isAdminTerminated
-                      ? 'Contract Admin Terminated'
-                      : 'Admin Terminate Contract',
-                  subtitle: isAdminTerminated
-                      ? 'This contract has already been admin terminated.'
-                      : 'End the contract without using the payment flow.',
-                  enabled: !_isUpdatingStatus && !isAdminTerminated,
-                  onTap: _isUpdatingStatus || isAdminTerminated
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          _showAdminTerminateContractDialog();
-                        },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+              ),
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+
+
 
   void _openUserProfile({
     required String title,

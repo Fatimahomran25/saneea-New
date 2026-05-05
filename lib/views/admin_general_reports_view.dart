@@ -13,8 +13,6 @@ class AdminGeneralReportsView extends StatefulWidget {
 }
 
 class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
   String _selectedFilter = 'All';
 
   static const List<String> _filters = [
@@ -24,12 +22,6 @@ class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
     'Resolved',
     'Dismissed',
   ];
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,21 +40,7 @@ class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
         top: false,
         child: Column(
           children: [
-            const AdminPageIntro(
-              eyebrow: 'Moderation Queue',
-              title: 'General Reports',
-              subtitle:
-                  'Review incoming user, content, and general issue reports in one clean, focused list.',
-            ),
-            AdminSearchField(
-              controller: _searchController,
-              hintText: 'Search reports',
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value.trim().toLowerCase();
-                });
-              },
-            ),
+            const SizedBox(height: 14),
             _buildFilterChips(),
             const SizedBox(height: 14),
             Expanded(
@@ -93,8 +71,7 @@ class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
                     return const AdminEmptyState(
                       icon: Icons.filter_alt_off_rounded,
                       title: 'No matching reports.',
-                      subtitle:
-                          'Try changing your filters or search keywords.',
+                      subtitle: 'Try changing your filter.',
                     );
                   }
 
@@ -142,17 +119,6 @@ class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
   }
 
   bool _matchesFilters(_GeneralReportCardData report) {
-    final matchesSearch =
-        _searchQuery.isEmpty ||
-        report.reporterName.toLowerCase().contains(_searchQuery) ||
-        report.reportedUserName.toLowerCase().contains(_searchQuery) ||
-        report.reason.toLowerCase().contains(_searchQuery) ||
-        report.statusLabel.toLowerCase().contains(_searchQuery);
-
-    if (!matchesSearch) {
-      return false;
-    }
-
     switch (_selectedFilter) {
       case 'Open':
         return report.normalizedStatus == 'open' ||
@@ -378,5 +344,6 @@ String _formatCreatedAt(dynamic value) {
   final day = dateTime.day.toString().padLeft(2, '0');
   final hour = dateTime.hour.toString().padLeft(2, '0');
   final minute = dateTime.minute.toString().padLeft(2, '0');
+
   return '$year-$month-$day $hour:$minute';
 }
