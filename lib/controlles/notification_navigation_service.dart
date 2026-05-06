@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/contract_model.dart';
+import '../views/admin_contract_review_details_view.dart';
+import '../views/admin_general_report_details_view.dart';
 import '../views/announcement_requests_view.dart';
 import '../views/chat_view.dart';
 import '../views/client_home_screen.dart' show AllServiceRequestsView;
@@ -10,6 +12,7 @@ import '../views/contract_details_screen.dart';
 import '../views/freelancer_incoming_requests_view.dart';
 import '../views/my_announcement_requests_view.dart';
 import '../views/my_requests_view.dart';
+import '../views/warning_notice_view.dart';
 import 'request_notifications_controller.dart';
 
 Future<void> handleNotificationTap({
@@ -69,6 +72,48 @@ Future<void> handleNotificationTap({
         );
       }
       return;
+    }
+
+    if (type == 'admin_warning') {
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => WarningNoticeView(
+            title: notification.title,
+            message: notification.message,
+            warningCount: notification.warningCount,
+            maxWarnings: notification.maxWarnings,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (type == 'new_general_report') {
+      final reportId = _firstFilled([
+        notification.relatedReportId,
+        notification.requestId,
+      ]);
+
+      if (reportId.isNotEmpty) {
+        await navigator.push(
+          MaterialPageRoute(
+            builder: (_) => AdminGeneralReportDetailsView(reportId: reportId),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (type == 'new_contract_report') {
+      final reviewId = _clean(notification.reviewId);
+      if (reviewId.isNotEmpty) {
+        await navigator.push(
+          MaterialPageRoute(
+            builder: (_) => AdminContractReviewDetailsView(reviewId: reviewId),
+          ),
+        );
+        return;
+      }
     }
 
     final currentUser = auth.currentUser;
@@ -466,6 +511,11 @@ Future<void> _openSafeFallback({
       return;
     }
 
+    if (userRole == 'admin') {
+      navigator.pushNamed('/adminHome');
+      return;
+    }
+
     if (userRole == 'freelancer') {
       navigator.pushNamed('/freelancerHome');
       return;
@@ -603,7 +653,9 @@ Future<String> _resolveCurrentUserRole({
   final userDoc = await firestore.collection('users').doc(uid).get();
   final accountType = _clean(userDoc.data()?['accountType']).toLowerCase();
 
-  if (accountType == 'client' || accountType == 'freelancer') {
+  if (accountType == 'client' ||
+      accountType == 'freelancer' ||
+      accountType == 'admin') {
     return accountType;
   }
 

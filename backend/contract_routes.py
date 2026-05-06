@@ -532,7 +532,7 @@ def verify_payment_api():
             return jsonify({
                 "success": False,
                 "paymentStatus": payment.get("status", "failed"),
-                "deliveryStatus": "approved_awaiting_payment"
+                "deliveryStatus": "approved"
             }), 400
 
         source_context = get_contract_source_by_id(request_id, request_id)
@@ -561,6 +561,8 @@ def verify_payment_api():
 
         updated_payment_data.update({
             "paymentStatus": "paid",
+            "paymentCompleted": True,
+            "paymentCompletedAt": now_iso,
             "transactionId": payment.get("id"),
             "paidAt": now_iso,
             "paidBy": paid_by,

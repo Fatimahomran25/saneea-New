@@ -1,0 +1,76 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function chatDoc(chatId) {
+      return firestore.get(/databases/(default)/documents/chat/$(chatId));
+    }
+
+    function requestDoc(chatId) {
+      return firestore.get(
+        /databases/(default)/documents/requests/$(chatDoc(chatId).data.requestId)
+      );
+    }
+
+    function proposalDoc(chatId) {
+      return firestore.get(
+        /databases/(default)/documents/announcement_requests/$(chatDoc(chatId).data.proposalId)
+      );
+    }
+
+    function hasProposal(chatId) {
+      return chatDoc(chatId).data.proposalId != null &&
+        chatDoc(chatId).data.proposalId != '';
+    }
+
+    function participantIsClient(chatId) {
+      return signedIn() && request.auth.uid == chatDoc(chatId).data.clientId;
+    }
+
+    function participantIsFreelancer(chatId) {
+      return signedIn() && request.auth.uid == chatDoc(chatId).data.freelancerId;
+    }
+
+    function isParticipant(chatId) {
+      return participantIsClient(chatId) || participantIsFreelancer(chatId);
+    }
+
+    function paymentStatus(chatId) {
+      return hasProposal(chatId)
+        ? proposalDoc(chatId).data.contractData.paymentData.paymentStatus
+        : requestDoc(chatId).data.contractData.paymentData.paymentStatus;
+    }
+
+    function deliveryStatus(chatId) {
+      return hasProposal(chatId)
+        ? proposalDoc(chatId).data.contractData.deliveryData.status
+        : requestDoc(chatId).data.contractData.deliveryData.status;
+    }
+
+    function contractStatus(chatId) {
+      return hasProposal(chatId)
+        ? proposalDoc(chatId).data.contractData.approval.contractStatus
+        : requestDoc(chatId).data.contractData.approval.contractStatus;
+    }
+
+    function clientHasPaidAccess(chatId) {
+      return paymentStatus(chatId) == 'paid' ||
+        deliveryStatus(chatId) == 'paid_delivered' ||
+        contractStatus(chatId) == 'completed';
+    }
+
+    match /delivery_previews/{chatId}/{allPaths=**} {
+      allow read: if isParticipant(chatId);
+      allow write: if participantIsFreelancer(chatId);
+    }
+
+    match /delivery_files/{chatId}/{allPaths=**} {
+      allow read: if participantIsFreelancer(chatId) ||
+        (participantIsClient(chatId) && clientHasPaidAccess(chatId));
+      allow write: if participantIsFreelancer(chatId);
+    }
+  }
+}

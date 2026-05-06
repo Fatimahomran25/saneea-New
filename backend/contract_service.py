@@ -11,22 +11,44 @@ def build_contract_data(request):
             "description": request.get("description", "")
         },
         "payment": {
-    "amount": request.get("budget", 0),
-    "currency": "SAR",
-    "paidAt": None
-},
+            "amount": request.get("budget", 0),
+            "currency": "SAR",
+            "paidAt": None
+        },
+        "paymentData": {
+            "paymentStatus": "pending",
+            "paymentCompleted": False,
+            "paymentCompletedAt": "",
+            "transactionId": "",
+            "paidAt": "",
+            "paidBy": "",
+            "amount": ""
+        },
 
-"progressData": {
-    "stage": "started",
-    "updatedAt": None,
-    "updatedBy": ""
-},
-"deliveryData": {
-    "status": "not_submitted",
-    "submittedAt": "",
-    "approvedAt": "",
-    "paidAt": ""
-},
+        "progressData": {
+            "stage": "started",
+            "updatedAt": None,
+            "updatedBy": ""
+        },
+        "deliveryData": {
+            "status": "not_submitted",
+            "previewImageUrls": [],
+            "imageUrls": [],
+            "imageItems": [],
+            "fileItems": [],
+            "finalWorkUrls": [],
+            "fileNames": [],
+            "linkUrls": [],
+            "notes": "",
+            "submittedAt": "",
+            "submittedBy": "",
+            "approvedByClient": False,
+            "changesRequestedBy": "",
+            "changesRequestedAt": "",
+            "approvedBy": "",
+            "approvedAt": "",
+            "paidAt": ""
+        },
         "timeline": {
             "deadline": request.get("deadline", "")
         },

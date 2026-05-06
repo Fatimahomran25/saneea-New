@@ -15,6 +15,8 @@ import 'views/login.dart';
 import 'views/freelancer_home.dart';
 import 'views/client_home_screen.dart';
 import 'views/admin_home_screen.dart';
+import 'views/admin_contract_review_details_view.dart';
+import 'views/admin_general_report_details_view.dart';
 import 'views/password.dart'; // <-- ForgotPasswordScreen + ResetPasswordScreen
 
 import 'package:saneea_app/views/admin_profile.dart';
@@ -25,6 +27,7 @@ import 'views/chat_view.dart';
 import 'views/freelancer_incoming_requests_view.dart';
 import 'views/my_announcement_requests_view.dart';
 import 'views/my_requests_view.dart';
+import 'views/warning_notice_view.dart';
 
 final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -115,7 +118,14 @@ class _MyAppState extends State<MyApp> {
         }
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          navigatorKey.currentState?.pushReplacementNamed(targetRoute);
+          if (targetRoute == '/adminHome') {
+            navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
+              (route) => false,
+            );
+          } else {
+            navigatorKey.currentState?.pushReplacementNamed(targetRoute);
+          }
         });
       }
     });
@@ -151,12 +161,16 @@ class _MyAppState extends State<MyApp> {
 
             _seenNotificationIds.add(change.doc.id);
             final data = change.doc.data() ?? <String, dynamic>{};
-            final senderName = (data['senderName'] ?? '').toString().trim();
-            final actionText = (data['actionText'] ?? '').toString().trim();
-            final title = senderName.isEmpty ? 'New Notification' : senderName;
-            final body = actionText.isEmpty
+            final titleText = (data['title'] ?? data['senderName'] ?? '')
+                .toString()
+                .trim();
+            final messageText = (data['message'] ?? data['actionText'] ?? '')
+                .toString()
+                .trim();
+            final title = titleText.isEmpty ? 'New Notification' : titleText;
+            final body = messageText.isEmpty
                 ? 'You have a new update.'
-                : actionText;
+                : messageText;
 
             _showForegroundBanner(
               title,
@@ -195,7 +209,10 @@ class _MyAppState extends State<MyApp> {
           .toLowerCase();
 
       if (accountType == 'admin') {
-        navigatorKey.currentState?.pushNamed('/adminHome');
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
+          (route) => false,
+        );
       } else if (accountType == 'client') {
         navigatorKey.currentState?.pushNamed('/clientHome');
       } else {
@@ -302,6 +319,21 @@ class _MyAppState extends State<MyApp> {
   Future<void> _handleNotificationTap(Map<String, dynamic> data) async {
     final type = (data['type'] ?? '').toString().trim().toLowerCase();
 
+    if (type == 'admin_warning') {
+      await _handleAdminWarningTap(data);
+      return;
+    }
+
+    if (type == 'new_general_report') {
+      await _handleAdminGeneralReportTap(data);
+      return;
+    }
+
+    if (type == 'new_contract_report') {
+      await _handleAdminContractReportTap(data);
+      return;
+    }
+
     if (type == 'request_accepted') {
       await _handleRequestAcceptedTap(data);
       return;
@@ -325,6 +357,92 @@ class _MyAppState extends State<MyApp> {
     }
 
     await _handleNotificationTapWithChatData(data);
+  }
+
+  Future<void> _handleAdminWarningTap(Map<String, dynamic> data) async {
+    final receiverId = (data['receiverId'] ?? '').toString().trim();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => WarningNoticeView(
+          title: (data['title'] ?? '').toString().trim(),
+          message: (data['message'] ?? data['actionText'] ?? '')
+              .toString()
+              .trim(),
+          warningCount: _intOrNull(data['warningCount']),
+          maxWarnings: _intOrNull(data['maxWarnings']),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleAdminGeneralReportTap(Map<String, dynamic> data) async {
+    final receiverId = (data['receiverId'] ?? '').toString().trim();
+    final reportId = ((data['relatedReportId'] ?? data['reportId']) ?? '')
+        .toString()
+        .trim();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    if (reportId.isEmpty) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => AdminGeneralReportDetailsView(reportId: reportId),
+      ),
+    );
+  }
+
+  Future<void> _handleAdminContractReportTap(
+    Map<String, dynamic> data,
+  ) async {
+    final receiverId = (data['receiverId'] ?? '').toString().trim();
+    final reviewId = (data['reviewId'] ?? '').toString().trim();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      navigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+
+    if (receiverId.isNotEmpty && receiverId != user.uid) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    if (reviewId.isEmpty) {
+      await _navigateToCorrectHome();
+      return;
+    }
+
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => AdminContractReviewDetailsView(reviewId: reviewId),
+      ),
+    );
   }
 
   Future<void> _handleRequestAcceptedTap(Map<String, dynamic> data) async {
@@ -652,6 +770,12 @@ class _LoadingScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
+}
+
+int? _intOrNull(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse((value ?? '').toString().trim());
 }
 
 class MyHomePage extends StatefulWidget {

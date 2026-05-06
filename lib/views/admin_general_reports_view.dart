@@ -211,24 +211,29 @@ class _GeneralReportListCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kAdminSoftSurface,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        report.reason,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kAdminTextPrimary,
-                          fontSize: 13.2,
-                          height: 1.4,
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 240),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kAdminSoftSurface,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            report.reason,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: kAdminTextPrimary,
+                              fontSize: 13.2,
+                              height: 1.4,
+                            ),
+                          ),
                         ),
                       ),
                     ),

@@ -5,8 +5,13 @@ import '../models/contract_model.dart';
 
 class ContractDetailsScreen extends StatefulWidget {
   final GeneratedContract contract;
+  final bool readOnlyMode;
 
-  const ContractDetailsScreen({super.key, required this.contract});
+  const ContractDetailsScreen({
+    super.key,
+    required this.contract,
+    this.readOnlyMode = false,
+  });
 
   @override
   State<ContractDetailsScreen> createState() => _ContractDetailsScreenState();
@@ -268,8 +273,8 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
         backgroundColor: Colors.white,
         foregroundColor: _primary,
         elevation: 0,
-        actions: [
-          if (contract.canDelete)
+          actions: [
+          if (!widget.readOnlyMode && contract.canDelete)
             IconButton(
               tooltip: 'Delete contract',
               onPressed: _isDeleting ? null : _deleteContract,

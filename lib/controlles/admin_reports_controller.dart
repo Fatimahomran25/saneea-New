@@ -1,18 +1,36 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
+import 'app_notification_service.dart';
 
 class AdminReportsController {
   AdminReportsController({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _notificationService = AppNotificationService(
+        firestore: firestore ?? FirebaseFirestore.instance,
+      );
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final AppNotificationService _notificationService;
 
   Future<void> dismissGeneralReport({
     required String reportId,
   }) async {
     await _firestore.collection('general_reports').doc(reportId).set({
       'status': 'dismissed',
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> reopenGeneralReport({
+    required String reportId,
+  }) async {
+    await _firestore.collection('general_reports').doc(reportId).set({
+      'status': 'open',
+      'handledAt': FieldValue.delete(),
+      'handledBy': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -30,7 +48,9 @@ class AdminReportsController {
     final reportRef = _firestore.collection('general_reports').doc(reportId);
     final userRef = _firestore.collection('users').doc(trimmedReportedUserId);
 
-    await _firestore.runTransaction((transaction) async {
+    final warningOutcome = await _firestore.runTransaction<Map<String, dynamic>>((
+      transaction,
+    ) async {
       final reportSnapshot = await transaction.get(reportRef);
       final reportData = reportSnapshot.data();
 
@@ -65,7 +85,27 @@ class AdminReportsController {
         'warningCountAfterAction': nextWarningCount,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      return {
+        'didApplyWarning': !warningAlreadyApplied,
+        'warningCount': nextWarningCount,
+      };
     });
+
+    final didApplyWarning = warningOutcome['didApplyWarning'] == true;
+    final nextWarningCount = _intValue(warningOutcome['warningCount']);
+
+    if (!didApplyWarning) return;
+
+    try {
+      await _notificationService.createAdminWarningNotification(
+        targetUserId: trimmedReportedUserId,
+        reportId: reportId,
+        warningCount: nextWarningCount,
+      );
+    } catch (error) {
+      debugPrint('Create admin warning notification error: $error');
+    }
   }
 
   Future<void> blockReportedUser({

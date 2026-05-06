@@ -3,12 +3,11 @@ import 'package:flutter/material.dart';
 
 import '../controlles/admin_reports_controller.dart';
 import 'admin_ui.dart';
+import 'client_profile.dart';
+import 'freelancer_profile.dart';
 
 class AdminGeneralReportDetailsView extends StatefulWidget {
-  const AdminGeneralReportDetailsView({
-    super.key,
-    required this.reportId,
-  });
+  const AdminGeneralReportDetailsView({super.key, required this.reportId});
 
   final String reportId;
 
@@ -42,8 +41,9 @@ class _AdminGeneralReportDetailsViewState
 
     final reportData = reportSnapshot.data() ?? <String, dynamic>{};
     final reporterId = (reportData['reporterId'] ?? '').toString().trim();
-    final reportedUserId =
-        (reportData['reportedUserId'] ?? '').toString().trim();
+    final reportedUserId = (reportData['reportedUserId'] ?? '')
+        .toString()
+        .trim();
 
     Map<String, dynamic>? reporterData;
     Map<String, dynamic>? reportedUserData;
@@ -84,9 +84,9 @@ class _AdminGeneralReportDetailsViewState
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_friendlyError(error))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
     } finally {
       if (mounted) {
         setState(() => _isUpdatingStatus = false);
@@ -114,9 +114,32 @@ class _AdminGeneralReportDetailsViewState
       });
     } catch (error) {
       if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+    } finally {
+      if (mounted) {
+        setState(() => _isUpdatingStatus = false);
+      }
+    }
+  }
+
+  Future<void> _reopenReport() async {
+    setState(() => _isUpdatingStatus = true);
+    try {
+      await _controller.reopenGeneralReport(reportId: widget.reportId);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_friendlyError(error))),
+        const SnackBar(content: Text('Report reopened successfully.')),
       );
+      setState(() {
+        _detailsFuture = _loadDetails();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
     } finally {
       if (mounted) {
         setState(() => _isUpdatingStatus = false);
@@ -143,9 +166,9 @@ class _AdminGeneralReportDetailsViewState
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_friendlyError(error))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
     } finally {
       if (mounted) {
         setState(() => _isUpdatingStatus = false);
@@ -154,11 +177,16 @@ class _AdminGeneralReportDetailsViewState
   }
 
   Future<void> _showAdminActionsSheet({
+    required String status,
     required String reportedUserId,
     required String warningReason,
     required int warningCount,
     required bool isUserBlocked,
   }) async {
+    if (!_showsStandardAdminActions(status)) {
+      return;
+    }
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
@@ -238,7 +266,8 @@ class _AdminGeneralReportDetailsViewState
                     icon: Icons.block_rounded,
                     iconColor: kAdminDanger,
                     title: 'Block User',
-                    subtitle: 'Block the reported user after repeated warnings.',
+                    subtitle:
+                        'Block the reported user after repeated warnings.',
                     enabled: !_isUpdatingStatus && reportedUserId.isNotEmpty,
                     onTap: _isUpdatingStatus || reportedUserId.isEmpty
                         ? null
@@ -259,11 +288,126 @@ class _AdminGeneralReportDetailsViewState
     );
   }
 
+  bool _showsStandardAdminActions(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'dismissed':
+      case 'valid':
+      case 'warning':
+      case 'resolved':
+        return false;
+      default:
+        return true;
+    }
+  }
+
+  bool _canReopenReport(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'dismissed':
+      case 'valid':
+      case 'warning':
+      case 'resolved':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  String? _handledAdminMessage(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'dismissed':
+        return 'This report has already been dismissed.';
+      case 'valid':
+      case 'warning':
+      case 'resolved':
+        return 'This report has already been reviewed and marked as valid.';
+      default:
+        return null;
+    }
+  }
+
   void _openUserProfile({
     required String title,
+    required String userId,
     required String name,
     required String email,
     required String accountType,
+    required String accountTypeLabel,
+    required String photoUrl,
+    int? warningCount,
+  }) {
+    final normalizedUserId = userId.trim();
+    final normalizedAccountType = accountType.trim().toLowerCase();
+
+    if (normalizedUserId.isEmpty) {
+      _showProfileFallbackMessage('This user profile is missing a user ID.');
+      _openAdminProfileFallback(
+        title: title,
+        name: name,
+        email: email,
+        accountTypeLabel: accountTypeLabel,
+        photoUrl: photoUrl,
+        warningCount: warningCount,
+      );
+      return;
+    }
+
+    if (normalizedAccountType.isEmpty) {
+      _showProfileFallbackMessage(
+        'This user profile is missing an account type.',
+      );
+      _openAdminProfileFallback(
+        title: title,
+        name: name,
+        email: email,
+        accountTypeLabel: accountTypeLabel,
+        photoUrl: photoUrl,
+        warningCount: warningCount,
+      );
+      return;
+    }
+
+    Widget? destination;
+    switch (normalizedAccountType) {
+      case 'freelancer':
+        destination = FreelancerProfileView(
+          userId: normalizedUserId,
+          readOnlyMode: true,
+        );
+        break;
+      case 'client':
+        destination = ClientProfile(
+          userId: normalizedUserId,
+          readOnlyMode: true,
+        );
+        break;
+    }
+
+    if (destination == null) {
+      final unsupportedLabel = accountTypeLabel.isEmpty
+          ? accountType
+          : accountTypeLabel;
+      _showProfileFallbackMessage(
+        'Unsupported account type "$unsupportedLabel". Showing the summary view instead.',
+      );
+      _openAdminProfileFallback(
+        title: title,
+        name: name,
+        email: email,
+        accountTypeLabel: accountTypeLabel,
+        photoUrl: photoUrl,
+        warningCount: warningCount,
+      );
+      return;
+    }
+
+    Navigator.push(context, MaterialPageRoute(builder: (_) => destination!));
+  }
+
+  void _openAdminProfileFallback({
+    required String title,
+    required String name,
+    required String email,
+    required String accountTypeLabel,
     required String photoUrl,
     int? warningCount,
   }) {
@@ -274,10 +418,11 @@ class _AdminGeneralReportDetailsViewState
           title: title,
           name: name,
           email: email,
-          accountType: accountType,
+          accountType: accountTypeLabel,
           photoUrl: photoUrl,
-          secondaryPillLabel:
-              warningCount != null ? 'Warnings: $warningCount' : '',
+          secondaryPillLabel: warningCount != null
+              ? 'Warnings: $warningCount'
+              : '',
           secondaryPillIcon: warningCount != null
               ? Icons.warning_amber_rounded
               : null,
@@ -285,6 +430,13 @@ class _AdminGeneralReportDetailsViewState
         ),
       ),
     );
+  }
+
+  void _showProfileFallbackMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -298,10 +450,7 @@ class _AdminGeneralReportDetailsViewState
         scrolledUnderElevation: 0,
         title: const Text(
           'General Report Details',
-          style: TextStyle(
-            color: kAdminPrimary,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(color: kAdminPrimary, fontWeight: FontWeight.w700),
         ),
         iconTheme: const IconThemeData(color: kAdminPrimary),
       ),
@@ -325,13 +474,17 @@ class _AdminGeneralReportDetailsViewState
             return const SizedBox.shrink();
           }
 
-          final reportData = details.reportSnapshot.data() ?? <String, dynamic>{};
+          final reportData =
+              details.reportSnapshot.data() ?? <String, dynamic>{};
           final reporterData = details.reporterData;
           final reportedUserData = details.reportedUserData;
 
-          final rawReporterId = (reportData['reporterId'] ?? '').toString().trim();
-          final rawReportedUserId =
-              (reportData['reportedUserId'] ?? '').toString().trim();
+          final rawReporterId = (reportData['reporterId'] ?? '')
+              .toString()
+              .trim();
+          final rawReportedUserId = (reportData['reportedUserId'] ?? '')
+              .toString()
+              .trim();
 
           final reporterName = _displayName(
             reporterData,
@@ -341,34 +494,42 @@ class _AdminGeneralReportDetailsViewState
 
           final reportedUserName = _displayName(
             reportedUserData,
-            fallbackName:
-                (reportData['reportedUserName'] ?? '').toString().trim(),
+            fallbackName: (reportData['reportedUserName'] ?? '')
+                .toString()
+                .trim(),
             fallbackId: rawReportedUserId,
           );
 
-          final reporterEmail = (reporterData?['email'] ?? '').toString().trim();
-          final reporterAccountType =
-              (reporterData?['accountType'] ?? '').toString().trim();
+          final reporterEmail = (reporterData?['email'] ?? '')
+              .toString()
+              .trim();
+          final reporterAccountType = (reporterData?['accountType'] ?? '')
+              .toString()
+              .trim();
           final reporterAccountTypeLabel = reporterAccountType.isEmpty
               ? ''
               : adminStatusLabel(reporterAccountType);
-          final reporterPhotoUrl =
-              (reporterData?['photoUrl'] ?? '').toString().trim();
+          final reporterPhotoUrl = (reporterData?['photoUrl'] ?? '')
+              .toString()
+              .trim();
 
-          final reportedUserEmail =
-              (reportedUserData?['email'] ?? '').toString().trim();
+          final reportedUserEmail = (reportedUserData?['email'] ?? '')
+              .toString()
+              .trim();
           final reportedUserAccountType =
               (reportedUserData?['accountType'] ?? '').toString().trim();
           final reportedUserAccountTypeLabel = reportedUserAccountType.isEmpty
               ? ''
               : adminStatusLabel(reportedUserAccountType);
-          final reportedUserPhotoUrl =
-              (reportedUserData?['photoUrl'] ?? '').toString().trim();
+          final reportedUserPhotoUrl = (reportedUserData?['photoUrl'] ?? '')
+              .toString()
+              .trim();
 
           final reason = (reportData['reason'] ?? '').toString().trim();
           final description =
               _firstFilled(<String?>[
                 reportData['description']?.toString(),
+                reportData['generalIssueDetails']?.toString(),
                 reportData['details']?.toString(),
               ]) ??
               '';
@@ -380,13 +541,22 @@ class _AdminGeneralReportDetailsViewState
               ]) ??
               '';
           final status = (reportData['status'] ?? 'open').toString().trim();
+          final normalizedStatus = status.toLowerCase();
           final createdAt = reportData['createdAt'];
-          final warningCount = _intValue(
-            reportedUserData?['warningCount'] ?? reportData['warningCount'],
-          );
+          final warningCountValue =
+              reportedUserData?['warningCount'] ?? reportData['warningCount'];
+          final warningCount = _intValue(warningCountValue);
+          final hasWarningCount = warningCountValue != null;
           final isUserBlocked =
-              reportData['isBlocked'] == true || reportedUserData?['isBlocked'] == true;
+              reportData['isBlocked'] == true ||
+              reportedUserData?['isBlocked'] == true;
           final warningReason = reason.isEmpty ? 'Repeated violations' : reason;
+          final handledAdminMessage = _handledAdminMessage(normalizedStatus);
+          final showsStandardAdminActions = _showsStandardAdminActions(
+            normalizedStatus,
+          );
+          final canReopenReport = _canReopenReport(normalizedStatus);
+          final canShowBlockUserAction = !isUserBlocked && warningCount >= 3;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
@@ -436,16 +606,25 @@ class _AdminGeneralReportDetailsViewState
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          AdminStatusChip(status: status),
-                          AdminMetaPill(
-                            label: _formatDateTime(createdAt),
-                            icon: Icons.schedule_rounded,
-                          ),
-                        ],
+                      AdminInfoPanel(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            AdminKeyValueRow(
+                              label: 'Status',
+                              value: adminStatusLabel(status),
+                            ),
+                            AdminKeyValueRow(
+                              label: 'Created',
+                              value: _formatDateTime(createdAt),
+                            ),
+                            if (hasWarningCount)
+                              AdminKeyValueRow(
+                                label: 'Warnings',
+                                value: warningCount.toString(),
+                              ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 16),
                       const Text(
@@ -475,9 +654,11 @@ class _AdminGeneralReportDetailsViewState
                     photoUrl: reporterPhotoUrl,
                     onTap: () => _openUserProfile(
                       title: 'Reporter Profile',
+                      userId: rawReporterId,
                       name: reporterName,
                       email: reporterEmail,
-                      accountType: reporterAccountTypeLabel,
+                      accountType: reporterAccountType,
+                      accountTypeLabel: reporterAccountTypeLabel,
                       photoUrl: reporterPhotoUrl,
                     ),
                   ),
@@ -490,50 +671,74 @@ class _AdminGeneralReportDetailsViewState
                     email: reportedUserEmail,
                     accountType: reportedUserAccountTypeLabel,
                     photoUrl: reportedUserPhotoUrl,
-                    secondaryPillLabel:
-                        warningCount > 0 ? 'Warnings: $warningCount' : '',
-                    secondaryPillIcon: warningCount > 0
-                        ? Icons.warning_amber_rounded
-                        : null,
-                    secondaryPillColor: kAdminWarning,
                     onTap: () => _openUserProfile(
                       title: 'Reported User Profile',
+                      userId: rawReportedUserId,
                       name: reportedUserName,
                       email: reportedUserEmail,
-                      accountType: reportedUserAccountTypeLabel,
+                      accountType: reportedUserAccountType,
+                      accountTypeLabel: reportedUserAccountTypeLabel,
                       photoUrl: reportedUserPhotoUrl,
                       warningCount: warningCount > 0 ? warningCount : null,
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
-                AdminSectionCard(
-                  title: 'Reported Content / Evidence',
-                  child: reportedContent.isNotEmpty
-                      ? _BodyTextCard(text: reportedContent)
-                      : const AdminInfoPanel(
-                          child: Text(
-                            'No reported content or evidence was attached to this report.',
-                            style: TextStyle(
-                              color: kAdminTextSecondary,
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                ),
+                if (reportedContent.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  AdminSectionCard(
+                    title: 'Reported Content',
+                    child: _BodyTextCard(text: reportedContent),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 AdminSectionCard(
                   title: 'Admin Actions',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Open the action menu to manage this report.',
-                        style: TextStyle(
-                          color: kAdminTextSecondary,
-                          height: 1.45,
+                      if (handledAdminMessage != null)
+                        AdminInfoPanel(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  color: kAdminSoftSurface,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  normalizedStatus == 'dismissed'
+                                      ? Icons.close_rounded
+                                      : Icons.verified_rounded,
+                                  color: normalizedStatus == 'dismissed'
+                                      ? kAdminMuted
+                                      : kAdminSuccess,
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  handledAdminMessage,
+                                  style: const TextStyle(
+                                    color: kAdminTextSecondary,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        const Text(
+                          'Open the action menu to manage this report.',
+                          style: TextStyle(
+                            color: kAdminTextSecondary,
+                            height: 1.45,
+                          ),
                         ),
-                      ),
                       if (isUserBlocked) ...[
                         const SizedBox(height: 12),
                         Container(
@@ -551,7 +756,11 @@ class _AdminGeneralReportDetailsViewState
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.block_rounded, color: kAdminDanger, size: 18),
+                              Icon(
+                                Icons.block_rounded,
+                                color: kAdminDanger,
+                                size: 18,
+                              ),
                               SizedBox(width: 8),
                               Text(
                                 'User already blocked',
@@ -564,18 +773,62 @@ class _AdminGeneralReportDetailsViewState
                           ),
                         ),
                       ],
-                      const SizedBox(height: 14),
-                      AdminActionMenuButton(
-                        label: 'Admin Actions',
-                        onPressed: _isUpdatingStatus
-                            ? null
-                            : () => _showAdminActionsSheet(
+                      if (showsStandardAdminActions) ...[
+                        const SizedBox(height: 14),
+                        AdminActionMenuButton(
+                          label: 'Admin Actions',
+                          onPressed: _isUpdatingStatus
+                              ? null
+                              : () => _showAdminActionsSheet(
+                                  status: normalizedStatus,
                                   reportedUserId: rawReportedUserId,
                                   warningReason: warningReason,
                                   warningCount: warningCount,
                                   isUserBlocked: isUserBlocked,
                                 ),
-                      ),
+                        ),
+                      ] else ...[
+                        if (canReopenReport) ...[
+                          const SizedBox(height: 14),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _isUpdatingStatus
+                                  ? null
+                                  : _reopenReport,
+                              style: adminFilledButtonStyle(),
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text(
+                                'Reopen Report',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (canShowBlockUserAction) ...[
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed:
+                                  _isUpdatingStatus || rawReportedUserId.isEmpty
+                                  ? null
+                                  : () => _blockReportedUser(
+                                      reportedUserId: rawReportedUserId,
+                                      blockedReason: warningReason,
+                                    ),
+                              style: adminOutlinedButtonStyle(
+                                color: kAdminDanger,
+                              ),
+                              icon: const Icon(Icons.block_rounded, size: 18),
+                              label: const Text(
+                                'Block User',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   ),
                 ),
@@ -589,9 +842,7 @@ class _AdminGeneralReportDetailsViewState
 }
 
 class _BodyTextCard extends StatelessWidget {
-  const _BodyTextCard({
-    required this.text,
-  });
+  const _BodyTextCard({required this.text});
 
   final String text;
 
@@ -639,9 +890,10 @@ String _displayName(
 }) {
   final first = (userData?['firstName'] ?? '').toString().trim();
   final last = (userData?['lastName'] ?? '').toString().trim();
-  final fullName = ([first, last]..removeWhere((item) => item.isEmpty))
-      .join(' ')
-      .trim();
+  final fullName = ([
+    first,
+    last,
+  ]..removeWhere((item) => item.isEmpty)).join(' ').trim();
 
   if (fullName.isNotEmpty) {
     return fullName;
@@ -675,10 +927,7 @@ String _friendlyError(Object? error) {
     return 'Something went wrong while loading this report.';
   }
 
-  const prefixes = <String>[
-    'Exception: ',
-    'FirebaseException: ',
-  ];
+  const prefixes = <String>['Exception: ', 'FirebaseException: '];
 
   for (final prefix in prefixes) {
     if (text.startsWith(prefix)) {

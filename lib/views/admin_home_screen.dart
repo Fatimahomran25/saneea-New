@@ -2,8 +2,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../controlles/admin_controller.dart';
+import '../controlles/notification_navigation_service.dart';
+import '../controlles/request_notifications_controller.dart';
 import 'admin_contract_reviews_view.dart';
 import 'admin_general_reports_view.dart';
+import 'request_notifications_sheet.dart';
 
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
@@ -192,88 +195,96 @@ class _DashboardHeader extends StatelessWidget {
   }
 }
 
-class _AdminNotificationButton extends StatelessWidget {
-  const _AdminNotificationButton();
+class _AdminNotificationButton extends StatefulWidget {
+  const _AdminNotificationButton({super.key});
+
+  @override
+  State<_AdminNotificationButton> createState() => _AdminNotificationButtonState();
+}
+
+class _AdminNotificationButtonState extends State<_AdminNotificationButton> {
+  final RequestNotificationsController _notificationsController =
+      RequestNotificationsController();
 
   static const Color _primaryPurple = Color(0xFF5A3E9E);
 
-  void _openNotifications(BuildContext context) {
+  Future<void> _openNotificationTarget(RequestNotificationItem item) async {
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    await handleNotificationTap(context: context, notification: item);
+  }
+
+  void _openNotifications() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) {
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.68,
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(26),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Text(
-                    'Notifications',
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () {},
-                    child: const Text(
-                      'Mark all as read',
-                      style: TextStyle(
-                        color: _primaryPurple,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const Expanded(
-                child: Center(
-                  child: Text(
-                    'No notifications yet.',
-                    style: TextStyle(
-                      color: Colors.black54,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.8,
+        child: RequestNotificationsSheet(
+          controller: _notificationsController,
+          onOpen: _openNotificationTarget,
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _openNotifications(context),
-      child: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF6F2FB),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _primaryPurple.withOpacity(0.10)),
-        ),
-        child: const Icon(
-          Icons.notifications_none_rounded,
-          color: _primaryPurple,
-          size: 22,
-        ),
-      ),
+    return StreamBuilder<int>(
+      stream: _notificationsController.unreadCountStream(),
+      builder: (context, snapshot) {
+        final unreadCount = snapshot.data ?? 0;
+
+        return GestureDetector(
+          onTap: _openNotifications,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF6F2FB),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _primaryPurple.withOpacity(0.10)),
+                ),
+                child: const Icon(
+                  Icons.notifications_none_rounded,
+                  color: _primaryPurple,
+                  size: 22,
+                ),
+              ),
+              if (unreadCount > 0)
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFC75A5A),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      unreadCount > 9 ? '9+' : '$unreadCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

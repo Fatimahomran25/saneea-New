@@ -209,6 +209,7 @@ class AdminFilterChip extends StatelessWidget {
       label: Text(label),
       selected: selected,
       onSelected: (_) => onSelected(),
+      showCheckmark: false,
       backgroundColor: kAdminSurface,
       selectedColor: kAdminPrimary,
       labelStyle: TextStyle(

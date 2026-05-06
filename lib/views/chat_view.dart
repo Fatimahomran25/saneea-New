@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import '../config/api_config.dart';
 import '../controlles/chat_controller.dart';
 import '../models/message_model.dart';
@@ -17,10 +19,64 @@ import 'report_flag_button.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:moyasar/moyasar.dart';
 
+class _DeliveryLocalFile {
+  const _DeliveryLocalFile({required this.file, required this.name});
+
+  final File file;
+  final String name;
+}
+
+class _DeliveryRemoteFile {
+  const _DeliveryRemoteFile({
+    required this.name,
+    this.url = '',
+    this.storagePath = '',
+    this.previewUrl = '',
+    this.watermarkedPreviewUrl = '',
+  });
+
+  final String name;
+  final String url;
+  final String storagePath;
+  final String previewUrl;
+  final String watermarkedPreviewUrl;
+
+  String get bestPreviewUrl =>
+      watermarkedPreviewUrl.isNotEmpty ? watermarkedPreviewUrl : previewUrl;
+}
+
+class _DeliverySubmissionDraft {
+  const _DeliverySubmissionDraft({
+    required this.keepImageUrls,
+    required this.keepFileItems,
+    required this.newImageFiles,
+    required this.newDocumentFiles,
+    required this.linkUrls,
+    required this.notes,
+  });
+
+  final List<String> keepImageUrls;
+  final List<_DeliveryRemoteFile> keepFileItems;
+  final List<File> newImageFiles;
+  final List<_DeliveryLocalFile> newDocumentFiles;
+  final List<String> linkUrls;
+  final String notes;
+
+  bool get hasContent =>
+      keepImageUrls.isNotEmpty ||
+      keepFileItems.isNotEmpty ||
+      newImageFiles.isNotEmpty ||
+      newDocumentFiles.isNotEmpty ||
+      linkUrls.isNotEmpty;
+}
+
 String _friendlyErrorMessage(Object error) {
   final rawError = error.toString().replaceFirst('Exception: ', '').trim();
   final normalizedError = rawError.toLowerCase();
   final statusCode = error is int ? error : int.tryParse(rawError);
+  final firebaseCode = error is FirebaseException
+      ? error.code.trim().toLowerCase()
+      : '';
 
   if (error is TimeoutException ||
       normalizedError.contains('timeout') ||
@@ -29,16 +85,21 @@ String _friendlyErrorMessage(Object error) {
   }
 
   if (error is SocketException ||
+      error is http.ClientException ||
+      firebaseCode == 'unavailable' ||
       normalizedError.contains('socketexception') ||
+      normalizedError.contains('clientexception') ||
       normalizedError.contains('failed host lookup') ||
       normalizedError.contains('connection reset') ||
       normalizedError.contains('connection refused') ||
+      normalizedError.contains('network request failed') ||
       normalizedError.contains('network')) {
     return 'Check your internet or server';
   }
 
   if (statusCode == 401 ||
       statusCode == 403 ||
+      firebaseCode == 'permission-denied' ||
       normalizedError.contains('permission') ||
       normalizedError.contains('not allowed') ||
       normalizedError.contains('access denied')) {
@@ -46,6 +107,7 @@ String _friendlyErrorMessage(Object error) {
   }
 
   if (statusCode == 404 ||
+      firebaseCode == 'not-found' ||
       normalizedError.contains('not found') ||
       normalizedError.contains('missing') ||
       normalizedError.contains('requestid is missing')) {
@@ -56,6 +118,7 @@ String _friendlyErrorMessage(Object error) {
 }
 
 Future<void> _showErrorDialogForContext(BuildContext context, String message) {
+  ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
   return showDialog<void>(
     context: context,
     builder: (dialogContext) {
@@ -79,6 +142,11 @@ class ChatView extends StatefulWidget {
 
   final String otherUserId;
   final String otherUserRole;
+  final bool adminReadOnlyMode;
+  final String adminClientId;
+  final String adminClientName;
+  final String adminFreelancerId;
+  final String adminFreelancerName;
 
   const ChatView({
     super.key,
@@ -86,6 +154,11 @@ class ChatView extends StatefulWidget {
     required this.otherUserName,
     required this.otherUserId,
     required this.otherUserRole,
+    this.adminReadOnlyMode = false,
+    this.adminClientId = '',
+    this.adminClientName = '',
+    this.adminFreelancerId = '',
+    this.adminFreelancerName = '',
   });
 
   @override
@@ -153,17 +226,19 @@ class _ChatViewState extends State<ChatView> {
     _isApprovedContractPanelExpanded = false;
     _isFreelancerProgressPanelExpanded = false;
 
-    Future.delayed(const Duration(milliseconds: 300), () {
-      _controller.markMessagesAsRead(widget.chatId);
-    });
-    _loadOtherUserPhoto();
-    _listenToRequestContract();
-    _terminationCountdownTimer = Timer.periodic(const Duration(minutes: 1), (
-      _,
-    ) {
-      if (!mounted) return;
-      setState(() {});
-    });
+    if (!widget.adminReadOnlyMode) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        _controller.markMessagesAsRead(widget.chatId);
+      });
+      _loadOtherUserPhoto();
+      _listenToRequestContract();
+      _terminationCountdownTimer = Timer.periodic(const Duration(minutes: 1), (
+        _,
+      ) {
+        if (!mounted) return;
+        setState(() {});
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom(jump: true);
     });
@@ -171,6 +246,146 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> _showErrorDialog(String message) {
     return _showErrorDialogForContext(context, message);
+  }
+
+  bool _isSuccessfulStatusCode(int statusCode) =>
+      statusCode >= 200 && statusCode < 300;
+
+  void _logCaughtError(String label, Object error, StackTrace stackTrace) {
+    debugPrint('$label: $error');
+    debugPrintStack(label: '$label stack', stackTrace: stackTrace);
+  }
+
+  Future<void> _showLoggedError(
+    String label,
+    Object error,
+    StackTrace stackTrace, {
+    bool updateContractError = false,
+  }) async {
+    _logCaughtError(label, error, stackTrace);
+    if (!mounted) return;
+
+    final message = _friendlyErrorMessage(error);
+    if (updateContractError) {
+      setState(() {
+        _contractError = message;
+      });
+    }
+    await _showErrorDialog(message);
+  }
+
+  Future<void> _runNonBlockingSecondaryAction(
+    String label,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } on FirebaseException catch (error, stackTrace) {
+      _logCaughtError('$label secondary error', error, stackTrace);
+    } on TimeoutException catch (error, stackTrace) {
+      _logCaughtError('$label secondary error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      _logCaughtError('$label secondary error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      _logCaughtError('$label secondary error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      _logCaughtError('$label secondary error', error, stackTrace);
+    } catch (error, stackTrace) {
+      _logCaughtError('$label secondary error', error, stackTrace);
+    }
+  }
+
+  Map<String, dynamic> _decodeResponseBodyAsMap(
+    http.Response response, {
+    required String actionLabel,
+  }) {
+    final trimmedBody = response.body.trim();
+    if (trimmedBody.isEmpty) {
+      return <String, dynamic>{};
+    }
+
+    final decoded = jsonDecode(trimmedBody);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+
+    throw FormatException('$actionLabel returned an unexpected response body');
+  }
+
+  Map<String, dynamic> _tryDecodeResponseBodyAsMap(
+    http.Response response, {
+    required String actionLabel,
+  }) {
+    try {
+      return _decodeResponseBodyAsMap(response, actionLabel: actionLabel);
+    } on FormatException catch (error, stackTrace) {
+      _logCaughtError('$actionLabel response decode error', error, stackTrace);
+    } catch (error, stackTrace) {
+      _logCaughtError('$actionLabel response decode error', error, stackTrace);
+    }
+
+    return <String, dynamic>{};
+  }
+
+  bool _didApiResponseSucceed(
+    http.Response response,
+    Map<String, dynamic> responseData,
+  ) {
+    if (!_isSuccessfulStatusCode(response.statusCode)) {
+      return false;
+    }
+
+    final success = responseData['success'];
+    if (success is bool) {
+      return success;
+    }
+
+    return true;
+  }
+
+  String _responseErrorMessage(
+    Map<String, dynamic> responseData,
+    int statusCode,
+  ) {
+    final apiMessage = _firstFilled([
+      responseData['error'],
+      responseData['message'],
+      responseData['detail'],
+    ]);
+    return apiMessage.isNotEmpty
+        ? apiMessage
+        : _friendlyErrorMessage(statusCode);
+  }
+
+  Future<void> _showApiFailure({
+    required String actionLabel,
+    required http.Response response,
+    required Map<String, dynamic> responseData,
+    bool updateContractError = false,
+  }) async {
+    debugPrint(
+      '$actionLabel failed: '
+      'status=${response.statusCode}, body=${response.body}',
+    );
+
+    if (!mounted) return;
+
+    final message = _responseErrorMessage(responseData, response.statusCode);
+    if (updateContractError) {
+      setState(() {
+        _contractError = message;
+      });
+    }
+
+    await _showErrorDialog(message);
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Uri _backendUri(String endpointPath, {Map<String, String>? queryParameters}) {
@@ -221,7 +436,10 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
-  Future<void> _openDeliveryPreviewImage(String imageUrl) {
+  Future<void> _openDeliveryPreviewImage(
+    String imageUrl, {
+    String? overlayLabel,
+  }) {
     return showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -246,74 +464,31 @@ class _ChatViewState extends State<ChatView> {
                   icon: const Icon(Icons.close, color: Colors.white),
                 ),
               ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _openFinalWorkGallery(List<String> imageUrls) {
-    return showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(16),
-          backgroundColor: Colors.black,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 8, 0),
-                child: Row(
-                  children: [
-                    Text(
-                      'Final Work (${imageUrls.length})',
+              if ((overlayLabel ?? '').trim().isNotEmpty)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.72),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      overlayLabel!,
+                      textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        fontSize: 15,
                       ),
                     ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      icon: const Icon(Icons.close, color: Colors.white),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              SizedBox(
-                height: 380,
-                child: PageView.builder(
-                  itemCount: imageUrls.length,
-                  itemBuilder: (context, index) {
-                    final imageUrl = imageUrls[index];
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: InteractiveViewer(
-                          minScale: 1,
-                          maxScale: 4,
-                          child: Image.network(
-                            imageUrl,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) {
-                              return const Center(
-                                child: Text(
-                                  'Failed to load image',
-                                  style: TextStyle(color: Colors.white),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
             ],
           ),
         );
@@ -409,37 +584,11 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Future<void> _refreshContractDataFromSource() async {
-    final chatDoc = await FirebaseFirestore.instance
-        .collection('chat')
-        .doc(widget.chatId)
-        .get();
-
-    final chatData = chatDoc.data();
-    final requestId = _extractRequestId(chatData);
-    final proposalId = (chatData?['proposalId'] ?? '').toString().trim();
-    final isAnnouncementProposalChat = proposalId.isNotEmpty;
-    final sourceCollection = isAnnouncementProposalChat
-        ? 'announcement_requests'
-        : 'requests';
-    final sourceDocumentId = isAnnouncementProposalChat
-        ? proposalId
-        : requestId;
-
-    final sourceDoc = await FirebaseFirestore.instance
-        .collection(sourceCollection)
-        .doc(sourceDocumentId)
-        .get();
-
-    final rawContractData = sourceDoc.data()?['contractData'];
-    final hasContractData =
-        rawContractData is Map && rawContractData.isNotEmpty;
-
+    final savedContractData = await _loadContractDataFromSource();
     if (!mounted) return;
 
     setState(() {
-      _contractData = hasContractData
-          ? Map<String, dynamic>.from(rawContractData as Map)
-          : _contractData;
+      _contractData = savedContractData ?? _contractData;
     });
   }
 
@@ -609,6 +758,20 @@ class _ChatViewState extends State<ChatView> {
     } catch (e) {
       debugPrint('Create review notification error: $e');
     }
+  }
+
+  Future<void> _createAdminContractReportNotification({
+    required String reviewId,
+  }) async {
+    await FirebaseFirestore.instance.collection('notifications').add({
+      'type': 'new_contract_report',
+      'title': 'New Contract Review Request',
+      'message': 'A new contract review request needs admin attention.',
+      'targetRole': 'admin',
+      'reviewId': reviewId,
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> _submitOrUpdateReview({
@@ -882,6 +1045,10 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Future<void> _openOtherUserProfile() async {
+    if (widget.adminReadOnlyMode) {
+      return;
+    }
+
     if (widget.otherUserId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('User information not available')),
@@ -1031,6 +1198,10 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Widget _buildMessageBubble(MessageModel message) {
+    if (widget.adminReadOnlyMode) {
+      return _buildAdminReadOnlyMessageBubble(message);
+    }
+
     if (message.type == 'contract') {
       final currentContractStatus =
           ((_contractData?['approval']
@@ -1151,6 +1322,307 @@ class _ChatViewState extends State<ChatView> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildAdminReadOnlyMessageBubble(MessageModel message) {
+    if (message.type == 'contract') {
+      return _buildAdminReadOnlyContractMessageCard(message);
+    }
+
+    final hasImages =
+        message.imageUrls.isNotEmpty || message.imageUrl.isNotEmpty;
+    final displayImages = message.imageUrls.isNotEmpty
+        ? message.imageUrls
+        : (message.imageUrl.isNotEmpty ? [message.imageUrl] : const <String>[]);
+    final isFreelancerMessage =
+        widget.adminFreelancerId.trim().isNotEmpty &&
+        message.senderId == widget.adminFreelancerId.trim();
+    final senderLabel = _adminSenderLabel(message);
+
+    return Align(
+      alignment: isFreelancerMessage
+          ? Alignment.centerRight
+          : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Column(
+          crossAxisAlignment: isFreelancerMessage
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                senderLabel,
+                style: TextStyle(
+                  color: primary.withOpacity(0.90),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: hasImages
+                    ? const Color(0xFFF6F2FB)
+                    : (isFreelancerMessage ? primary : const Color(0xFFF1F1F1)),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: isFreelancerMessage
+                    ? CrossAxisAlignment.end
+                    : CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (message.text.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(bottom: hasImages ? 8 : 0),
+                      child: Text(
+                        message.text,
+                        style: TextStyle(
+                          color: hasImages
+                              ? Colors.black87
+                              : (isFreelancerMessage
+                                    ? Colors.white
+                                    : Colors.black87),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  if (displayImages.isNotEmpty)
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: displayImages.map((url) {
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => Scaffold(
+                                  backgroundColor: Colors.black,
+                                  body: Center(
+                                    child: Image.network(
+                                      url,
+                                      errorBuilder: (_, error, stackTrace) {
+                                        debugPrint(
+                                          'Failed to load chat image from Firebase Storage: $error',
+                                        );
+                                        return const Padding(
+                                          padding: EdgeInsets.all(24),
+                                          child: Text(
+                                            'Failed to load image',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              url,
+                              width: 110,
+                              height: 110,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) {
+                                return const SizedBox(
+                                  width: 110,
+                                  height: 110,
+                                  child: Center(child: Text('Failed')),
+                                );
+                              },
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdminReadOnlyContractMessageCard(MessageModel message) {
+    final summaryLines = message.contractSummary
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .take(3)
+        .toList();
+    final previewText = summaryLines.isNotEmpty
+        ? summaryLines.join('\n')
+        : message.contractText.trim();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F2FB),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: primary.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.description_outlined,
+                  color: primary,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message.contractTitle.trim().isEmpty
+                      ? 'Contract Update'
+                      : message.contractTitle,
+                  style: const TextStyle(
+                    color: primary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (previewText.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              previewText,
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 13.2,
+                height: 1.45,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _adminSenderLabel(MessageModel message) {
+    final senderId = message.senderId.trim();
+    if (senderId.isNotEmpty && senderId == widget.adminClientId.trim()) {
+      final clientName = widget.adminClientName.trim();
+      return clientName.isEmpty ? 'Client' : clientName;
+    }
+
+    if (senderId.isNotEmpty && senderId == widget.adminFreelancerId.trim()) {
+      final freelancerName = widget.adminFreelancerName.trim();
+      return freelancerName.isEmpty ? 'Freelancer' : freelancerName;
+    }
+
+    return 'Participant';
+  }
+
+  Widget _buildAdminReadOnlyBanner() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F2FB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: primary.withOpacity(0.16)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.admin_panel_settings_outlined, color: primary, size: 18),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Admin read-only view',
+              style: TextStyle(
+                color: primary,
+                fontWeight: FontWeight.w700,
+                fontSize: 13.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdminReadOnlyScaffold() {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: primary,
+        elevation: 0,
+        title: const Text('Chat'),
+      ),
+      body: Column(
+        children: [
+          _buildAdminReadOnlyBanner(),
+          Expanded(
+            child: StreamBuilder<List<MessageModel>>(
+              stream: _controller.getMessages(widget.chatId),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text('Failed to load messages: ${snapshot.error}'),
+                  );
+                }
+
+                final messages = snapshot.data ?? [];
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  _scrollToBottom(jump: true);
+                });
+
+                if (messages.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No messages yet.',
+                      style: TextStyle(fontSize: 15),
+                    ),
+                  );
+                }
+
+                return Scrollbar(
+                  controller: _scrollController,
+                  thumbVisibility: true,
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      return _buildMessageBubble(messages[index]);
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1477,87 +1949,93 @@ class _ChatViewState extends State<ChatView> {
               logLabel: 'Generate contract',
             );
 
-            if (response.statusCode >= 200 && response.statusCode < 300) {
-              final data = jsonDecode(response.body) as Map<String, dynamic>;
-              debugPrint('API response: $data');
+            final data = _decodeResponseBodyAsMap(
+              response,
+              actionLabel: 'Generate contract',
+            );
 
-              final rawContractData = data['contractData'];
-              Map<String, dynamic>? freshContractData;
+            if (_didApiResponseSucceed(response, data)) {
+              debugPrint('Generate contract response: $data');
 
-              if (rawContractData is Map) {
-                freshContractData = Map<String, dynamic>.from(rawContractData);
-
-                final approval = Map<String, dynamic>.from(
-                  (freshContractData['approval'] as Map?) ?? const {},
-                );
-                final freshStatus = (approval['contractStatus'] ?? '')
-                    .toString()
-                    .trim()
-                    .toLowerCase();
-
-                approval['clientApproved'] = false;
-                approval['freelancerApproved'] = false;
-                approval['contractStatus'] = freshStatus == 'pending_approval'
-                    ? 'pending_approval'
-                    : 'draft';
-                approval.remove('termination');
-
-                freshContractData['approval'] = approval;
-                freshContractData['signatures'] = {
-                  'clientSignature': null,
-                  'freelancerSignature': null,
-                };
-              }
+              final freshContractData = _normalizeGeneratedContractData(
+                await _resolveContractDataForUiSync(
+                  actionLabel: 'Generate contract',
+                  responseData: data,
+                ),
+              );
 
               if (!mounted) return;
 
               setState(() {
-                _contractData = freshContractData;
+                _contractError = null;
+                if (freshContractData != null) {
+                  _contractData = freshContractData;
+                }
               });
 
-              if (freshContractData != null) {
-                await _createContractNotification(
+              await _runNonBlockingSecondaryAction(
+                'Generate contract notification',
+                () => _createContractNotification(
                   type: 'contract_generated',
                   actionText: 'generated a contract draft',
                   requestId: requestId,
                   chatData: chatData,
                   contractData: freshContractData,
                   notifyBothUsers: true,
-                );
-              }
-
-              debugPrint('Stored contract data: $_contractData');
-
-              if (_contractData == null) {
-                const message =
-                    'We could not generate the contract right now. Please try again.';
-                setState(() {
-                  _contractError = message;
-                });
-                unawaited(_showErrorDialog(message));
-              }
-            } else {
-              final message = _friendlyErrorMessage(response.statusCode);
-              debugPrint(
-                'Generate contract failed: '
-                '${response.statusCode} ${response.body}',
+                ),
               );
 
-              if (!mounted) return;
-              setState(() {
-                _contractError = message;
-              });
-
-              unawaited(_showErrorDialog(message));
+              debugPrint('Stored contract data: $_contractData');
+            } else {
+              await _showApiFailure(
+                actionLabel: 'Generate contract',
+                response: response,
+                responseData: data,
+                updateContractError: true,
+              );
             }
-          } catch (e) {
-            debugPrint('Generate contract error: $e');
-            if (!mounted) return;
-            final message = _friendlyErrorMessage(e);
-            setState(() {
-              _contractError = message;
-            });
-            unawaited(_showErrorDialog(message));
+          } on TimeoutException catch (error, stackTrace) {
+            await _showLoggedError(
+              'Generate contract error',
+              error,
+              stackTrace,
+              updateContractError: true,
+            );
+          } on SocketException catch (error, stackTrace) {
+            await _showLoggedError(
+              'Generate contract error',
+              error,
+              stackTrace,
+              updateContractError: true,
+            );
+          } on http.ClientException catch (error, stackTrace) {
+            await _showLoggedError(
+              'Generate contract error',
+              error,
+              stackTrace,
+              updateContractError: true,
+            );
+          } on FirebaseException catch (error, stackTrace) {
+            await _showLoggedError(
+              'Generate contract error',
+              error,
+              stackTrace,
+              updateContractError: true,
+            );
+          } on FormatException catch (error, stackTrace) {
+            await _showLoggedError(
+              'Generate contract error',
+              error,
+              stackTrace,
+              updateContractError: true,
+            );
+          } catch (error, stackTrace) {
+            await _showLoggedError(
+              'Generate contract error',
+              error,
+              stackTrace,
+              updateContractError: true,
+            );
           } finally {
             if (!mounted) return;
             setState(() {
@@ -1768,50 +2246,33 @@ class _ChatViewState extends State<ChatView> {
       });
 
       try {
-        final chatDoc = await FirebaseFirestore.instance
-            .collection('chat')
-            .doc(widget.chatId)
-            .get();
-
-        final requestId = _extractRequestId(chatDoc.data());
-
-        final response = await _postContractApi(
-          endpointPath: 'update-contract',
-          body: {
-            'requestId': requestId,
-            'role': _currentUserRole(),
-            'contractData': updatedContractData,
-          },
+        await _saveWorkflowContractData(
+          updatedContractData,
           logLabel: 'Update contract',
         );
 
         if (!mounted) return;
 
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          final savedContractData = data['contractData'];
+        setState(() {
+          _isEditingContract = false;
+          _isAddingClause = false;
+          _pendingCustomClauses = [];
+          _contractError = null;
+        });
 
-          setState(() {
-            if (savedContractData is Map) {
-              _contractData = Map<String, dynamic>.from(savedContractData);
-            }
-            _isEditingContract = false;
-            _isAddingClause = false;
-            _pendingCustomClauses = [];
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Contract updated successfully')),
-          );
-        } else {
-          unawaited(
-            _showErrorDialog(_friendlyErrorMessage(response.statusCode)),
-          );
-        }
-      } catch (e) {
-        if (!mounted) return;
-        debugPrint('Update contract error: $e');
-        unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+        _showSuccessSnackBar('Contract updated successfully');
+      } on TimeoutException catch (error, stackTrace) {
+        await _showLoggedError('Update contract error', error, stackTrace);
+      } on SocketException catch (error, stackTrace) {
+        await _showLoggedError('Update contract error', error, stackTrace);
+      } on http.ClientException catch (error, stackTrace) {
+        await _showLoggedError('Update contract error', error, stackTrace);
+      } on FirebaseException catch (error, stackTrace) {
+        await _showLoggedError('Update contract error', error, stackTrace);
+      } on FormatException catch (error, stackTrace) {
+        await _showLoggedError('Update contract error', error, stackTrace);
+      } catch (error, stackTrace) {
+        await _showLoggedError('Update contract error', error, stackTrace);
       } finally {
         if (!mounted) return;
 
@@ -1889,12 +2350,411 @@ class _ChatViewState extends State<ChatView> {
     return <String, dynamic>{};
   }
 
+  Map<String, dynamic>? _nonEmptyMapOrNull(dynamic value) {
+    final map = _asMap(value);
+    return map.isEmpty ? null : map;
+  }
+
   String _firstFilled(List<dynamic> values) {
     for (final value in values) {
       final text = (value ?? '').toString().trim();
       if (text.isNotEmpty) return text;
     }
     return '';
+  }
+
+  List<String> _stringList(dynamic value) {
+    if (value is! List) return const <String>[];
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  String _fileNameFromPath(String path) {
+    final normalized = path.trim();
+    if (normalized.isEmpty) return 'Attachment';
+
+    final segments = normalized.split(RegExp(r'[\\/]'));
+    final name = segments.isEmpty ? normalized : segments.last.trim();
+    return name.isEmpty ? 'Attachment' : name;
+  }
+
+  String _fileNameFromUrl(String url) {
+    final parsed = Uri.tryParse(url);
+    if (parsed == null) return 'Attachment';
+
+    final segments = parsed.pathSegments;
+    if (segments.isEmpty) return 'Attachment';
+
+    final name = segments.last.trim();
+    return name.isEmpty ? 'Attachment' : name;
+  }
+
+  String _storagePathFromDownloadUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+
+    if (trimmed.startsWith('gs://')) {
+      final withoutScheme = trimmed.substring(5);
+      final slashIndex = withoutScheme.indexOf('/');
+      if (slashIndex == -1 || slashIndex == withoutScheme.length - 1) {
+        return '';
+      }
+      return withoutScheme.substring(slashIndex + 1).trim();
+    }
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return '';
+
+    const objectMarker = '/o/';
+    final markerIndex = uri.path.indexOf(objectMarker);
+    if (markerIndex == -1) return '';
+
+    final encodedPath = uri.path
+        .substring(markerIndex + objectMarker.length)
+        .trim();
+    if (encodedPath.isEmpty) return '';
+
+    return Uri.decodeComponent(encodedPath);
+  }
+
+  bool _isPreviewStoragePath(String path) {
+    return path.trim().toLowerCase().startsWith('delivery_previews/');
+  }
+
+  String _legacyPreviewUrl(String url, String storagePath) {
+    final trimmedUrl = url.trim();
+    if (trimmedUrl.isEmpty || !_isPreviewStoragePath(storagePath)) return '';
+    return trimmedUrl;
+  }
+
+  bool _isImageReference(String value) {
+    final lowercase = value.trim().toLowerCase();
+    return lowercase.endsWith('.jpg') ||
+        lowercase.endsWith('.jpeg') ||
+        lowercase.endsWith('.png') ||
+        lowercase.endsWith('.gif') ||
+        lowercase.endsWith('.webp') ||
+        lowercase.endsWith('.bmp');
+  }
+
+  List<String> _dedupeStrings(Iterable<String> values) {
+    final seen = <String>{};
+    final output = <String>[];
+
+    for (final value in values) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || seen.contains(trimmed)) continue;
+      seen.add(trimmed);
+      output.add(trimmed);
+    }
+
+    return output;
+  }
+
+  List<_DeliveryRemoteFile> _deliveryImageItems(
+    Map<String, dynamic> deliveryData,
+  ) {
+    final explicitItems = <_DeliveryRemoteFile>[];
+    final rawItems = deliveryData['imageItems'];
+
+    if (rawItems is List) {
+      for (final item in rawItems) {
+        final map = _asMap(item);
+        final legacyUrl = (map['url'] ?? '').toString().trim();
+        final inferredStoragePath = _storagePathFromDownloadUrl(legacyUrl);
+        final storagePath = _firstFilled([
+          map['storagePath'],
+          inferredStoragePath,
+        ]);
+        final previewUrl = _firstFilled([
+          map['previewUrl'],
+          _legacyPreviewUrl(legacyUrl, storagePath),
+        ]);
+        final watermarkedPreviewUrl = (map['watermarkedPreviewUrl'] ?? '')
+            .toString()
+            .trim();
+        final fileName = (map['fileName'] ?? '').toString().trim();
+
+        if (storagePath.isEmpty &&
+            previewUrl.isEmpty &&
+            watermarkedPreviewUrl.isEmpty &&
+            legacyUrl.isEmpty) {
+          continue;
+        }
+
+        explicitItems.add(
+          _DeliveryRemoteFile(
+            name: fileName.isEmpty ? 'Image' : fileName,
+            storagePath: storagePath,
+            previewUrl: previewUrl,
+            watermarkedPreviewUrl: watermarkedPreviewUrl,
+            url: legacyUrl,
+          ),
+        );
+      }
+    }
+
+    if (explicitItems.isNotEmpty) return explicitItems;
+
+    final previewUrls = _stringList(deliveryData['previewImageUrls']);
+    if (previewUrls.isNotEmpty) {
+      return List<_DeliveryRemoteFile>.generate(previewUrls.length, (index) {
+        final previewUrl = previewUrls[index];
+        return _DeliveryRemoteFile(
+          name: 'Preview ${index + 1}',
+          previewUrl: previewUrl,
+          url: previewUrl,
+        );
+      });
+    }
+
+    final finalUrls = _stringList(
+      deliveryData['finalWorkUrls'],
+    ).where(_isImageReference).toList();
+    return List<_DeliveryRemoteFile>.generate(finalUrls.length, (index) {
+      final url = finalUrls[index];
+      final storagePath = _storagePathFromDownloadUrl(url);
+      return _DeliveryRemoteFile(
+        name: _fileNameFromUrl(url),
+        storagePath: storagePath,
+        url: url,
+      );
+    });
+  }
+
+  List<String> _deliveryImageUrls(Map<String, dynamic> deliveryData) {
+    return _dedupeStrings(
+      _deliveryImageItems(deliveryData)
+          .map(
+            (item) =>
+                item.bestPreviewUrl.isNotEmpty ? item.bestPreviewUrl : item.url,
+          )
+          .where((url) => url.trim().isNotEmpty),
+    );
+  }
+
+  List<_DeliveryRemoteFile> _deliveryFileItems(
+    Map<String, dynamic> deliveryData,
+  ) {
+    final explicitItems = <_DeliveryRemoteFile>[];
+    final rawItems = deliveryData['fileItems'];
+
+    if (rawItems is List) {
+      for (final item in rawItems) {
+        final map = _asMap(item);
+        final url = (map['url'] ?? '').toString().trim();
+        final name = (map['name'] ?? '').toString().trim();
+        final inferredStoragePath = _storagePathFromDownloadUrl(url);
+        final storagePath = _firstFilled([
+          map['storagePath'],
+          inferredStoragePath,
+        ]);
+        final previewUrl = _firstFilled([
+          map['previewUrl'],
+          _legacyPreviewUrl(url, storagePath),
+        ]);
+        final watermarkedPreviewUrl = (map['watermarkedPreviewUrl'] ?? '')
+            .toString()
+            .trim();
+        if (url.isEmpty &&
+            storagePath.isEmpty &&
+            previewUrl.isEmpty &&
+            watermarkedPreviewUrl.isEmpty) {
+          continue;
+        }
+        explicitItems.add(
+          _DeliveryRemoteFile(
+            url: url,
+            storagePath: storagePath,
+            previewUrl: previewUrl,
+            watermarkedPreviewUrl: watermarkedPreviewUrl,
+            name: name.isEmpty
+                ? (url.isNotEmpty ? _fileNameFromUrl(url) : 'Attachment')
+                : name,
+          ),
+        );
+      }
+    }
+
+    if (explicitItems.isNotEmpty) return explicitItems;
+
+    final finalWorkUrls = _stringList(
+      deliveryData['finalWorkUrls'],
+    ).where((url) => !_isImageReference(url)).toList();
+    final fileNames = _stringList(deliveryData['fileNames']);
+
+    return List<_DeliveryRemoteFile>.generate(finalWorkUrls.length, (index) {
+      final url = finalWorkUrls[index];
+      final fallbackName = index < fileNames.length
+          ? fileNames[index]
+          : _fileNameFromUrl(url);
+      return _DeliveryRemoteFile(
+        url: url,
+        name: fallbackName,
+        storagePath: _storagePathFromDownloadUrl(url),
+      );
+    });
+  }
+
+  List<String> _deliveryLinkUrls(Map<String, dynamic> deliveryData) {
+    return _dedupeStrings([
+      ..._stringList(deliveryData['linkUrls']),
+      ..._stringList(deliveryData['links']),
+    ]);
+  }
+
+  String _deliveryNotes(Map<String, dynamic> deliveryData) {
+    return (deliveryData['notes'] ?? '').toString().trim();
+  }
+
+  bool _hasSubmittedWorkContent(Map<String, dynamic> deliveryData) {
+    return _deliveryImageUrls(deliveryData).isNotEmpty ||
+        _deliveryFileItems(deliveryData).isNotEmpty ||
+        _deliveryLinkUrls(deliveryData).isNotEmpty;
+  }
+
+  bool _isDeliveryApproved(String status) {
+    final normalized = _normalizeDeliveryStatus(status);
+    return normalized == 'approved' || normalized == 'paid_delivered';
+  }
+
+  bool _isCompletedPaymentStatus(String status) {
+    final normalized = status.trim().toLowerCase();
+    return normalized == 'paid' || normalized == 'completed';
+  }
+
+  bool _currentUserCanAccessFinalDelivery(Map<String, dynamic> contractData) {
+    if (_currentUserRole() == 'freelancer') return true;
+
+    final deliveryData = _asMap(contractData['deliveryData']);
+    final paymentData = _asMap(contractData['paymentData']);
+    final approval = _asMap(contractData['approval']);
+    final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
+    final paymentStatus = (paymentData['paymentStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final contractStatus = (approval['contractStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+
+    return _isCompletedPaymentStatus(paymentStatus) ||
+        deliveryStatus == 'paid_delivered' ||
+        contractStatus == 'completed';
+  }
+
+  bool _shouldRestrictSubmittedWork(Map<String, dynamic> contractData) {
+    return _currentUserRole() == 'client' &&
+        !_currentUserCanAccessFinalDelivery(contractData);
+  }
+
+  Future<String?> _resolveDeliveryAssetUrl(
+    _DeliveryRemoteFile item, {
+    bool previewOnly = false,
+  }) async {
+    if (previewOnly) {
+      final previewUrl = item.bestPreviewUrl;
+      return previewUrl.trim().isEmpty ? null : previewUrl;
+    }
+
+    if (item.storagePath.trim().isNotEmpty) {
+      return await FirebaseStorage.instance
+          .ref(item.storagePath)
+          .getDownloadURL();
+    }
+
+    if (item.url.trim().isNotEmpty) {
+      return item.url;
+    }
+
+    final previewUrl = item.bestPreviewUrl;
+    return previewUrl.trim().isEmpty ? null : previewUrl;
+  }
+
+  Future<void> _openDeliveryImageItem(
+    _DeliveryRemoteFile item, {
+    required bool previewOnly,
+  }) async {
+    try {
+      final resolvedUrl = await _resolveDeliveryAssetUrl(
+        item,
+        previewOnly: previewOnly,
+      );
+      if (resolvedUrl == null || resolvedUrl.trim().isEmpty) {
+        if (!mounted) return;
+        await _showErrorDialog(
+          previewOnly
+              ? 'Preview only. Complete payment to download the final work.'
+              : 'The final work could not be opened.',
+        );
+        return;
+      }
+
+      await _openDeliveryPreviewImage(
+        resolvedUrl,
+        overlayLabel: previewOnly
+            ? 'Preview only - Payment required - Saneea'
+            : null,
+      );
+    } catch (error, stackTrace) {
+      _logCaughtError('Open delivery image error', error, stackTrace);
+      if (!mounted) return;
+      await _showErrorDialog(_friendlyErrorMessage(error));
+    }
+  }
+
+  Future<void> _openDeliveryFileItem(
+    _DeliveryRemoteFile item, {
+    required bool previewOnly,
+  }) async {
+    try {
+      final resolvedUrl = await _resolveDeliveryAssetUrl(
+        item,
+        previewOnly: previewOnly,
+      );
+      if (resolvedUrl == null || resolvedUrl.trim().isEmpty) {
+        if (!mounted) return;
+        await _showErrorDialog(
+          previewOnly
+              ? 'Preview only. Complete payment to download the final work.'
+              : 'The final work could not be opened.',
+        );
+        return;
+      }
+
+      await _openDeliveryUrl(resolvedUrl);
+    } catch (error, stackTrace) {
+      _logCaughtError('Open delivery file error', error, stackTrace);
+      if (!mounted) return;
+      await _showErrorDialog(_friendlyErrorMessage(error));
+    }
+  }
+
+  String _normalizeDeliveryLink(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    return 'https://$trimmed';
+  }
+
+  Future<void> _openDeliveryUrl(String url) async {
+    final normalizedUrl = _normalizeDeliveryLink(url);
+    final uri = Uri.tryParse(normalizedUrl);
+
+    if (uri == null) {
+      await _showErrorDialog('Could not open this link');
+      return;
+    }
+
+    final opened = await launchUrl(uri);
+    if (!opened && mounted) {
+      await _showErrorDialog('Could not open this link');
+    }
   }
 
   String _singleLineSnippet(String rawText) {
@@ -2358,9 +3218,12 @@ class _ChatViewState extends State<ChatView> {
     switch (normalized) {
       case 'submitted':
       case 'changes_requested':
+      case 'approved':
       case 'approved_awaiting_payment':
       case 'paid_delivered':
-        return normalized;
+        return normalized == 'approved_awaiting_payment'
+            ? 'approved'
+            : normalized;
       case 'not_submitted':
       default:
         return 'not_submitted';
@@ -2370,44 +3233,42 @@ class _ChatViewState extends State<ChatView> {
   String _deliveryStatusLabel(String status) {
     switch (_normalizeDeliveryStatus(status)) {
       case 'submitted':
-        return 'Submitted';
+        return 'Work Submitted';
       case 'changes_requested':
         return 'Changes Requested';
-      case 'approved_awaiting_payment':
-        return 'Approved Awaiting Payment';
+      case 'approved':
       case 'paid_delivered':
-        return 'Paid Delivered';
+        return 'Approved';
       case 'not_submitted':
       default:
-        return 'Not Submitted';
+        return 'Waiting for Submitted Work';
     }
   }
 
-  String _deliveryStatusMessage({
+  String _deliveryStatusPaymentMessage({
     required String status,
     required bool isClientView,
-    required bool canSubmit,
   }) {
     switch (_normalizeDeliveryStatus(status)) {
       case 'submitted':
         return isClientView
-            ? 'The freelancer submitted work and it is ready for your review.'
+            ? 'Work is submitted. Payment is available after approval.'
             : 'The submitted work is waiting for client review.';
       case 'changes_requested':
         return isClientView
-            ? 'Changes have been requested. Waiting for an updated submission.'
-            : 'Changes were requested. Review the feedback and resubmit when ready.';
-      case 'approved_awaiting_payment':
+            ? 'Changes were requested. Payment will stay disabled until the freelancer submits an updated delivery.'
+            : 'Changes were requested. Submit an updated delivery to re-enable client review.';
+      case 'approved':
         return isClientView
-            ? 'Delivery is approved. Complete payment to unlock the final work.'
-            : 'Delivery is approved and waiting for the client to complete payment.';
+            ? 'Payment is available after approval.'
+            : 'The client approved the submitted work. The submitted files remain available below.';
       case 'paid_delivered':
-        return 'The final work is available to access and download.';
+        return 'Payment was completed successfully and the submitted work remains available below.';
       case 'not_submitted':
       default:
-        return canSubmit
-            ? 'No work has been submitted yet. You can upload the completed work for review.'
-            : 'No work has been submitted yet.';
+        return isClientView
+            ? 'Payment will be enabled after the freelancer submits the final work.'
+            : 'Submit the final work to unlock client review and payment.';
     }
   }
 
@@ -2473,19 +3334,22 @@ class _ChatViewState extends State<ChatView> {
         .trim()
         .toLowerCase();
     final isPaidDelivered =
-        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+        deliveryStatus == 'paid_delivered' ||
+        _isCompletedPaymentStatus(paymentStatus);
     final isLocked = isPaidDelivered || contractStatus == 'completed';
 
     if (isPaidDelivered || contractStatus == 'completed') return false;
 
     return currentStage == 'completed' &&
         (deliveryStatus == 'not_submitted' ||
-            deliveryStatus == 'changes_requested');
+            deliveryStatus == 'changes_requested' ||
+            deliveryStatus == 'submitted');
   }
 
   Future<void> _saveWorkflowContractData(
-    Map<String, dynamic> updatedContractData,
-  ) async {
+    Map<String, dynamic> updatedContractData, {
+    String logLabel = 'Save workflow contract',
+  }) async {
     final chatDoc = await FirebaseFirestore.instance
         .collection('chat')
         .doc(widget.chatId)
@@ -2499,19 +3363,38 @@ class _ChatViewState extends State<ChatView> {
         'role': _currentUserRole(),
         'contractData': updatedContractData,
       },
-      logLabel: 'Save workflow contract',
+      logLabel: logLabel,
     );
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(_friendlyErrorMessage(response.statusCode));
+    final responseData = _tryDecodeResponseBodyAsMap(
+      response,
+      actionLabel: logLabel,
+    );
+
+    if (!_isSuccessfulStatusCode(response.statusCode)) {
+      throw Exception(_responseErrorMessage(responseData, response.statusCode));
     }
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final savedContractData = data['contractData'];
-
-    if (savedContractData is Map) {
-      _contractData = Map<String, dynamic>.from(savedContractData);
+    final responseReportedFailure =
+        responseData['success'] is bool && responseData['success'] == false;
+    if (responseReportedFailure) {
+      throw Exception(_responseErrorMessage(responseData, response.statusCode));
     }
+
+    _contractData = Map<String, dynamic>.from(updatedContractData);
+
+    if (responseData.isEmpty) return;
+
+    await _runNonBlockingSecondaryAction('$logLabel contract sync', () async {
+      final savedContractData = await _resolveContractDataForUiSync(
+        actionLabel: logLabel,
+        responseData: responseData,
+      );
+
+      if (savedContractData != null) {
+        _contractData = savedContractData;
+      }
+    });
   }
 
   Future<void> _submitDeliveryWork() async {
@@ -2519,43 +3402,145 @@ class _ChatViewState extends State<ChatView> {
     if (contractData == null) return;
 
     try {
-      final deliveryFiles = await _pickDeliveryImagesForSubmission();
-      if (deliveryFiles == null || deliveryFiles.isEmpty) return;
+      final deliveryData = _asMap(contractData['deliveryData']);
+      final currentImageItems = _deliveryImageItems(deliveryData);
+      final currentFileItems = _deliveryFileItems(deliveryData);
+      final draft = await _showDeliverySubmissionDialog(
+        deliveryData,
+        isUpdate: _hasSubmittedWorkContent(deliveryData),
+      );
+      if (draft == null || !draft.hasContent) return;
 
       setState(() {
         _isSavingContract = true;
       });
 
-      final uploadedUrls = await _controller.uploadDeliveryImages(
-        chatId: widget.chatId,
-        imageFiles: deliveryFiles,
+      final keptImageItems = currentImageItems
+          .where(
+            (item) => draft.keepImageUrls.contains(
+              item.bestPreviewUrl.isNotEmpty ? item.bestPreviewUrl : item.url,
+            ),
+          )
+          .map((item) {
+            final shouldKeepLegacyUrl =
+                item.url.isNotEmpty &&
+                item.storagePath.isEmpty &&
+                item.bestPreviewUrl.isEmpty;
+            return {
+              'fileName': item.name,
+              if (item.storagePath.isNotEmpty) 'storagePath': item.storagePath,
+              if (item.previewUrl.isNotEmpty) 'previewUrl': item.previewUrl,
+              if (item.watermarkedPreviewUrl.isNotEmpty)
+                'watermarkedPreviewUrl': item.watermarkedPreviewUrl,
+              if (shouldKeepLegacyUrl) 'url': item.url,
+            };
+          })
+          .toList();
+      final uploadedImageItems = <Map<String, String>>[];
+      if (draft.newImageFiles.isNotEmpty) {
+        uploadedImageItems.addAll(
+          await _controller.uploadDeliveryImages(
+            chatId: widget.chatId,
+            imageFiles: draft.newImageFiles,
+          ),
+        );
+      }
+
+      final keptFileItems = draft.keepFileItems
+          .where(
+            (item) => currentFileItems.any(
+              (existingItem) =>
+                  existingItem.storagePath == item.storagePath &&
+                  existingItem.name == item.name,
+            ),
+          )
+          .map((item) {
+            final shouldKeepLegacyUrl =
+                item.url.isNotEmpty &&
+                item.storagePath.isEmpty &&
+                item.bestPreviewUrl.isEmpty;
+            return {
+              'name': item.name,
+              if (item.storagePath.isNotEmpty) 'storagePath': item.storagePath,
+              if (item.previewUrl.isNotEmpty) 'previewUrl': item.previewUrl,
+              if (item.watermarkedPreviewUrl.isNotEmpty)
+                'watermarkedPreviewUrl': item.watermarkedPreviewUrl,
+              if (shouldKeepLegacyUrl) 'url': item.url,
+            };
+          })
+          .toList();
+      final uploadedFileItems = <Map<String, String>>[];
+
+      for (final file in draft.newDocumentFiles) {
+        final uploadedItem = await _controller.uploadDeliveryFile(
+          chatId: widget.chatId,
+          file: file.file,
+          fileName: file.name,
+        );
+        uploadedFileItems.add(uploadedItem);
+      }
+
+      final imageItems = [...keptImageItems, ...uploadedImageItems];
+      final imagePreviewUrls = imageItems
+          .map(
+            (item) =>
+                (item['watermarkedPreviewUrl'] ?? item['previewUrl'] ?? '')
+                    .trim(),
+          )
+          .where((url) => url.isNotEmpty)
+          .toList();
+      final fileItems = [...keptFileItems, ...uploadedFileItems];
+      final normalizedLinks = _dedupeStrings(
+        draft.linkUrls.map(_normalizeDeliveryLink),
       );
 
       final updatedContractData = Map<String, dynamic>.from(contractData);
-      final deliveryData = _asMap(updatedContractData['deliveryData']);
-      deliveryData['status'] = 'submitted';
-      deliveryData['previewImageUrls'] = uploadedUrls;
-      deliveryData['submittedBy'] = _currentUserRole();
-      deliveryData['submittedAt'] = DateTime.now().toIso8601String();
-      deliveryData['changesRequestedBy'] = '';
-      deliveryData['changesRequestedAt'] = '';
-      deliveryData['approvedBy'] = '';
-      deliveryData['approvedAt'] = '';
-      deliveryData['finalWorkUrls'] = <String>[];
-      deliveryData['finalWorkUploadedBy'] = '';
-      deliveryData['finalWorkUploadedAt'] = '';
-      updatedContractData['deliveryData'] = deliveryData;
+      final updatedDeliveryData = _asMap(updatedContractData['deliveryData']);
+      updatedDeliveryData['status'] = 'submitted';
+      updatedDeliveryData['previewImageUrls'] = imagePreviewUrls;
+      updatedDeliveryData['imageUrls'] = imagePreviewUrls;
+      updatedDeliveryData['imageItems'] = imageItems;
+      updatedDeliveryData['fileItems'] = fileItems;
+      updatedDeliveryData['finalWorkUrls'] = <String>[];
+      updatedDeliveryData['fileNames'] = [
+        ...imageItems
+            .map((item) => item['fileName'] ?? '')
+            .where((name) => name.isNotEmpty),
+        ...fileItems
+            .map((item) => item['name'] ?? '')
+            .where((name) => name.isNotEmpty),
+      ];
+      updatedDeliveryData['linkUrls'] = normalizedLinks;
+      updatedDeliveryData['notes'] = draft.notes.trim();
+      updatedDeliveryData['submittedBy'] = _currentUserRole();
+      updatedDeliveryData['submittedAt'] = DateTime.now().toIso8601String();
+      updatedDeliveryData['changesRequestedBy'] = '';
+      updatedDeliveryData['changesRequestedAt'] = '';
+      updatedDeliveryData['approvedBy'] = '';
+      updatedDeliveryData['approvedAt'] = '';
+      updatedDeliveryData['approvedByClient'] = false;
+      updatedContractData['deliveryData'] = updatedDeliveryData;
 
       await _saveWorkflowContractData(updatedContractData);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Work submitted successfully')),
+      _showSuccessSnackBar(
+        _hasSubmittedWorkContent(deliveryData)
+            ? 'Submission updated successfully'
+            : 'Work submitted successfully',
       );
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Submit delivery error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Submit delivery error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Submit delivery error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Submit delivery error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Submit delivery error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Submit delivery error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Submit delivery error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -2578,18 +3563,49 @@ class _ChatViewState extends State<ChatView> {
       deliveryData['status'] = 'changes_requested';
       deliveryData['changesRequestedBy'] = _currentUserRole();
       deliveryData['changesRequestedAt'] = DateTime.now().toIso8601String();
+      deliveryData['approvedByClient'] = false;
       updatedContractData['deliveryData'] = deliveryData;
 
       await _saveWorkflowContractData(updatedContractData);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Changes requested successfully')),
+      _showSuccessSnackBar('Changes requested successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Request delivery changes error',
+        error,
+        stackTrace,
       );
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Request delivery changes error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Request delivery changes error',
+        error,
+        stackTrace,
+      );
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Request delivery changes error',
+        error,
+        stackTrace,
+      );
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Request delivery changes error',
+        error,
+        stackTrace,
+      );
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Request delivery changes error',
+        error,
+        stackTrace,
+      );
+    } catch (error, stackTrace) {
+      await _showLoggedError(
+        'Request delivery changes error',
+        error,
+        stackTrace,
+      );
     } finally {
       if (!mounted) return;
       setState(() {
@@ -2609,21 +3625,28 @@ class _ChatViewState extends State<ChatView> {
     try {
       final updatedContractData = Map<String, dynamic>.from(contractData);
       final deliveryData = _asMap(updatedContractData['deliveryData']);
-      deliveryData['status'] = 'approved_awaiting_payment';
+      deliveryData['status'] = 'approved';
       deliveryData['approvedBy'] = _currentUserRole();
       deliveryData['approvedAt'] = DateTime.now().toIso8601String();
+      deliveryData['approvedByClient'] = true;
       updatedContractData['deliveryData'] = deliveryData;
 
       await _saveWorkflowContractData(updatedContractData);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Delivery approved. Waiting for payment')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Approve delivery error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Submitted work approved');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Approve delivery error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Approve delivery error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Approve delivery error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Approve delivery error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Approve delivery error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Approve delivery error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -2685,24 +3708,62 @@ class _ChatViewState extends State<ChatView> {
       final deliveryData = _asMap(updatedContractData['deliveryData']);
       deliveryData['status'] = 'not_submitted';
       deliveryData['previewImageUrls'] = <String>[];
+      deliveryData['imageUrls'] = <String>[];
+      deliveryData['imageItems'] = <Map<String, String>>[];
+      deliveryData['fileItems'] = <Map<String, String>>[];
+      deliveryData['finalWorkUrls'] = <String>[];
+      deliveryData['fileNames'] = <String>[];
+      deliveryData['linkUrls'] = <String>[];
+      deliveryData['notes'] = '';
       deliveryData['submittedBy'] = '';
       deliveryData['submittedAt'] = '';
       deliveryData['changesRequestedBy'] = '';
       deliveryData['changesRequestedAt'] = '';
       deliveryData['approvedBy'] = '';
       deliveryData['approvedAt'] = '';
+      deliveryData['approvedByClient'] = false;
       updatedContractData['deliveryData'] = deliveryData;
 
       await _saveWorkflowContractData(updatedContractData);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Submitted work withdrawn successfully')),
+      _showSuccessSnackBar('Submitted work withdrawn successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Withdraw delivery submission error',
+        error,
+        stackTrace,
       );
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Withdraw delivery submission error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Withdraw delivery submission error',
+        error,
+        stackTrace,
+      );
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Withdraw delivery submission error',
+        error,
+        stackTrace,
+      );
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Withdraw delivery submission error',
+        error,
+        stackTrace,
+      );
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError(
+        'Withdraw delivery submission error',
+        error,
+        stackTrace,
+      );
+    } catch (error, stackTrace) {
+      await _showLoggedError(
+        'Withdraw delivery submission error',
+        error,
+        stackTrace,
+      );
     } finally {
       if (!mounted) return;
       setState(() {
@@ -2803,13 +3864,19 @@ class _ChatViewState extends State<ChatView> {
       await _saveWorkflowContractData(updatedContractData);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Admin review requested successfully')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Request admin review error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Admin review requested successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Request admin review error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Request admin review error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Request admin review error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Request admin review error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Request admin review error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Request admin review error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -2880,13 +3947,19 @@ class _ChatViewState extends State<ChatView> {
       await _saveWorkflowContractData(updatedContractData);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Complaint withdrawn successfully')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Withdraw admin review error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Complaint withdrawn successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Withdraw admin review error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Withdraw admin review error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Withdraw admin review error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Withdraw admin review error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Withdraw admin review error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Withdraw admin review error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -2930,6 +4003,99 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
+  Future<Map<String, dynamic>?> _loadContractDataFromSource() async {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chat')
+        .doc(widget.chatId)
+        .get();
+
+    final chatData = chatDoc.data();
+    final requestId = _extractRequestId(chatData);
+    final proposalId = (chatData?['proposalId'] ?? '').toString().trim();
+    final isAnnouncementProposalChat = proposalId.isNotEmpty;
+    final sourceCollection = isAnnouncementProposalChat
+        ? 'announcement_requests'
+        : 'requests';
+    final sourceDocumentId = isAnnouncementProposalChat
+        ? proposalId
+        : requestId;
+
+    final sourceDoc = await FirebaseFirestore.instance
+        .collection(sourceCollection)
+        .doc(sourceDocumentId)
+        .get();
+
+    return _nonEmptyMapOrNull(sourceDoc.data()?['contractData']);
+  }
+
+  Future<Map<String, dynamic>?> _resolveContractDataForUiSync({
+    required String actionLabel,
+    required Map<String, dynamic> responseData,
+  }) async {
+    final responseContractData = _nonEmptyMapOrNull(
+      responseData['contractData'],
+    );
+    if (responseContractData != null) {
+      return responseContractData;
+    }
+
+    try {
+      final savedContractData = await _loadContractDataFromSource();
+      if (savedContractData != null) {
+        return savedContractData;
+      }
+
+      debugPrint(
+        '$actionLabel succeeded, but no contract data was found in the '
+        'API response or saved source.',
+      );
+    } on FirebaseException catch (error, stackTrace) {
+      _logCaughtError('$actionLabel contract sync error', error, stackTrace);
+    } on TimeoutException catch (error, stackTrace) {
+      _logCaughtError('$actionLabel contract sync error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      _logCaughtError('$actionLabel contract sync error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      _logCaughtError('$actionLabel contract sync error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      _logCaughtError('$actionLabel contract sync error', error, stackTrace);
+    } catch (error, stackTrace) {
+      _logCaughtError('$actionLabel contract sync error', error, stackTrace);
+    }
+
+    return null;
+  }
+
+  Map<String, dynamic>? _normalizeGeneratedContractData(
+    Map<String, dynamic>? contractData,
+  ) {
+    if (contractData == null) return null;
+
+    final normalizedContractData = Map<String, dynamic>.from(contractData);
+    final approval = Map<String, dynamic>.from(
+      (normalizedContractData['approval'] as Map?) ?? const {},
+    );
+    final freshStatus = (approval['contractStatus'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+
+    approval['clientApproved'] = false;
+    approval['freelancerApproved'] = false;
+    approval['contractStatus'] = freshStatus == 'pending_approval'
+        ? 'pending_approval'
+        : 'draft';
+    approval.remove('termination');
+
+    normalizedContractData['approval'] = approval;
+    normalizedContractData['signatures'] = {
+      'clientSignature': null,
+      'freelancerSignature': null,
+    };
+
+    return normalizedContractData;
+  }
+
   Future<void> _openContractTerminationAdminReviewSheet() async {
     final currentUserId = (_controller.currentUserId ?? '').trim();
     final otherPartyId = widget.otherUserId.trim();
@@ -2951,10 +4117,7 @@ class _ChatViewState extends State<ChatView> {
     bool isSheetActive = true;
 
     const reasonOptions = <Map<String, String>>[
-      {
-        'value': 'no_response',
-        'label': 'No response from the other party',
-      },
+      {'value': 'no_response', 'label': 'No response from the other party'},
       {
         'value': 'mismatched_delivery',
         'label': 'Delivered work does not match the agreement',
@@ -3024,6 +4187,9 @@ class _ChatViewState extends State<ChatView> {
                         ),
                       );
 
+                  final existingReview = await reviewRef.get();
+                  final isNewReview = !existingReview.exists;
+
                   await reviewRef.set({
                     'type': 'contract_review',
                     'reasonType': selectedReason,
@@ -3041,9 +4207,22 @@ class _ChatViewState extends State<ChatView> {
                     'otherUserId': otherPartyId,
                     'contractStatus': contractStatus,
                     'status': 'requested',
-                    'createdAt': FieldValue.serverTimestamp(),
                     'updatedAt': FieldValue.serverTimestamp(),
+                    if (isNewReview) 'createdAt': FieldValue.serverTimestamp(),
                   }, SetOptions(merge: true));
+
+                  if (isNewReview) {
+                    try {
+                      await _createAdminContractReportNotification(
+                        reviewId: reviewRef.id,
+                      );
+                    } catch (error) {
+                      debugPrint(
+                        'Create admin contract review notification error: '
+                        '$error',
+                      );
+                    }
+                  }
 
                   isSheetActive = false;
                   if (Navigator.of(sheetContext).canPop()) {
@@ -3085,8 +4264,7 @@ class _ChatViewState extends State<ChatView> {
                   padding: EdgeInsets.only(
                     left: 12,
                     right: 12,
-                    bottom:
-                        MediaQuery.of(sheetContext).viewInsets.bottom + 12,
+                    bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 12,
                   ),
                   child: Container(
                     padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
@@ -3475,6 +4653,19 @@ class _ChatViewState extends State<ChatView> {
 
                   await reviewRef.set(payload, SetOptions(merge: true));
 
+                  if (!existingReview.exists) {
+                    try {
+                      await _createAdminContractReportNotification(
+                        reviewId: reviewRef.id,
+                      );
+                    } catch (error) {
+                      debugPrint(
+                        'Create admin contract review notification error: '
+                        '$error',
+                      );
+                    }
+                  }
+
                   if (!mounted) return;
                   isSheetActive = false;
                   if (Navigator.of(sheetContext).canPop()) {
@@ -3734,13 +4925,6 @@ class _ChatViewState extends State<ChatView> {
     });
 
     try {
-      final chatDoc = await FirebaseFirestore.instance
-          .collection('chat')
-          .doc(widget.chatId)
-          .get();
-
-      final chatData = chatDoc.data();
-      final requestId = _extractRequestId(chatData);
       final updatedContractData = Map<String, dynamic>.from(contractData);
       final updatedProgressData = _asMap(updatedContractData['progressData']);
 
@@ -3749,42 +4933,28 @@ class _ChatViewState extends State<ChatView> {
       updatedProgressData['updatedBy'] = _currentUserRole();
       updatedContractData['progressData'] = updatedProgressData;
 
-      final response = await _postContractApi(
-        endpointPath: 'update-contract',
-        body: {
-          'requestId': requestId,
-          'role': _currentUserRole(),
-          'contractData': updatedContractData,
-        },
+      await _saveWorkflowContractData(
+        updatedContractData,
         logLabel: 'Update contract progress',
       );
 
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final savedContractData = data['contractData'];
-
-        setState(() {
-          if (savedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(savedContractData);
-          }
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Progress updated to ${_contractProgressLabel(normalizedStage)}',
-            ),
-          ),
-        );
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Update progress error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar(
+        'Progress updated to ${_contractProgressLabel(normalizedStage)}',
+      );
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Update progress error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Update progress error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Update progress error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Update progress error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Update progress error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Update progress error', error, stackTrace);
     } finally {
       if (!mounted) return;
 
@@ -3824,7 +4994,8 @@ class _ChatViewState extends State<ChatView> {
         .trim()
         .toLowerCase();
     final isPaidDelivered =
-        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+        deliveryStatus == 'paid_delivered' ||
+        _isCompletedPaymentStatus(paymentStatus);
     final isLocked = isPaidDelivered || contractStatus == 'completed';
 
     final progressContent = _buildChatPanelSurface(
@@ -4082,7 +5253,8 @@ class _ChatViewState extends State<ChatView> {
         .trim()
         .toLowerCase();
     final isPaidDelivered =
-        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+        deliveryStatus == 'paid_delivered' ||
+        _isCompletedPaymentStatus(paymentStatus);
 
     if (contractStatus != 'approved' &&
         contractStatus != 'completed' &&
@@ -4102,7 +5274,7 @@ class _ChatViewState extends State<ChatView> {
     final canDownloadFinalWork =
         deliveryStatus == 'paid_delivered' ||
         contractStatus == 'completed' ||
-        paymentStatus == 'paid';
+        _isCompletedPaymentStatus(paymentStatus);
     final isLocked = isPaidDelivered || contractStatus == 'completed';
     final isClientView = _currentUserRole() == 'client';
     final approvedPanelBody = Column(
@@ -4152,7 +5324,7 @@ class _ChatViewState extends State<ChatView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Order Workspace',
+                          'Service Workspace',
                           style: TextStyle(
                             color: primary,
                             fontSize: 15,
@@ -4414,10 +5586,10 @@ class _ChatViewState extends State<ChatView> {
       description: 'Contract Payment',
     );
 
-    await Navigator.push(
+    final paymentCompleted = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => Scaffold(
+        builder: (pageContext) => Scaffold(
           appBar: AppBar(title: const Text('Payment')),
           body: Padding(
             padding: const EdgeInsets.all(16),
@@ -4429,17 +5601,13 @@ class _ChatViewState extends State<ChatView> {
                   try {
                     await _verifyPayment(result.id);
 
-                    if (context.mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Payment completed successfully'),
-                        ),
-                      );
+                    if (pageContext.mounted) {
+                      Navigator.of(pageContext).pop(true);
                     }
-                  } catch (e) {
-                    if (context.mounted) {
-                      await _showErrorDialog(_friendlyErrorMessage(e));
+                  } catch (error, stackTrace) {
+                    _logCaughtError('Verify payment error', error, stackTrace);
+                    if (pageContext.mounted) {
+                      await _showErrorDialog(_friendlyErrorMessage(error));
                     }
                   }
                 } else {
@@ -4451,6 +5619,15 @@ class _ChatViewState extends State<ChatView> {
         ),
       ),
     );
+
+    if (paymentCompleted == true) {
+      await _runNonBlockingSecondaryAction(
+        'Payment success contract refresh',
+        _refreshContractDataFromSource,
+      );
+      if (!mounted) return;
+      _showSuccessSnackBar('Payment completed successfully.');
+    }
   }
 
   Future<void> _openTerminationCompensationPayment() async {
@@ -4467,10 +5644,10 @@ class _ChatViewState extends State<ChatView> {
       description: 'Termination Compensation (20%)',
     );
 
-    await Navigator.push(
+    final paymentCompleted = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => Scaffold(
+        builder: (pageContext) => Scaffold(
           appBar: AppBar(title: const Text('Termination Payment')),
           body: Padding(
             padding: const EdgeInsets.all(16),
@@ -4507,19 +5684,19 @@ class _ChatViewState extends State<ChatView> {
                             result.id,
                           );
 
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Termination payment completed successfully',
-                                ),
-                              ),
-                            );
+                          if (pageContext.mounted) {
+                            Navigator.of(pageContext).pop(true);
                           }
-                        } catch (e) {
-                          if (context.mounted) {
-                            await _showErrorDialog(_friendlyErrorMessage(e));
+                        } catch (error, stackTrace) {
+                          _logCaughtError(
+                            'Verify termination payment error',
+                            error,
+                            stackTrace,
+                          );
+                          if (pageContext.mounted) {
+                            await _showErrorDialog(
+                              _friendlyErrorMessage(error),
+                            );
                           }
                         }
                       } else {
@@ -4534,6 +5711,15 @@ class _ChatViewState extends State<ChatView> {
         ),
       ),
     );
+
+    if (paymentCompleted == true) {
+      await _runNonBlockingSecondaryAction(
+        'Termination payment success contract refresh',
+        _refreshContractDataFromSource,
+      );
+      if (!mounted) return;
+      _showSuccessSnackBar('Termination payment completed successfully.');
+    }
   }
 
   Future<void> _verifyPayment(String paymentId) async {
@@ -4553,37 +5739,57 @@ class _ChatViewState extends State<ChatView> {
       body: {
         'paymentId': paymentId,
         'requestId': requestId,
-        'paidBy': _controller.currentUserId,
+        'paidBy': _currentUserRole(),
       },
       logLabel: 'Verify payment',
     );
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      final errorMessage = (decoded['error'] ?? 'Payment verification failed')
-          .toString();
+    final decoded = _tryDecodeResponseBodyAsMap(
+      response,
+      actionLabel: 'Verify payment',
+    );
+
+    if (!_isSuccessfulStatusCode(response.statusCode)) {
+      final errorMessage = _responseErrorMessage(decoded, response.statusCode);
       throw Exception(errorMessage);
     }
 
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    final returnedContractData = decoded['contractData'];
-    if (returnedContractData is Map) {
+    final responseReportedFailure =
+        decoded['success'] is bool && decoded['success'] == false;
+    if (responseReportedFailure) {
+      final errorMessage = _responseErrorMessage(decoded, response.statusCode);
+      throw Exception(errorMessage);
+    }
+
+    Map<String, dynamic>? normalizedContractData;
+    if (decoded.isNotEmpty) {
+      normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Verify payment',
+        responseData: decoded,
+      );
+    }
+
+    if (normalizedContractData != null && mounted) {
       setState(() {
-        _contractData = Map<String, dynamic>.from(returnedContractData);
+        _contractData = normalizedContractData;
       });
     }
 
-    await _createContractNotification(
-      type: 'contract_payment_completed',
-      actionText: 'The client completed the payment successfully',
-      requestId: requestId,
-      chatData: chatData,
-      contractData: returnedContractData is Map
-          ? Map<String, dynamic>.from(returnedContractData)
-          : null,
+    await _runNonBlockingSecondaryAction(
+      'Verify payment notification',
+      () => _createContractNotification(
+        type: 'contract_payment_completed',
+        actionText: 'The client completed the payment successfully',
+        requestId: requestId,
+        chatData: chatData,
+        contractData: normalizedContractData,
+      ),
     );
 
-    await _refreshContractDataFromSource();
+    await _runNonBlockingSecondaryAction(
+      'Verify payment contract refresh',
+      _refreshContractDataFromSource,
+    );
   }
 
   Future<void> _verifyTerminationCompensationPayment(String paymentId) async {
@@ -4605,19 +5811,30 @@ class _ChatViewState extends State<ChatView> {
       logLabel: 'Verify termination payment',
     );
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      final errorMessage =
-          (decoded['error'] ?? 'Termination payment verification failed')
-              .toString();
+    final decoded = _tryDecodeResponseBodyAsMap(
+      response,
+      actionLabel: 'Verify termination payment',
+    );
+
+    if (!_isSuccessfulStatusCode(response.statusCode)) {
+      final errorMessage = _responseErrorMessage(decoded, response.statusCode);
       throw Exception(errorMessage);
     }
 
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    final updatedContractData = decoded['contractData'];
-    final normalizedContractData = updatedContractData is Map
-        ? Map<String, dynamic>.from(updatedContractData)
-        : null;
+    final responseReportedFailure =
+        decoded['success'] is bool && decoded['success'] == false;
+    if (responseReportedFailure) {
+      final errorMessage = _responseErrorMessage(decoded, response.statusCode);
+      throw Exception(errorMessage);
+    }
+
+    Map<String, dynamic>? normalizedContractData;
+    if (decoded.isNotEmpty) {
+      normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Verify termination payment',
+        responseData: decoded,
+      );
+    }
 
     if (normalizedContractData != null && mounted) {
       setState(() {
@@ -4625,37 +5842,52 @@ class _ChatViewState extends State<ChatView> {
       });
     }
 
-    await _createContractNotification(
-      type: 'contract_terminated',
-      actionText: 'terminated the contract with 20% compensation',
-      requestId: requestId,
-      chatData: chatData,
-      contractData: normalizedContractData,
+    await _runNonBlockingSecondaryAction(
+      'Verify termination payment notification',
+      () => _createContractNotification(
+        type: 'contract_terminated',
+        actionText: 'terminated the contract with 20% compensation',
+        requestId: requestId,
+        chatData: chatData,
+        contractData: normalizedContractData,
+      ),
     );
 
-    await _refreshContractDataFromSource();
+    await _runNonBlockingSecondaryAction(
+      'Verify termination payment contract refresh',
+      _refreshContractDataFromSource,
+    );
   }
 
   Widget _buildDeliverySection(String contractStatus) {
     final contractData = _contractData;
     if (contractData == null) return const SizedBox.shrink();
-    if (contractStatus != 'approved') return const SizedBox.shrink();
+    if (contractStatus != 'approved' && contractStatus != 'completed') {
+      return const SizedBox.shrink();
+    }
 
     final deliveryData = _asMap(contractData['deliveryData']);
     final progressData = _asMap(contractData['progressData']);
     final currentStage = _normalizeContractProgressStage(progressData['stage']);
     final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
-    final previewImageUrls =
-        (deliveryData['previewImageUrls'] as List?)
-            ?.map((item) => item.toString())
-            .where((item) => item.trim().isNotEmpty)
-            .toList() ??
-        const <String>[];
+    final imageItems = _deliveryImageItems(deliveryData);
+    final fileItems = _deliveryFileItems(deliveryData);
+    final linkUrls = _deliveryLinkUrls(deliveryData);
+    final notes = _deliveryNotes(deliveryData);
     final isClient = _currentUserRole() == 'client';
     final isFreelancer = _currentUserRole() == 'freelancer';
     final canSubmit = _canFreelancerSubmitWork(contractStatus);
-    final showEmptyState =
-        deliveryStatus == 'not_submitted' && previewImageUrls.isEmpty;
+    final hasSubmittedWork = _hasSubmittedWorkContent(deliveryData);
+    final isApproved = _isDeliveryApproved(deliveryStatus);
+    final canAccessFinalDelivery = _currentUserCanAccessFinalDelivery(
+      contractData,
+    );
+    final restrictSubmittedWork = _shouldRestrictSubmittedWork(contractData);
+    final submitButtonLabel = deliveryStatus == 'submitted'
+        ? 'Update Submission'
+        : deliveryStatus == 'changes_requested'
+        ? 'Update Submission'
+        : 'Submit Work';
 
     return _buildChatPanelContainer(
       padding: const EdgeInsets.all(16),
@@ -4667,7 +5899,7 @@ class _ChatViewState extends State<ChatView> {
             style: _chatPanelTitleStyle.copyWith(fontSize: 14),
           ),
           const SizedBox(height: 10),
-          if (showEmptyState) ...[
+          if (!hasSubmittedWork) ...[
             const Text(
               'No work has been submitted yet.',
               style: TextStyle(
@@ -4684,7 +5916,7 @@ class _ChatViewState extends State<ChatView> {
                   deliveryStatus == 'changes_requested')) ...[
             Text(
               currentStage == 'completed'
-                  ? 'Work delivery will be available now.'
+                  ? 'Submission is locked right now.'
                   : 'Work delivery will be enabled when progress reaches Completed.',
               style: const TextStyle(
                 color: Colors.black54,
@@ -4708,18 +5940,16 @@ class _ChatViewState extends State<ChatView> {
                   ),
                 ),
                 icon: const Icon(Icons.upload_file_rounded),
-                label: Text(
-                  deliveryStatus == 'changes_requested'
-                      ? 'Resubmit Work'
-                      : 'Submit Work',
-                ),
+                label: Text(submitButtonLabel),
               ),
             ),
           ],
           if (canSubmit) ...[
-            const Text(
-              'You can now submit the completed work for client review.',
-              style: TextStyle(
+            Text(
+              deliveryStatus == 'submitted'
+                  ? 'You can update the submitted work while it is awaiting client review.'
+                  : 'You can now submit the completed work for client review.',
+              style: const TextStyle(
                 color: Colors.black54,
                 fontSize: 12.5,
                 height: 1.35,
@@ -4739,45 +5969,107 @@ class _ChatViewState extends State<ChatView> {
                   ),
                 ),
                 icon: const Icon(Icons.upload_file_rounded),
-                label: Text(
-                  deliveryStatus == 'changes_requested'
-                      ? 'Resubmit Work'
-                      : 'Submit Work',
-                ),
+                label: Text(submitButtonLabel),
               ),
             ),
           ],
-          if (previewImageUrls.isNotEmpty) ...[
+          if (imageItems.isNotEmpty) ...[
             const SizedBox(height: 12),
             SizedBox(
               height: 88,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: previewImageUrls.length,
+                itemCount: imageItems.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
-                  final imageUrl = previewImageUrls[index];
+                  final imageItem = imageItems[index];
+                  final previewUrl = restrictSubmittedWork
+                      ? imageItem.bestPreviewUrl
+                      : imageItem.bestPreviewUrl.isNotEmpty
+                      ? imageItem.bestPreviewUrl
+                      : imageItem.url;
 
                   return GestureDetector(
-                    onTap: isClient
-                        ? () => _openDeliveryPreviewImage(imageUrl)
-                        : null,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        imageUrl,
-                        width: 88,
-                        height: 88,
-                        fit: BoxFit.cover,
-                      ),
+                    onTap: previewUrl.trim().isEmpty
+                        ? null
+                        : () => _openDeliveryImageItem(
+                            imageItem,
+                            previewOnly: restrictSubmittedWork,
+                          ),
+                    child: Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: previewUrl.trim().isEmpty
+                              ? Container(
+                                  width: 88,
+                                  height: 88,
+                                  color: const Color(0xFFF4EFFB),
+                                  alignment: Alignment.center,
+                                  child: const Icon(
+                                    Icons.lock_outline_rounded,
+                                    color: primary,
+                                  ),
+                                )
+                              : Image.network(
+                                  previewUrl,
+                                  width: 88,
+                                  height: 88,
+                                  fit: BoxFit.cover,
+                                ),
+                        ),
+                        if (restrictSubmittedWork)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.68),
+                                borderRadius: const BorderRadius.only(
+                                  bottomLeft: Radius.circular(12),
+                                  bottomRight: Radius.circular(12),
+                                ),
+                              ),
+                              child: const Text(
+                                'Preview only - Payment required - Saneea',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.2,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   );
                 },
               ),
             ),
-            const SizedBox(height: 8),
+          ],
+          if (restrictSubmittedWork && hasSubmittedWork) ...[
+            const SizedBox(height: 10),
             const Text(
-              'Preview only. Full access will be handled after payment.',
+              'Preview only. Complete payment to download the final work.',
+              style: TextStyle(
+                color: Colors.black54,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ] else if (isClient &&
+              hasSubmittedWork &&
+              canAccessFinalDelivery) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Payment completed. You can now download the final work.',
               style: TextStyle(
                 color: Colors.black54,
                 fontSize: 12,
@@ -4785,10 +6077,132 @@ class _ChatViewState extends State<ChatView> {
               ),
             ),
           ],
+          if (fileItems.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ...fileItems.map((item) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _buildChatPanelSurface(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.insert_drive_file_outlined,
+                        color: primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          item.name,
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      OutlinedButton(
+                        onPressed:
+                            restrictSubmittedWork &&
+                                item.bestPreviewUrl.trim().isEmpty
+                            ? null
+                            : () => _openDeliveryFileItem(
+                                item,
+                                previewOnly: restrictSubmittedWork,
+                              ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          side: BorderSide(color: primary.withOpacity(0.24)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: Text(
+                          restrictSubmittedWork
+                              ? (item.bestPreviewUrl.trim().isNotEmpty
+                                    ? 'Preview'
+                                    : 'Locked')
+                              : 'Open Final Work',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ],
+          if (linkUrls.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ...linkUrls.map((linkUrl) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _buildChatPanelSurface(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.link_rounded, color: primary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          restrictSubmittedWork
+                              ? 'Protected link available after payment'
+                              : linkUrl,
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      OutlinedButton(
+                        onPressed: restrictSubmittedWork
+                            ? null
+                            : () => _openDeliveryUrl(linkUrl),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          side: BorderSide(color: primary.withOpacity(0.24)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: Text(
+                          restrictSubmittedWork ? 'Locked' : 'Open Final Work',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ],
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildChatPanelSurface(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Notes',
+                    style: _chatPanelTitleStyle.copyWith(fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    notes,
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontSize: 12.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (deliveryStatus == 'submitted' && isClient) ...[
             const SizedBox(height: 12),
             const Text(
-              'Are you satisfied with the delivered work?',
+              'Review the submitted work to continue.',
               style: TextStyle(
                 color: Colors.black87,
                 fontSize: 12.5,
@@ -4830,7 +6244,7 @@ class _ChatViewState extends State<ChatView> {
                       ),
                     ),
                     icon: const Icon(Icons.check_rounded),
-                    label: const Text('Approve'),
+                    label: const Text('Approve Work'),
                   ),
                 ),
               ],
@@ -4877,91 +6291,16 @@ class _ChatViewState extends State<ChatView> {
               ),
             ),
           ],
-          if (deliveryStatus == 'approved_awaiting_payment' && isClient) ...[
+          if (isApproved) ...[
             const SizedBox(height: 12),
-            _buildChatPanelSurface(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Payment',
-                    style: _chatPanelTitleStyle.copyWith(fontSize: 13.5),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Delivery approved. Payment is required to unlock the final delivery.',
-                    style: TextStyle(
-                      color: Colors.black54,
-                      fontSize: 12.5,
-                      height: 1.35,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isSavingContract
-                          ? null
-                          : () {
-                              debugPrint('PAY NOW CLICKED');
-                              _openMoyasarPayment();
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primary,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: primary.withOpacity(0.55),
-                        disabledForegroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      label: const Text('Pay Now'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          if (deliveryStatus == 'approved_awaiting_payment' && !isClient) ...[
-            const SizedBox(height: 12),
-            _buildChatPanelSurface(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Final Work Release',
-                    style: _chatPanelTitleStyle.copyWith(fontSize: 13.5),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'The client must complete payment before the final work can be released.',
-                    style: TextStyle(
-                      color: Colors.black54,
-                      fontSize: 12.5,
-                      height: 1.35,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _showWorkReleaseAfterPaymentDialog,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: primary,
-                        side: BorderSide(color: primary.withOpacity(0.24)),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      icon: const Icon(Icons.lock_outline_rounded),
-                      label: const Text('Download Work'),
-                    ),
-                  ),
-                ],
+            Text(
+              isClient
+                  ? 'The submitted work was approved and remains available below.'
+                  : 'The client approved the submitted work. Your submitted files remain available below.',
+              style: const TextStyle(
+                color: Colors.black54,
+                fontSize: 12.5,
+                height: 1.35,
               ),
             ),
           ],
@@ -5449,7 +6788,8 @@ class _ChatViewState extends State<ChatView> {
         .toLowerCase();
     final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
     final isPaidDelivered =
-        deliveryStatus == 'paid_delivered' || paymentStatus == 'paid';
+        deliveryStatus == 'paid_delivered' ||
+        _isCompletedPaymentStatus(paymentStatus);
     final isCompleted = contractStatus == 'completed' || isPaidDelivered;
     final showTerminateButton = !isCompleted;
     final terminationGraceData = _terminationGracePeriodData();
@@ -6110,13 +7450,13 @@ class _ChatViewState extends State<ChatView> {
         .toString()
         .trim()
         .toLowerCase();
-    final canDownloadFinalWork =
-        deliveryStatus == 'paid_delivered' ||
-        contractStatus == 'completed' ||
-        paymentStatus == 'paid';
+    final hasSubmittedWork = _hasSubmittedWorkContent(deliveryData);
+    final isApproved = _isDeliveryApproved(deliveryStatus);
+    final isPaid =
+        _isCompletedPaymentStatus(paymentStatus) ||
+        deliveryStatus == 'paid_delivered';
     final isClientView = _currentUserRole() == 'client';
     final shouldShowWorkProgress = _shouldShowWorkProgressAction();
-    final canSubmit = _canFreelancerSubmitWork(contractStatus);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -6133,15 +7473,18 @@ class _ChatViewState extends State<ChatView> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: shouldShowWorkProgress
                 ? [
+                    _buildDeliverySection(contractStatus),
+                    const SizedBox(height: 14),
                     _buildApprovedPanelContentCard(
-                      title: 'Delivery Status',
-                      subtitle: _deliveryStatusLabel(deliveryStatus),
+                      title: 'Payment / Delivery Status',
+                      subtitle: isPaid
+                          ? 'Payment Completed'
+                          : _deliveryStatusLabel(deliveryStatus),
                       children: [
                         Text(
-                          _deliveryStatusMessage(
+                          _deliveryStatusPaymentMessage(
                             status: deliveryStatus,
                             isClientView: isClientView,
-                            canSubmit: canSubmit,
                           ),
                           style: const TextStyle(
                             color: Colors.black87,
@@ -6149,31 +7492,50 @@ class _ChatViewState extends State<ChatView> {
                             height: 1.4,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildDeliverySection(contractStatus),
-                    if (canDownloadFinalWork) ...[
-                      const SizedBox(height: 14),
-                      _buildApprovedPanelContentCard(
-                        title: 'Final Delivery',
-                        subtitle: isClientView
-                            ? 'Access the delivered files here.'
-                            : 'Open or upload the delivered files here.',
-                        children: [
+                        if (isPaid) ...[
+                          const SizedBox(height: 12),
+                          _buildChatPanelSurface(
+                            padding: const EdgeInsets.all(12),
+                            backgroundColor: const Color(0xFFF4EFFB),
+                            borderColor: primary.withOpacity(0.18),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: Color(0xFF2E7D32),
+                                ),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    'Payment Completed',
+                                    style: TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ] else if (isClientView) ...[
+                          const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: isClientView
-                                  ? _downloadDeliveredWork
-                                  : _handleFinalWorkAction,
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: primary,
-                                side: BorderSide(
-                                  color: primary.withOpacity(0.22),
-                                  width: 1,
+                            child: ElevatedButton.icon(
+                              onPressed: _isSavingContract || !isApproved
+                                  ? null
+                                  : () {
+                                      debugPrint('PAY NOW CLICKED');
+                                      _openMoyasarPayment();
+                                    },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primary,
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor: primary.withOpacity(
+                                  0.35,
                                 ),
-                                minimumSize: const Size(0, 44),
+                                disabledForegroundColor: Colors.white70,
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 12,
                                 ),
@@ -6181,13 +7543,30 @@ class _ChatViewState extends State<ChatView> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              icon: const Icon(Icons.file_download_outlined),
-                              label: const Text('Download Work'),
+                              icon: const Icon(Icons.payments_outlined),
+                              label: Text(
+                                isApproved
+                                    ? 'Pay Now'
+                                    : hasSubmittedWork
+                                    ? 'Approve Work to Pay'
+                                    : 'Waiting for Submitted Work',
+                              ),
                             ),
                           ),
                         ],
-                      ),
-                    ],
+                        if (!isClientView && isApproved && !isPaid) ...[
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Payment will be available to the client after approval.',
+                            style: TextStyle(
+                              color: Colors.black54,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ]
                 : [
                     _buildApprovedPanelContentCard(
@@ -6336,227 +7715,428 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
-  Future<void> _downloadDeliveredWork() async {
-    try {
-      final deliveryData = _asMap(_contractData?['deliveryData']);
-      final deliveredUrls =
-          (deliveryData['finalWorkUrls'] as List?)
-              ?.map((item) => item.toString())
-              .where((item) => item.trim().isNotEmpty)
-              .toList() ??
-          const <String>[];
+  Future<List<_DeliveryLocalFile>> _pickDeliveryDocumentFiles() async {
+    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    if (result == null || result.files.isEmpty)
+      return const <_DeliveryLocalFile>[];
 
-      if (deliveredUrls.isEmpty) {
-        final waitingMessage = _currentUserRole() == 'client'
-            ? 'Please wait for the freelancer to upload the final work.'
-            : 'Final work is not available yet';
-        unawaited(_showErrorDialog(waitingMessage));
-        return;
-      }
-
-      await _openFinalWorkGallery(deliveredUrls);
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Download delivered work error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+    final files = <_DeliveryLocalFile>[];
+    for (final item in result.files) {
+      final path = (item.path ?? '').trim();
+      if (path.isEmpty) continue;
+      files.add(
+        _DeliveryLocalFile(
+          file: File(path),
+          name: item.name.trim().isEmpty
+              ? _fileNameFromPath(path)
+              : item.name.trim(),
+        ),
+      );
     }
+
+    return files;
   }
 
-  Future<void> _showWorkReleaseAfterPaymentDialog() {
-    return showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Payment Required'),
-          content: const Text(
-            'The final work can only be released after the client completes the payment.',
-          ),
-          actions: [
-            OutlinedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: primary,
-                side: BorderSide(color: primary.withOpacity(0.24)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
+  Future<_DeliverySubmissionDraft?> _showDeliverySubmissionDialog(
+    Map<String, dynamic> deliveryData, {
+    required bool isUpdate,
+  }) async {
+    final linkController = TextEditingController(
+      text: _deliveryLinkUrls(deliveryData).join('\n'),
     );
-  }
+    final notesController = TextEditingController(
+      text: _deliveryNotes(deliveryData),
+    );
 
-  Future<List<File>?> _pickDeliveryImagesForSubmission() async {
-    final pickedFiles = await _picker.pickMultiImage(imageQuality: 85);
-    if (pickedFiles.isEmpty) return null;
+    try {
+      return await showDialog<_DeliverySubmissionDraft>(
+        context: context,
+        builder: (dialogContext) {
+          final existingImageUrls = List<String>.from(
+            _deliveryImageUrls(deliveryData),
+          );
+          final existingFileItems = List<_DeliveryRemoteFile>.from(
+            _deliveryFileItems(deliveryData),
+          );
+          final newImageFiles = <File>[];
+          final newDocumentFiles = <_DeliveryLocalFile>[];
+          String validationMessage = '';
 
-    final selectedFiles = pickedFiles.map((file) => File(file.path)).toList();
+          Future<void> addImages(StateSetter setDialogState) async {
+            final pickedFiles = await _picker.pickMultiImage(imageQuality: 85);
+            if (pickedFiles.isEmpty) return;
 
-    if (!mounted) return null;
+            setDialogState(() {
+              newImageFiles.addAll(
+                pickedFiles
+                    .map((item) => File(item.path))
+                    .where((file) => file.path.trim().isNotEmpty),
+              );
+            });
+          }
 
-    return showDialog<List<File>>(
-      context: context,
-      builder: (dialogContext) {
-        final files = List<File>.from(selectedFiles);
+          Future<void> addFiles(StateSetter setDialogState) async {
+            final pickedFiles = await _pickDeliveryDocumentFiles();
+            if (pickedFiles.isEmpty) return;
 
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Review Work Images'),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: files.isEmpty
-                    ? const Text('No images selected.')
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+            setDialogState(() {
+              newDocumentFiles.addAll(pickedFiles);
+            });
+          }
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text(isUpdate ? 'Update Submission' : 'Submit Work'),
+                content: SizedBox(
+                  width: double.maxFinite,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Add images, files, links, and optional notes for the final delivery.',
+                          style: TextStyle(
+                            color: Colors.black54,
+                            fontSize: 12.5,
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => addImages(setDialogState),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: primary,
+                                  side: BorderSide(
+                                    color: primary.withOpacity(0.24),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.photo_library_outlined),
+                                label: const Text('Add Images'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => addFiles(setDialogState),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: primary,
+                                  side: BorderSide(
+                                    color: primary.withOpacity(0.24),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.attach_file_rounded),
+                                label: const Text('Add Files'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (existingImageUrls.isNotEmpty ||
+                            newImageFiles.isNotEmpty) ...[
+                          const SizedBox(height: 14),
                           const Text(
-                            'Remove any image you do not want before submitting.',
+                            'Images',
                             style: TextStyle(
-                              color: Colors.black54,
+                              color: Colors.black87,
                               fontSize: 12.5,
-                              height: 1.35,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 8),
                           SizedBox(
-                            height: 92,
-                            child: ListView.separated(
+                            height: 88,
+                            child: ListView(
                               scrollDirection: Axis.horizontal,
-                              itemCount: files.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(width: 8),
-                              itemBuilder: (context, index) {
-                                return Stack(
-                                  children: [
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: Image.file(
-                                        files[index],
-                                        width: 92,
-                                        height: 92,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                    Positioned(
-                                      top: 4,
-                                      right: 4,
-                                      child: GestureDetector(
-                                        onTap: () {
-                                          setDialogState(() {
-                                            files.removeAt(index);
-                                          });
-                                        },
-                                        child: const CircleAvatar(
-                                          radius: 11,
-                                          backgroundColor: Colors.black54,
-                                          child: Icon(
-                                            Icons.close,
-                                            size: 13,
-                                            color: Colors.white,
+                              children: [
+                                ...existingImageUrls.asMap().entries.map((
+                                  entry,
+                                ) {
+                                  final index = entry.key;
+                                  final imageUrl = entry.value;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: Stack(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          child: Image.network(
+                                            imageUrl,
+                                            width: 88,
+                                            height: 88,
+                                            fit: BoxFit.cover,
                                           ),
                                         ),
-                                      ),
+                                        Positioned(
+                                          top: 4,
+                                          right: 4,
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              setDialogState(() {
+                                                existingImageUrls.removeAt(
+                                                  index,
+                                                );
+                                              });
+                                            },
+                                            child: const CircleAvatar(
+                                              radius: 11,
+                                              backgroundColor: Colors.black54,
+                                              child: Icon(
+                                                Icons.close,
+                                                size: 13,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ],
-                                );
-                              },
+                                  );
+                                }),
+                                ...newImageFiles.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final imageFile = entry.value;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: Stack(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          child: Image.file(
+                                            imageFile,
+                                            width: 88,
+                                            height: 88,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                        Positioned(
+                                          top: 4,
+                                          right: 4,
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              setDialogState(() {
+                                                newImageFiles.removeAt(index);
+                                              });
+                                            },
+                                            child: const CircleAvatar(
+                                              radius: 11,
+                                              backgroundColor: Colors.black54,
+                                              child: Icon(
+                                                Icons.close,
+                                                size: 13,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
                             ),
                           ),
                         ],
+                        if (existingFileItems.isNotEmpty ||
+                            newDocumentFiles.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Files',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ...existingFileItems.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final item = entry.value;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _buildChatPanelSurface(
+                                padding: const EdgeInsets.all(10),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.insert_drive_file_outlined,
+                                      color: primary,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        item.name,
+                                        style: const TextStyle(
+                                          color: Colors.black87,
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: () {
+                                        setDialogState(() {
+                                          existingFileItems.removeAt(index);
+                                        });
+                                      },
+                                      icon: const Icon(Icons.close, size: 18),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }),
+                          ...newDocumentFiles.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final item = entry.value;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _buildChatPanelSurface(
+                                padding: const EdgeInsets.all(10),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.attach_file_rounded,
+                                      color: primary,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        item.name,
+                                        style: const TextStyle(
+                                          color: Colors.black87,
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: () {
+                                        setDialogState(() {
+                                          newDocumentFiles.removeAt(index);
+                                        });
+                                      },
+                                      icon: const Icon(Icons.close, size: 18),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: linkController,
+                          maxLines: 3,
+                          decoration: InputDecoration(
+                            labelText: 'Links',
+                            hintText: 'Add one link per line',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: notesController,
+                          maxLines: 4,
+                          decoration: InputDecoration(
+                            labelText: 'Notes (Optional)',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                        if (validationMessage.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            validationMessage,
+                            style: const TextStyle(
+                              color: Color(0xFFC75A5A),
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFC75A5A),
+                      side: const BorderSide(color: Color(0xFFC75A5A)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-              ),
-              actions: [
-                OutlinedButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFC75A5A),
-                    side: const BorderSide(color: Color(0xFFC75A5A)),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
                     ),
+                    child: const Text('Cancel'),
                   ),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: files.isEmpty
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(files),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                  ElevatedButton(
+                    onPressed: () {
+                      final linkUrls = _dedupeStrings(
+                        linkController.text
+                            .split(RegExp(r'[\r\n]+'))
+                            .map(_normalizeDeliveryLink)
+                            .where((item) => item.isNotEmpty),
+                      );
+                      final draft = _DeliverySubmissionDraft(
+                        keepImageUrls: List<String>.from(existingImageUrls),
+                        keepFileItems: List<_DeliveryRemoteFile>.from(
+                          existingFileItems,
+                        ),
+                        newImageFiles: List<File>.from(newImageFiles),
+                        newDocumentFiles: List<_DeliveryLocalFile>.from(
+                          newDocumentFiles,
+                        ),
+                        linkUrls: linkUrls,
+                        notes: notesController.text.trim(),
+                      );
+
+                      if (!draft.hasContent) {
+                        setDialogState(() {
+                          validationMessage =
+                              'Add at least one image, file, or link before submitting.';
+                        });
+                        return;
+                      }
+
+                      Navigator.of(dialogContext).pop(draft);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
+                    child: Text(isUpdate ? 'Save Update' : 'Submit Work'),
                   ),
-                  child: const Text('Submit Work'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _handleFinalWorkAction() async {
-    final contractData = _contractData;
-    if (contractData == null) return;
-
-    final deliveryData = _asMap(contractData['deliveryData']);
-    final finalWorkUrls =
-        (deliveryData['finalWorkUrls'] as List?)
-            ?.map((item) => item.toString())
-            .where((item) => item.trim().isNotEmpty)
-            .toList() ??
-        const <String>[];
-
-    if (_currentUserRole() == 'freelancer' && finalWorkUrls.isEmpty) {
-      try {
-        final selectedFiles = await _pickDeliveryImagesForSubmission();
-        if (selectedFiles == null || selectedFiles.isEmpty) return;
-
-        setState(() {
-          _isSavingContract = true;
-        });
-
-        final uploadedUrls = await _controller.uploadDeliveryImages(
-          chatId: widget.chatId,
-          imageFiles: selectedFiles,
-        );
-
-        final updatedContractData = Map<String, dynamic>.from(contractData);
-        final updatedDeliveryData = _asMap(updatedContractData['deliveryData']);
-        updatedDeliveryData['finalWorkUrls'] = uploadedUrls;
-        updatedDeliveryData['finalWorkUploadedBy'] = _currentUserRole();
-        updatedDeliveryData['finalWorkUploadedAt'] = DateTime.now()
-            .toIso8601String();
-        updatedContractData['deliveryData'] = updatedDeliveryData;
-
-        await _saveWorkflowContractData(updatedContractData);
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Final work uploaded successfully')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        debugPrint('Upload final work error: $e');
-        unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
-      } finally {
-        if (!mounted) return;
-        setState(() {
-          _isSavingContract = false;
-        });
-      }
-      return;
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      linkController.dispose();
+      notesController.dispose();
     }
-
-    await _downloadDeliveredWork();
   }
 
   String _contractNotificationSnippet(Map<String, dynamic>? contractData) {
@@ -6680,8 +8260,18 @@ class _ChatViewState extends State<ChatView> {
           },
         );
       }
-    } catch (e) {
-      debugPrint('Create contract notification error: $e');
+    } on FirebaseException catch (error, stackTrace) {
+      _logCaughtError('Create contract notification error', error, stackTrace);
+    } on TimeoutException catch (error, stackTrace) {
+      _logCaughtError('Create contract notification error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      _logCaughtError('Create contract notification error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      _logCaughtError('Create contract notification error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      _logCaughtError('Create contract notification error', error, stackTrace);
+    } catch (error, stackTrace) {
+      _logCaughtError('Create contract notification error', error, stackTrace);
     }
   }
 
@@ -6692,7 +8282,7 @@ class _ChatViewState extends State<ChatView> {
     required Map<String, dynamic> data,
   }) async {
     try {
-      await _postContractApi(
+      final response = await _postContractApi(
         endpointPath: 'send-notification-push',
         body: {
           'receiverId': receiverId,
@@ -6702,8 +8292,28 @@ class _ChatViewState extends State<ChatView> {
         },
         logLabel: 'Send notification push',
       );
-    } catch (e) {
-      debugPrint('Send notification push error: $e');
+
+      final responseData = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Send notification push',
+      );
+
+      if (!_didApiResponseSucceed(response, responseData)) {
+        debugPrint(
+          'Send notification push failed: '
+          'status=${response.statusCode}, body=${response.body}',
+        );
+      }
+    } on TimeoutException catch (error, stackTrace) {
+      _logCaughtError('Send notification push error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      _logCaughtError('Send notification push error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      _logCaughtError('Send notification push error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      _logCaughtError('Send notification push error', error, stackTrace);
+    } catch (error, stackTrace) {
+      _logCaughtError('Send notification push error', error, stackTrace);
     }
   }
 
@@ -6796,40 +8406,57 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Approve contract',
       );
 
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Approve contract',
+      );
+
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Approve contract',
+          response: response,
+          responseData: data,
+        );
+        return;
+      }
+
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Approve contract',
+        responseData: data,
+      );
+
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-        final selfTerminated = data['selfTerminated'] == true;
-        final normalizedContractData = updatedContractData is Map
-            ? Map<String, dynamic>.from(updatedContractData)
-            : null;
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
 
-        setState(() {
-          if (normalizedContractData != null) {
-            _contractData = normalizedContractData;
-          }
-        });
-
-        await _createContractNotification(
+      await _runNonBlockingSecondaryAction(
+        'Approve contract notification',
+        () => _createContractNotification(
           type: 'contract_approved',
           actionText: 'approved your contract',
           requestId: requestId,
           chatData: chatData,
           contractData: normalizedContractData,
-        );
+        ),
+      );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Contract approved successfully')),
-        );
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Approve contract error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Contract approved successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Approve contract error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Approve contract error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Approve contract error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Approve contract error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Approve contract error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Approve contract error', error, stackTrace);
     } finally {
       if (!mounted) return;
 
@@ -6852,16 +8479,36 @@ class _ChatViewState extends State<ChatView> {
               'Are you sure you want to terminate this contract?',
             ),
             actions: [
-              TextButton(
+              OutlinedButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: primary,
+                  side: BorderSide(color: primary.withOpacity(0.22)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
                 child: const Text('Cancel'),
               ),
-              TextButton(
+              ElevatedButton(
                 onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text(
-                  'Terminate',
-                  style: TextStyle(color: Colors.redAccent),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFC75A5A),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 10,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
+                child: const Text('Terminate'),
               ),
             ],
           );
@@ -6978,26 +8625,40 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Request termination',
       );
 
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Request termination',
+      );
+
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Request termination',
+          response: response,
+          responseData: data,
+        );
+        return;
+      }
+
+      final selfTerminated = data['selfTerminated'] == true;
+      final terminationModeResponse = (data['terminationMode'] ?? '')
+          .toString()
+          .trim();
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Request termination',
+        responseData: data,
+      );
+
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-        final selfTerminated = data['selfTerminated'] == true;
-        final terminationModeResponse = (data['terminationMode'] ?? '')
-            .toString()
-            .trim();
-        final normalizedContractData = updatedContractData is Map
-            ? Map<String, dynamic>.from(updatedContractData)
-            : null;
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
 
-        setState(() {
-          if (normalizedContractData != null) {
-            _contractData = normalizedContractData;
-          }
-        });
-
-        await _createContractNotification(
+      await _runNonBlockingSecondaryAction(
+        'Request termination notification',
+        () => _createContractNotification(
           type: selfTerminated
               ? 'contract_terminated'
               : 'contract_termination_requested',
@@ -7009,30 +8670,28 @@ class _ChatViewState extends State<ChatView> {
           requestId: requestId,
           chatData: chatData,
           contractData: normalizedContractData,
-        );
+        ),
+      );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              selfTerminated
-                  ? terminationModeResponse == 'paid_compensation'
-                        ? 'Contract terminated successfully with 20% compensation'
-                        : 'Contract terminated successfully'
-                  : 'Termination requested',
-            ),
-          ),
-        );
-      } else {
-        debugPrint(
-          'request-termination failed: '
-          'status=${response.statusCode}, body=${response.body}',
-        );
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('request-termination exception: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar(
+        selfTerminated
+            ? terminationModeResponse == 'paid_compensation'
+                  ? 'Contract terminated successfully with 20% compensation'
+                  : 'Contract terminated successfully'
+            : 'Termination requested',
+      );
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Request termination error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Request termination error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Request termination error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Request termination error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Request termination error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Request termination error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -7052,7 +8711,8 @@ class _ChatViewState extends State<ChatView> {
           .doc(widget.chatId)
           .get();
 
-      final requestId = _extractRequestId(chatDoc.data());
+      final chatData = chatDoc.data();
+      final requestId = _extractRequestId(chatData);
 
       final response = await _postContractApi(
         endpointPath: 'approve-termination',
@@ -7060,45 +8720,57 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Approve termination',
       );
 
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Approve termination',
+      );
+
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Approve termination',
+          response: response,
+          responseData: data,
+        );
+        return;
+      }
+
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Approve termination',
+        responseData: data,
+      );
+
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
 
-        setState(() {
-          if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
-          }
-        });
-
-        final chatDocData =
-            (await FirebaseFirestore.instance
-                    .collection('chat')
-                    .doc(widget.chatId)
-                    .get())
-                .data();
-        final requestId = _extractRequestId(chatDocData);
-        await _createContractNotification(
+      await _runNonBlockingSecondaryAction(
+        'Approve termination notification',
+        () => _createContractNotification(
           type: 'contract_termination_approved',
           actionText: 'approved your termination request',
           requestId: requestId,
-          chatData: chatDocData,
-          contractData: updatedContractData is Map
-              ? Map<String, dynamic>.from(updatedContractData)
-              : null,
-        );
+          chatData: chatData,
+          contractData: normalizedContractData,
+        ),
+      );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Contract terminated successfully')),
-        );
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Approve termination error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Contract terminated successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Approve termination error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Approve termination error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Approve termination error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Approve termination error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Approve termination error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Approve termination error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -7127,39 +8799,57 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Reject termination',
       );
 
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Reject termination',
+      );
+
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Reject termination',
+          response: response,
+          responseData: data,
+        );
+        return;
+      }
+
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Reject termination',
+        responseData: data,
+      );
+
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-        final normalizedContractData = updatedContractData is Map
-            ? Map<String, dynamic>.from(updatedContractData)
-            : null;
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
 
-        setState(() {
-          if (normalizedContractData != null) {
-            _contractData = normalizedContractData;
-          }
-        });
-
-        await _createContractNotification(
+      await _runNonBlockingSecondaryAction(
+        'Reject termination notification',
+        () => _createContractNotification(
           type: 'contract_termination_rejected',
           actionText: 'rejected your termination request',
           requestId: requestId,
           chatData: chatData,
           contractData: normalizedContractData,
-        );
+        ),
+      );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Termination request rejected')),
-        );
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Reject termination error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Termination request rejected');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Reject termination error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Reject termination error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Reject termination error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Reject termination error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Reject termination error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Reject termination error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -7187,28 +8877,46 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Cancel termination',
       );
 
-      if (!mounted) return;
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Cancel termination',
+      );
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-
-        setState(() {
-          if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
-          }
-        });
-
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Termination cancelled')));
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Cancel termination',
+          response: response,
+          responseData: data,
+        );
+        return;
       }
-    } catch (e) {
+
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Cancel termination',
+        responseData: data,
+      );
+
       if (!mounted) return;
-      debugPrint('Cancel termination error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
+
+      _showSuccessSnackBar('Termination cancelled');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Cancel termination error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Cancel termination error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Cancel termination error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Cancel termination error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Cancel termination error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Cancel termination error', error, stackTrace);
     } finally {
       if (!mounted) return;
       setState(() {
@@ -7263,28 +8971,46 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Cancel approval',
       );
 
-      if (!mounted) return;
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Cancel approval',
+      );
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-
-        setState(() {
-          if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
-          }
-        });
-
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Approval cancelled')));
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Cancel approval',
+          response: response,
+          responseData: data,
+        );
+        return;
       }
-    } catch (e) {
+
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Cancel approval',
+        responseData: data,
+      );
+
       if (!mounted) return;
-      debugPrint('Cancel approval error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
+
+      _showSuccessSnackBar('Approval cancelled');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Cancel approval error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Cancel approval error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Cancel approval error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Cancel approval error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Cancel approval error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Cancel approval error', error, stackTrace);
     } finally {
       if (!mounted) return;
 
@@ -7335,39 +9061,57 @@ class _ChatViewState extends State<ChatView> {
         logLabel: 'Disapprove contract',
       );
 
+      final data = _decodeResponseBodyAsMap(
+        response,
+        actionLabel: 'Disapprove contract',
+      );
+
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: 'Disapprove contract',
+          response: response,
+          responseData: data,
+        );
+        return;
+      }
+
+      final normalizedContractData = await _resolveContractDataForUiSync(
+        actionLabel: 'Disapprove contract',
+        responseData: data,
+      );
+
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-        final normalizedContractData = updatedContractData is Map
-            ? Map<String, dynamic>.from(updatedContractData)
-            : null;
+      setState(() {
+        if (normalizedContractData != null) {
+          _contractData = normalizedContractData;
+        }
+      });
 
-        setState(() {
-          if (normalizedContractData != null) {
-            _contractData = normalizedContractData;
-          }
-        });
-
-        await _createContractNotification(
+      await _runNonBlockingSecondaryAction(
+        'Disapprove contract notification',
+        () => _createContractNotification(
           type: 'contract_disapproved',
           actionText: 'rejected your contract',
           requestId: requestId,
           chatData: chatData,
           contractData: normalizedContractData,
-        );
+        ),
+      );
 
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Contract rejected')));
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Reject contract error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Contract rejected');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Reject contract error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Reject contract error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Reject contract error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Reject contract error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Reject contract error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Reject contract error', error, stackTrace);
     }
   }
 
@@ -7456,38 +9200,49 @@ class _ChatViewState extends State<ChatView> {
         logLabel: logLabel,
       );
 
-      if (!mounted) return;
+      final data = _decodeResponseBodyAsMap(response, actionLabel: logLabel);
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final updatedContractData = data['contractData'];
-
-        setState(() {
-          if (clearContractData) {
-            _contractData = null;
-          } else if (updatedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(updatedContractData);
-          } else {
-            _contractData = null;
-          }
-          _isEditingContract = false;
-          _isAddingClause = false;
-          _isApprovingContract = false;
-          _isTerminatingContract = false;
-          _pendingCustomClauses = [];
-          _contractError = null;
-        });
-
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(successMessage)));
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
+      if (!_didApiResponseSucceed(response, data)) {
+        await _showApiFailure(
+          actionLabel: logLabel,
+          response: response,
+          responseData: data,
+        );
+        return;
       }
-    } catch (e) {
+
+      final normalizedContractData = clearContractData
+          ? null
+          : await _resolveContractDataForUiSync(
+              actionLabel: logLabel,
+              responseData: data,
+            );
+
       if (!mounted) return;
-      debugPrint('$logLabel error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+
+      setState(() {
+        _contractData = clearContractData ? null : normalizedContractData;
+        _isEditingContract = false;
+        _isAddingClause = false;
+        _isApprovingContract = false;
+        _isTerminatingContract = false;
+        _pendingCustomClauses = [];
+        _contractError = null;
+      });
+
+      _showSuccessSnackBar(successMessage);
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('$logLabel error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('$logLabel error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('$logLabel error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('$logLabel error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('$logLabel error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('$logLabel error', error, stackTrace);
     } finally {
       if (!mounted) return;
 
@@ -7547,45 +9302,26 @@ class _ChatViewState extends State<ChatView> {
     });
 
     try {
-      final chatDoc = await FirebaseFirestore.instance
-          .collection('chat')
-          .doc(widget.chatId)
-          .get();
-
-      final requestId = _extractRequestId(chatDoc.data());
-
-      final response = await _postContractApi(
-        endpointPath: 'update-contract',
-        body: {
-          'requestId': requestId,
-          'role': _currentUserRole(),
-          'contractData': updatedContractData,
-        },
+      await _saveWorkflowContractData(
+        updatedContractData,
         logLabel: 'Delete clause update',
       );
 
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final savedContractData = data['contractData'];
-
-        setState(() {
-          if (savedContractData is Map) {
-            _contractData = Map<String, dynamic>.from(savedContractData);
-          }
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Contract updated successfully')),
-        );
-      } else {
-        unawaited(_showErrorDialog(_friendlyErrorMessage(response.statusCode)));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      debugPrint('Delete clause update error: $e');
-      unawaited(_showErrorDialog(_friendlyErrorMessage(e)));
+      _showSuccessSnackBar('Contract updated successfully');
+    } on TimeoutException catch (error, stackTrace) {
+      await _showLoggedError('Delete clause update error', error, stackTrace);
+    } on SocketException catch (error, stackTrace) {
+      await _showLoggedError('Delete clause update error', error, stackTrace);
+    } on http.ClientException catch (error, stackTrace) {
+      await _showLoggedError('Delete clause update error', error, stackTrace);
+    } on FirebaseException catch (error, stackTrace) {
+      await _showLoggedError('Delete clause update error', error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      await _showLoggedError('Delete clause update error', error, stackTrace);
+    } catch (error, stackTrace) {
+      await _showLoggedError('Delete clause update error', error, stackTrace);
     } finally {
       if (!mounted) return;
 
@@ -8616,6 +10352,10 @@ class _ChatViewState extends State<ChatView> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.adminReadOnlyMode) {
+      return _buildAdminReadOnlyScaffold();
+    }
+
     final previewContractStatus =
         ((_contractData?['approval']
                     as Map<String, dynamic>?)?['contractStatus']

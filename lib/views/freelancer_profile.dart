@@ -17,11 +17,13 @@ class FreelancerProfileView extends StatefulWidget {
   final String? userId;
   final bool fromCategory;
   final bool fromChat;
+  final bool readOnlyMode;
   const FreelancerProfileView({
     super.key,
     this.userId,
     this.fromCategory = false,
     this.fromChat = false, // 👈 الحل هنا
+    this.readOnlyMode = false,
   });
   @override
   State<FreelancerProfileView> createState() => _FreelancerProfileViewState();
@@ -891,7 +893,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
           ),
           const SizedBox(height: 24),
           const SizedBox(height: 10),
-          if (!widget.fromChat)
+          if (!widget.fromChat && !widget.readOnlyMode)
             Align(
               alignment: Alignment.centerRight,
               child: SendRequestButton(
@@ -1107,7 +1109,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
               foregroundColor: _FreelancerProfileViewState.kPurple,
               elevation: 0,
               actions: [
-                if (!_isOwnProfile && c.profile != null)
+                if (!widget.readOnlyMode && !_isOwnProfile && c.profile != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 4),
                     child: FavoriteHeartButton(
@@ -1122,7 +1124,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                       backgroundColor: const Color(0xFFF6F2FB),
                     ),
                   ),
-                if (showProfileReportAction)
+                if (!widget.readOnlyMode && showProfileReportAction)
                   ReportFlagButton(
                     onPressed: () {
                       final profile = c.profile;

@@ -338,7 +338,7 @@ class ChatController {
     }, SetOptions(merge: true));
   }
 
-  Future<List<String>> uploadDeliveryImages({
+  Future<List<Map<String, String>>> uploadDeliveryImages({
     required String chatId,
     required List<File> imageFiles,
   }) async {
@@ -347,24 +347,57 @@ class ChatController {
       throw Exception('No logged in user found.');
     }
 
-    final List<String> imageUrls = [];
+    final List<Map<String, String>> imageItems = [];
 
     for (final imageFile in imageFiles) {
       final fileName =
-          '${DateTime.now().millisecondsSinceEpoch}_${imageUrls.length}';
-
+          '${DateTime.now().millisecondsSinceEpoch}_${imageItems.length}';
+      final previewRef = _storage
+        .ref()
+        .child('delivery_previews')
+        .child(chatId)
+        .child('$fileName.jpg');
       final storageRef = _storage
           .ref()
-          .child('delivery_images')
+          .child('delivery_files')
           .child(chatId)
           .child('$fileName.jpg');
 
+      await previewRef.putFile(imageFile);
       await storageRef.putFile(imageFile);
-      final imageUrl = await storageRef.getDownloadURL();
-      imageUrls.add(imageUrl);
+      final previewUrl = await previewRef.getDownloadURL();
+
+      imageItems.add({
+        'fileName': '$fileName.jpg',
+        'previewUrl': previewUrl,
+        'storagePath': storageRef.fullPath,
+      });
     }
 
-    return imageUrls;
+    return imageItems;
+  }
+
+  Future<Map<String, String>> uploadDeliveryFile({
+    required String chatId,
+    required File file,
+    required String fileName,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('No logged in user found.');
+    }
+
+    final normalizedName = fileName.trim().isEmpty
+        ? 'attachment'
+        : fileName.trim().replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final storageRef = _storage
+        .ref()
+        .child('delivery_files')
+        .child(chatId)
+        .child('${DateTime.now().millisecondsSinceEpoch}_$normalizedName');
+
+    await storageRef.putFile(file);
+    return {'name': normalizedName, 'storagePath': storageRef.fullPath};
   }
 
   Stream<List<MessageModel>> getMessages(String chatId) {
@@ -656,7 +689,8 @@ class ChatController {
 
       if (contractStatus == 'completed' ||
           deliveryStatus == 'paid_delivered' ||
-          paymentStatus == 'paid') {
+          paymentStatus == 'paid' ||
+          paymentStatus == 'completed') {
         return 'Completed Contract';
       }
 

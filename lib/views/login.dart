@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../controlles/login_controller.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'admin_home_screen.dart';
 import 'signup.dart';
 
 //تمت
@@ -342,9 +343,13 @@ class _loginState extends State<login> {
                                             .trim();
 
                                     if (accountType == 'admin') {
-                                      Navigator.pushReplacementNamed(
+                                      Navigator.pushAndRemoveUntil(
                                         context,
-                                        '/adminHome',
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const AdminHomeScreen(),
+                                        ),
+                                        (route) => false,
                                       );
                                     } else if (accountType == 'freelancer') {
                                       Navigator.pushReplacementNamed(

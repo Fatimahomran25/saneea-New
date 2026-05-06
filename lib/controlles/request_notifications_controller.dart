@@ -9,6 +9,8 @@ class RequestNotificationItem {
   final String senderProfileUrl;
   final String actionText;
   final String snippet;
+  final String title;
+  final String message;
   final String receiverId;
   final String? requestId;
   final String? proposalId;
@@ -16,6 +18,10 @@ class RequestNotificationItem {
   final String? chatId;
   final String? announcementId;
   final String? announcementDescription;
+  final String? relatedReportId;
+  final String? reviewId;
+  final int? warningCount;
+  final int? maxWarnings;
   final bool isRead;
   final DateTime? createdAt;
 
@@ -27,6 +33,8 @@ class RequestNotificationItem {
     required this.senderProfileUrl,
     required this.actionText,
     required this.snippet,
+    required this.title,
+    required this.message,
     required this.receiverId,
     required this.requestId,
     required this.proposalId,
@@ -34,6 +42,10 @@ class RequestNotificationItem {
     required this.chatId,
     required this.announcementId,
     required this.announcementDescription,
+    required this.relatedReportId,
+    required this.reviewId,
+    required this.warningCount,
+    required this.maxWarnings,
     required this.isRead,
     required this.createdAt,
   });
@@ -43,23 +55,29 @@ class RequestNotificationItem {
   ) {
     final data = doc.data() ?? <String, dynamic>{};
     final type = _clean(data['type']);
+    final title = _clean(data['title']);
+    final message = _clean(data['message']);
     final actionText = _actionTextForType(
       type: type,
       rawActionText: data['actionText'],
+      rawMessage: message,
     );
     final snippet = _snippetForType(
       type: type,
       rawSnippet: data['snippet'],
+      rawMessage: message,
     );
 
     return RequestNotificationItem(
       id: doc.id,
       type: type,
       senderId: _clean(data['senderId']),
-      senderName: _clean(data['senderName']),
+      senderName: title.isNotEmpty ? title : _clean(data['senderName']),
       senderProfileUrl: _clean(data['senderProfileUrl']),
       actionText: actionText,
       snippet: snippet,
+      title: title,
+      message: message,
       receiverId: _clean(data['receiverId']),
       requestId: data['requestId']?.toString(),
       proposalId: data['proposalId']?.toString(),
@@ -67,6 +85,10 @@ class RequestNotificationItem {
       chatId: data['chatId']?.toString(),
       announcementId: data['announcementId']?.toString(),
       announcementDescription: data['announcementDescription']?.toString(),
+      relatedReportId: data['relatedReportId']?.toString(),
+      reviewId: data['reviewId']?.toString(),
+      warningCount: _intOrNull(data['warningCount']),
+      maxWarnings: _intOrNull(data['maxWarnings']),
       isRead: data['isRead'] == true,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );
@@ -79,11 +101,15 @@ class RequestNotificationItem {
   static String _actionTextForType({
     required String type,
     required dynamic rawActionText,
+    required String rawMessage,
   }) {
     final actionText = _clean(rawActionText);
     if (actionText.isNotEmpty) return actionText;
+    if (rawMessage.isNotEmpty) return rawMessage;
 
     switch (type) {
+      case 'admin_warning':
+        return 'You received a warning from the admin.';
       case 'contract_generated':
         return 'generated a contract draft';
       case 'contract_approved':
@@ -108,11 +134,15 @@ class RequestNotificationItem {
   static String _snippetForType({
     required String type,
     required dynamic rawSnippet,
+    required String rawMessage,
   }) {
     final snippet = _clean(rawSnippet);
     if (snippet.isNotEmpty) return snippet;
+    if (rawMessage.isNotEmpty) return rawMessage;
 
     switch (type) {
+      case 'admin_warning':
+        return 'Tap to review your warning details.';
       case 'contract_generated':
       case 'contract_approved':
       case 'contract_disapproved':
@@ -127,6 +157,12 @@ class RequestNotificationItem {
         return '';
     }
   }
+}
+
+int? _intOrNull(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse((value ?? '').toString().trim());
 }
 
 class RequestNotificationsController {

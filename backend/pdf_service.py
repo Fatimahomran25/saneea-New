@@ -34,8 +34,12 @@ def generate_contract_pdf(contract_data):
 
     client_name = parties.get("clientName", "-")
     freelancer_name = parties.get("freelancerName", "-")
-    service_ai_text = service.get("aiText")
+
+    # IMPORTANT:
+    # Do not use service.aiText here because it usually contains the full AI contract.
+    # Service Description should only show the original short service description.
     service_raw_description = service.get("description", "-")
+
     payment_amount = payment.get("amount", "-")
     payment_currency = payment.get("currency", "")
     deadline = timeline.get("deadline", "-")
@@ -63,16 +67,14 @@ def generate_contract_pdf(contract_data):
         text = str(value).strip()
         return text if text else fallback
 
-    service_description = safe_text(service_ai_text, "")
-    if service_description == "":
-        service_description = safe_text(service_raw_description)
+    service_description = safe_text(service_raw_description)
 
     def get_status_color():
-        if status_raw == "approved":
+        if status_raw in {"approved", "completed"}:
             return colors.HexColor("#2E7D32")
-        if status_raw == "rejected":
+        if status_raw in {"rejected", "terminated", "admin_terminated"}:
             return colors.HexColor("#C62828")
-        if status_raw == "pending_approval":
+        if status_raw in {"pending_approval", "pending"}:
             return colors.HexColor("#EF6C00")
         if status_raw == "edited":
             return colors.HexColor("#7E57C2")
@@ -87,6 +89,7 @@ def generate_contract_pdf(contract_data):
     body_font = "Helvetica"
     body_font_size = 11
     body_line_height = 16
+
     section_fill = colors.HexColor("#FCFBFE")
     section_stroke = colors.HexColor("#E7E0F5")
     section_title_fill = colors.HexColor("#F1ECFA")
@@ -94,13 +97,16 @@ def generate_contract_pdf(contract_data):
     body_text_color = colors.HexColor("#2A223A")
     label_text_color = colors.HexColor("#5E556F")
 
+    bottom_safe_y = 80
+
     def wrap_text_lines(text, max_width, font_name=body_font, font_size=body_font_size):
         raw_text = str(text).strip() if text not in [None, ""] else "-"
         paragraphs = raw_text.splitlines() or ["-"]
         wrapped_lines = []
 
-        for index, paragraph in enumerate(paragraphs):
+        for paragraph_index, paragraph in enumerate(paragraphs):
             cleaned = paragraph.strip()
+
             if not cleaned:
                 wrapped_lines.append("")
                 continue
@@ -110,23 +116,46 @@ def generate_contract_pdf(contract_data):
 
             for word in words:
                 candidate = word if not line else f"{line} {word}"
+
                 if pdf.stringWidth(candidate, font_name, font_size) <= max_width:
                     line = candidate
                 else:
                     if line:
                         wrapped_lines.append(line)
-                    line = word
+
+                    # If one word is wider than the card, split it manually.
+                    if pdf.stringWidth(word, font_name, font_size) > max_width:
+                        piece = ""
+                        for char in word:
+                            candidate_piece = piece + char
+                            if pdf.stringWidth(candidate_piece, font_name, font_size) <= max_width:
+                                piece = candidate_piece
+                            else:
+                                if piece:
+                                    wrapped_lines.append(piece)
+                                piece = char
+                        line = piece
+                    else:
+                        line = word
 
             if line:
                 wrapped_lines.append(line)
 
-            if index < len(paragraphs) - 1 and cleaned:
+            if paragraph_index < len(paragraphs) - 1 and cleaned:
                 wrapped_lines.append("")
 
         return wrapped_lines or ["-"]
 
+    def card_height_for_lines(lines, minimum=64):
+        text_block_height = max(body_line_height, len(lines) * body_line_height)
+        return max(minimum, (card_inner_padding_y * 2) + text_block_height + 6)
+
+    def available_height():
+        return y - bottom_safe_y
+
     def draw_content_card(x, top_y, card_width, card_height, fill_color=section_fill):
         bottom_y = top_y - card_height
+
         pdf.setFillColor(fill_color)
         pdf.setStrokeColor(section_stroke)
         pdf.setLineWidth(1)
@@ -139,6 +168,7 @@ def generate_contract_pdf(contract_data):
             fill=1,
             stroke=1,
         )
+
         return bottom_y
 
     def new_page():
@@ -148,24 +178,50 @@ def generate_contract_pdf(contract_data):
         draw_header()
 
     def ensure_height(required_height):
-        nonlocal y
-        if y - required_height < 80:
+        if y - required_height < bottom_safe_y:
             new_page()
+
+    def split_lines_for_cards(lines, max_card_height):
+        max_text_height = max_card_height - (card_inner_padding_y * 2) - 6
+        max_lines = max(1, int(max_text_height // body_line_height))
+
+        chunks = []
+        current = []
+
+        for line in lines:
+            current.append(line)
+            if len(current) >= max_lines:
+                chunks.append(current)
+                current = []
+
+        if current:
+            chunks.append(current)
+
+        return chunks or [["-"]]
+
+    def max_safe_card_height(include_section_title=False):
+        reserved_for_title = 46 if include_section_title else 0
+        return max(160, min(520, available_height() - reserved_for_title - 8))
 
     def draw_header():
         nonlocal y
+
         header_x = 40
         header_y = height - 122
         header_width = width - 80
         header_height = 78
+
         logo_panel_x = header_x + 14
         logo_panel_y = header_y + 12
         logo_panel_size = 54
+
         separator_x = header_x + 90
+
         meta_width = 112
         meta_height = 42
         meta_x = header_x + header_width - meta_width - 14
         meta_y = header_y + ((header_height - meta_height) / 2)
+
         title_x = separator_x + 18
 
         pdf.setFillColor(colors.HexColor("#F8F6FC"))
@@ -242,9 +298,11 @@ def generate_contract_pdf(contract_data):
 
         y = header_y - 18
 
-    def draw_section(title):
+    def draw_section(title, required_after_title=0):
         nonlocal y
-        ensure_height(44)
+
+        # Prevent title from being alone at the bottom of the page.
+        ensure_height(44 + required_after_title)
 
         badge_padding_x = 12
         badge_height = 22
@@ -270,6 +328,7 @@ def generate_contract_pdf(contract_data):
 
     def draw_status_box():
         nonlocal y
+
         box_height = 72
         ensure_height(box_height + section_gap)
 
@@ -285,11 +344,14 @@ def generate_contract_pdf(contract_data):
         label_x = section_left + card_inner_padding_x
         label_top_y = top_y - 16
         value_top_y = label_top_y - 16
+
         chip_height = 24
         chip_padding_x = 12
         status_font = "Helvetica-Bold"
         status_font_size = 10
-        status_chip_width = pdf.stringWidth(status, status_font, status_font_size) + (chip_padding_x * 2)
+        status_chip_width = pdf.stringWidth(status, status_font, status_font_size) + (
+            chip_padding_x * 2
+        )
         chip_x = section_left + section_width - card_inner_padding_x - status_chip_width
         chip_y = top_y - 48
 
@@ -339,11 +401,11 @@ def generate_contract_pdf(contract_data):
     def draw_parties_section():
         nonlocal y
 
-        draw_section("Contract Parties")
-
         card_gap = 12
         party_card_width = (section_width - card_gap) / 2
         party_card_height = 58
+
+        draw_section("Contract Parties", required_after_title=party_card_height + section_gap)
 
         ensure_height(party_card_height + section_gap)
         top_y = y
@@ -357,6 +419,7 @@ def generate_contract_pdf(contract_data):
                 party_card_height,
                 fill_color=colors.HexColor("#FBFAFE"),
             )
+
             text_x = x + card_inner_padding_x
             label_y = top_y - 16
             value_y = top_y - 36
@@ -367,6 +430,7 @@ def generate_contract_pdf(contract_data):
 
             pdf.setFont("Helvetica-Bold", 12)
             pdf.setFillColor(body_text_color)
+
             value_lines = wrap_text_lines(
                 safe_value,
                 party_card_width - (card_inner_padding_x * 2),
@@ -390,53 +454,62 @@ def generate_contract_pdf(contract_data):
 
         y = bottom_y - section_gap
 
-    def draw_service_description_section():
+    def draw_text_card_lines(lines, first_title=None):
         nonlocal y
 
-        draw_section("Service Description")
+        max_card_height = max_safe_card_height(include_section_title=bool(first_title))
+        chunks = split_lines_for_cards(lines, max_card_height)
 
+        for chunk_index, chunk in enumerate(chunks):
+            card_height = card_height_for_lines(chunk, minimum=72)
+            card_height = min(card_height, max_safe_card_height())
+
+            if chunk_index == 0 and first_title:
+                draw_section(first_title, required_after_title=card_height + section_gap)
+            else:
+                ensure_height(card_height + section_gap)
+
+            top_y = y
+            bottom_y = draw_content_card(
+                section_left,
+                top_y,
+                section_width,
+                card_height,
+                fill_color=colors.HexColor("#FBFAFE"),
+            )
+
+            text_x = section_left + card_inner_padding_x
+            current_y = top_y - card_inner_padding_y - 2
+
+            pdf.setFont(body_font, body_font_size)
+            pdf.setFillColor(body_text_color)
+
+            for line in chunk:
+                if line:
+                    pdf.drawString(text_x, current_y, line)
+                current_y -= body_line_height
+
+            y = bottom_y - section_gap
+
+    def draw_service_description_section():
         content_lines = wrap_text_lines(
             safe_text(service_description),
             section_width - (card_inner_padding_x * 2),
             font_name=body_font,
             font_size=body_font_size,
         )
-        text_block_height = max(body_line_height, len(content_lines) * body_line_height)
-        card_height = max(72, (card_inner_padding_y * 2) + text_block_height + 6)
 
-        ensure_height(card_height + section_gap)
-        top_y = y
-        bottom_y = draw_content_card(
-            section_left,
-            top_y,
-            section_width,
-            card_height,
-            fill_color=colors.HexColor("#FBFAFE"),
-        )
-
-        text_x = section_left + card_inner_padding_x
-        current_y = top_y - card_inner_padding_y - 2
-
-        pdf.setFont(body_font, body_font_size)
-        pdf.setFillColor(body_text_color)
-
-        for line in content_lines:
-            if line:
-                pdf.drawString(text_x, current_y, line)
-            current_y -= body_line_height
-
-        y = bottom_y - section_gap
+        draw_text_card_lines(content_lines, first_title="Service Description")
 
     def draw_payment_deadline_section():
         nonlocal y
-
-        draw_section("Payment & Deadline")
 
         card_gap = 12
         info_card_width = (section_width - card_gap) / 2
 
         amount = safe_text(payment_amount)
         currency = safe_text(payment_currency, "")
+
         payment_text = (
             f"{amount} {currency}".strip()
             if currency
@@ -463,6 +536,8 @@ def generate_contract_pdf(contract_data):
         )
         card_height = max(72, (card_inner_padding_y * 2) + content_height + 8)
 
+        draw_section("Payment & Deadline", required_after_title=card_height + section_gap)
+
         ensure_height(card_height + section_gap)
         top_y = y
 
@@ -474,6 +549,7 @@ def generate_contract_pdf(contract_data):
                 card_height,
                 fill_color=colors.HexColor("#FBFAFE"),
             )
+
             text_x = x + card_inner_padding_x
             label_y = top_y - 16
             value_y = top_y - 38
@@ -484,8 +560,8 @@ def generate_contract_pdf(contract_data):
 
             pdf.setFont(value_font, value_size)
             pdf.setFillColor(value_color)
-            current_y = value_y
 
+            current_y = value_y
             for line in lines:
                 if line:
                     pdf.drawString(text_x, current_y, line)
@@ -516,49 +592,43 @@ def generate_contract_pdf(contract_data):
         y = bottom_y - section_gap
 
     def draw_clause_group_section(title, contents):
-        nonlocal y
+        clean_contents = [
+            str(content).strip()
+            for content in contents
+            if str(content).strip()
+        ]
 
-        clean_contents = [str(content).strip() for content in contents if str(content).strip()]
         if not clean_contents:
             return
 
-        draw_section(title)
-
         content_width = section_width - (card_inner_padding_x * 2)
-        clause_card_gap = 8
 
-        for index, content in enumerate(clean_contents):
-            content_lines = wrap_text_lines(
-                content,
-                content_width,
-                font_name=body_font,
-                font_size=body_font_size,
+        all_lines = []
+        for index, content in enumerate(clean_contents, start=1):
+            if len(clean_contents) > 1:
+                all_lines.append(f"{index}. {content}")
+            else:
+                all_lines.append(content)
+
+            if index < len(clean_contents):
+                all_lines.append("")
+
+        wrapped_lines = []
+        for line in all_lines:
+            if not line:
+                wrapped_lines.append("")
+                continue
+
+            wrapped_lines.extend(
+                wrap_text_lines(
+                    line,
+                    content_width,
+                    font_name=body_font,
+                    font_size=body_font_size,
+                )
             )
-            text_block_height = max(body_line_height, len(content_lines) * body_line_height)
-            card_height = max(64, (card_inner_padding_y * 2) + text_block_height + 4)
 
-            ensure_height(card_height + section_gap)
-            top_y = y
-            bottom_y = draw_content_card(
-                section_left,
-                top_y,
-                section_width,
-                card_height,
-                fill_color=colors.HexColor("#FBFAFE"),
-            )
-
-            text_x = section_left + card_inner_padding_x
-            current_y = top_y - card_inner_padding_y - 2
-
-            pdf.setFont(body_font, body_font_size)
-            pdf.setFillColor(body_text_color)
-
-            for line in content_lines:
-                if line:
-                    pdf.drawString(text_x, current_y, line)
-                current_y -= body_line_height
-
-            y = bottom_y - (section_gap if index == len(clean_contents) - 1 else clause_card_gap)
+        draw_text_card_lines(wrapped_lines, first_title=title)
 
     def decode_signature_image(signature_data):
         if not isinstance(signature_data, str):
@@ -605,6 +675,7 @@ def generate_contract_pdf(contract_data):
 
         pdf.setFont("Helvetica-Bold", 10)
         pdf.setFillColor(section_title_text)
+
         label_width = pdf.stringWidth(label, "Helvetica-Bold", 10)
         pdf.drawString(
             x + ((card_width - label_width) / 2),
@@ -622,8 +693,10 @@ def generate_contract_pdf(contract_data):
         if signature_image is None:
             pdf.setFont("Helvetica-Oblique", 10)
             pdf.setFillColor(colors.grey)
+
             placeholder = "Signature unavailable"
             placeholder_width = pdf.stringWidth(placeholder, "Helvetica-Oblique", 10)
+
             pdf.drawString(
                 x + ((card_width - placeholder_width) / 2),
                 image_y + (image_area_height / 2),
@@ -640,6 +713,7 @@ def generate_contract_pdf(contract_data):
             scale = min(image_area_width / image_width, image_area_height / image_height)
             draw_width = image_width * scale
             draw_height = image_height * scale
+
             draw_x = image_x + ((image_area_width - draw_width) / 2)
             draw_y = image_y + ((image_area_height - draw_height) / 2)
 
@@ -654,10 +728,13 @@ def generate_contract_pdf(contract_data):
             )
         except Exception as error:
             print("ERROR DRAWING SIGNATURE:", error)
+
             pdf.setFont("Helvetica-Oblique", 10)
             pdf.setFillColor(colors.grey)
+
             placeholder = "Signature unavailable"
             placeholder_width = pdf.stringWidth(placeholder, "Helvetica-Oblique", 10)
+
             pdf.drawString(
                 x + ((card_width - placeholder_width) / 2),
                 image_y + (image_area_height / 2),
@@ -667,13 +744,13 @@ def generate_contract_pdf(contract_data):
     def draw_signatures_section():
         nonlocal y
 
-        ensure_height(188)
-        y -= 2
-        draw_section("Signatures")
-
         card_width = (width - 126) / 2
         gap = 16
         card_height = 112
+
+        draw_section("Signatures", required_after_title=card_height + 18)
+
+        ensure_height(card_height + 18)
         top_y = y
 
         draw_signature_card(
@@ -717,11 +794,13 @@ def generate_contract_pdf(contract_data):
 
         pdf.setFont("Helvetica", 9)
         pdf.setFillColor(colors.HexColor("#4B4659"))
+
         primary_width = pdf.stringWidth(primary_text, "Helvetica", 9)
         pdf.drawString((width - primary_width) / 2, primary_y, primary_text)
 
         pdf.setFont("Helvetica-Oblique", 8)
         pdf.setFillColor(colors.HexColor("#7A748C"))
+
         secondary_width = pdf.stringWidth(
             secondary_text,
             "Helvetica-Oblique",
@@ -741,7 +820,6 @@ def generate_contract_pdf(contract_data):
     y -= 2
     draw_payment_deadline_section()
 
-    # عرض جميع البنود الموجودة في customClauses بدون تقييد بعنوان أو source
     grouped_clauses = {}
 
     for clause in custom_clauses:
@@ -749,19 +827,22 @@ def generate_contract_pdf(contract_data):
             continue
 
         title = safe_text(clause.get("title"), "Other")
+
         raw_clause_content = clause.get("content")
         if raw_clause_content in (None, ""):
             raw_clause_content = clause.get("text")
+
         content = safe_text(raw_clause_content, "")
 
         if not content.strip():
             continue
 
         normalized_title = normalize_text(title)
+
         if normalized_title not in grouped_clauses:
             grouped_clauses[normalized_title] = {
                 "display_title": title,
-                "contents": []
+                "contents": [],
             }
 
         if content not in grouped_clauses[normalized_title]["contents"]:
@@ -771,7 +852,7 @@ def generate_contract_pdf(contract_data):
         y -= 2
         draw_clause_group_section(item["display_title"], item["contents"])
 
-    if status_raw == "approved":
+    if status_raw in {"approved", "completed"}:
         draw_signatures_section()
 
     draw_footer()

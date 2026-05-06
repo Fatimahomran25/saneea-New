@@ -286,14 +286,9 @@ class _ContractReviewCardData {
   ) {
     final data = doc.data();
 
-    final rawStatus = _firstFilled([
-      data['status'],
-      'requested',
-    ]);
+    final rawStatus = _firstFilled([data['status'], 'requested']);
 
-    final rawContractStatus = _firstFilled([
-      data['contractStatus'],
-    ]);
+    final rawContractStatus = _firstFilled([data['contractStatus']]);
 
     return _ContractReviewCardData(
       id: doc.id,

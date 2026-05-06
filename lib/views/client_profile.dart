@@ -11,8 +11,13 @@ import 'report_flag_button.dart';
 
 class ClientProfile extends StatelessWidget {
   final String? userId;
+  final bool readOnlyMode;
 
-  const ClientProfile({super.key, this.userId});
+  const ClientProfile({
+    super.key,
+    this.userId,
+    this.readOnlyMode = false,
+  });
 
   static const Color kPurple = Color(0xFF4F378B);
   static const Color kHeaderBg = Color(0xFFF2EAFB);
@@ -28,14 +33,18 @@ class ClientProfile extends StatelessWidget {
       data: fixedMq,
       child: ChangeNotifierProvider(
         create: (_) => ClientProfileController()..init(userId: userId),
-        child: const _ClientProfileBody(),
+        child: _ClientProfileBody(readOnlyMode: readOnlyMode),
       ),
     );
   }
 }
 
 class _ClientProfileBody extends StatefulWidget {
-  const _ClientProfileBody();
+  const _ClientProfileBody({
+    required this.readOnlyMode,
+  });
+
+  final bool readOnlyMode;
 
   @override
   State<_ClientProfileBody> createState() => _ClientProfileBodyState();
@@ -116,7 +125,7 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
         foregroundColor: ClientProfile.kPurple,
         elevation: 0,
         actions: [
-          if (!c.isOwnProfile && c.profile != null)
+          if (!widget.readOnlyMode && !c.isOwnProfile && c.profile != null)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: FavoriteHeartButton(
@@ -131,7 +140,7 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
                 backgroundColor: const Color(0xFFF6F2FB),
               ),
             ),
-          if (showProfileReportAction)
+          if (!widget.readOnlyMode && showProfileReportAction)
             ReportFlagButton(
               onPressed: () {
                 showReportIssueDialog(
