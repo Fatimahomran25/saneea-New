@@ -15,18 +15,14 @@ class AdminReportsController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final AppNotificationService _notificationService;
 
-  Future<void> dismissGeneralReport({
-    required String reportId,
-  }) async {
+  Future<void> dismissGeneralReport({required String reportId}) async {
     await _firestore.collection('general_reports').doc(reportId).set({
       'status': 'dismissed',
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  Future<void> reopenGeneralReport({
-    required String reportId,
-  }) async {
+  Future<void> reopenGeneralReport({required String reportId}) async {
     await _firestore.collection('general_reports').doc(reportId).set({
       'status': 'open',
       'handledAt': FieldValue.delete(),
@@ -48,49 +44,48 @@ class AdminReportsController {
     final reportRef = _firestore.collection('general_reports').doc(reportId);
     final userRef = _firestore.collection('users').doc(trimmedReportedUserId);
 
-    final warningOutcome = await _firestore.runTransaction<Map<String, dynamic>>((
-      transaction,
-    ) async {
-      final reportSnapshot = await transaction.get(reportRef);
-      final reportData = reportSnapshot.data();
+    final warningOutcome = await _firestore
+        .runTransaction<Map<String, dynamic>>((transaction) async {
+          final reportSnapshot = await transaction.get(reportRef);
+          final reportData = reportSnapshot.data();
 
-      if (!reportSnapshot.exists || reportData == null) {
-        throw Exception('Report not found.');
-      }
+          if (!reportSnapshot.exists || reportData == null) {
+            throw Exception('Report not found.');
+          }
 
-      final userSnapshot = await transaction.get(userRef);
-      final userData = userSnapshot.data() ?? <String, dynamic>{};
-      final currentWarningCount = _intValue(userData['warningCount']);
-      final warningAlreadyApplied = reportData['warningApplied'] == true;
-      final nextWarningCount = warningAlreadyApplied
-          ? currentWarningCount
-          : currentWarningCount + 1;
+          final userSnapshot = await transaction.get(userRef);
+          final userData = userSnapshot.data() ?? <String, dynamic>{};
+          final currentWarningCount = _intValue(userData['warningCount']);
+          final warningAlreadyApplied = reportData['warningApplied'] == true;
+          final nextWarningCount = warningAlreadyApplied
+              ? currentWarningCount
+              : currentWarningCount + 1;
 
-      if (!warningAlreadyApplied) {
-        transaction.set(userRef, {
-          'warningCount': nextWarningCount,
-          'lastWarningAt': FieldValue.serverTimestamp(),
-          'lastWarningReason': warningReason.trim().isEmpty
-              ? 'General report violation'
-              : warningReason.trim(),
-          'lastWarningReportId': reportId,
-        }, SetOptions(merge: true));
-      }
+          if (!warningAlreadyApplied) {
+            transaction.set(userRef, {
+              'warningCount': nextWarningCount,
+              'lastWarningAt': FieldValue.serverTimestamp(),
+              'lastWarningReason': warningReason.trim().isEmpty
+                  ? 'General report violation'
+                  : warningReason.trim(),
+              'lastWarningReportId': reportId,
+            }, SetOptions(merge: true));
+          }
 
-      transaction.set(reportRef, {
-        'status': 'valid',
-        'warningApplied': true,
-        'warningReason': warningReason.trim(),
-        'warningIssuedAt': FieldValue.serverTimestamp(),
-        'warningCountAfterAction': nextWarningCount,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+          transaction.set(reportRef, {
+            'status': 'valid',
+            'warningApplied': true,
+            'warningReason': warningReason.trim(),
+            'warningIssuedAt': FieldValue.serverTimestamp(),
+            'warningCountAfterAction': nextWarningCount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
 
-      return {
-        'didApplyWarning': !warningAlreadyApplied,
-        'warningCount': nextWarningCount,
-      };
-    });
+          return {
+            'didApplyWarning': !warningAlreadyApplied,
+            'warningCount': nextWarningCount,
+          };
+        });
 
     final didApplyWarning = warningOutcome['didApplyWarning'] == true;
     final nextWarningCount = _intValue(warningOutcome['warningCount']);
@@ -123,6 +118,20 @@ class AdminReportsController {
       'blockedReason': blockedReason.trim().isEmpty
           ? 'Repeated violations'
           : blockedReason.trim(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> unblockReportedUser({required String reportedUserId}) async {
+    final trimmedReportedUserId = reportedUserId.trim();
+    if (trimmedReportedUserId.isEmpty) {
+      throw Exception('Reported user ID is missing.');
+    }
+
+    await _firestore.collection('users').doc(trimmedReportedUserId).set({
+      'isBlocked': false,
+      'unblockedAt': FieldValue.serverTimestamp(),
+      'blockedAt': FieldValue.delete(),
+      'blockedReason': FieldValue.delete(),
     }, SetOptions(merge: true));
   }
 

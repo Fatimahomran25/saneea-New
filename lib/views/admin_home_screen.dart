@@ -46,10 +46,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           ),
           const AdminGeneralReportsView(),
           const AdminContractReviewsView(),
-          _AdminProfileTab(
-            controller: _controller,
-            onOpenProfile: _openProfile,
-          ),
         ],
       ),
       bottomNavigationBar: _AdminBottomNavigationBar(
@@ -154,14 +150,20 @@ class _DashboardHeader extends StatelessWidget {
             children: [
               GestureDetector(
                 onTap: onOpenProfile,
-                child: CircleAvatar(
-                  radius: 20,
-                  backgroundColor: _primaryPurple.withOpacity(0.12),
-                  child: const Icon(
-                    Icons.person_outline,
-                    color: _primaryPurple,
-                    size: 22,
-                  ),
+                child: FutureBuilder(
+                  future: controller.getAdminFromFirebase(),
+                  builder: (context, snapshot) {
+                    final admin = snapshot.data ?? controller.getAdmin();
+                    final photoUrl = (admin.photoUrl ?? '').trim();
+
+                    return CircleAvatar(
+                      radius: 20,
+                      backgroundColor: _primaryPurple.withOpacity(0.12),
+                      backgroundImage: photoUrl.isNotEmpty
+                          ? NetworkImage(photoUrl)
+                          : AssetImage(admin.photoAssetPath) as ImageProvider,
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 10),
@@ -196,10 +198,11 @@ class _DashboardHeader extends StatelessWidget {
 }
 
 class _AdminNotificationButton extends StatefulWidget {
-  const _AdminNotificationButton({super.key});
+  const _AdminNotificationButton();
 
   @override
-  State<_AdminNotificationButton> createState() => _AdminNotificationButtonState();
+  State<_AdminNotificationButton> createState() =>
+      _AdminNotificationButtonState();
 }
 
 class _AdminNotificationButtonState extends State<_AdminNotificationButton> {
@@ -315,51 +318,50 @@ class _OverviewSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance.collection('general_reports').snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('general_reports')
+          .snapshots(),
       builder: (context, generalSnapshot) {
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance.collection('contract_reports').snapshots(),
+          stream: FirebaseFirestore.instance
+              .collection('contract_reports')
+              .snapshots(),
           builder: (context, contractSnapshot) {
-            final generalDocs = generalSnapshot.data?.docs ??
+            final generalDocs =
+                generalSnapshot.data?.docs ??
                 <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-            final contractDocs = contractSnapshot.data?.docs ??
+            final contractDocs =
+                contractSnapshot.data?.docs ??
                 <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
             final isLoading =
                 generalSnapshot.connectionState == ConnectionState.waiting ||
-                    contractSnapshot.connectionState == ConnectionState.waiting;
+                contractSnapshot.connectionState == ConnectionState.waiting;
 
-            final openCount = _countWithFallback(
-              generalDocs,
-              const {'open', 'submitted', 'pending'},
-              fallback: 'open',
-            );
+            final openCount = _countWithFallback(generalDocs, const {
+              'open',
+              'submitted',
+              'pending',
+            }, fallback: 'open');
 
             final underReviewCount =
-                _countWithFallback(
-                  generalDocs,
-                  const {'under_review'},
-                  fallback: 'open',
-                ) +
-                    _countWithFallback(
-                      contractDocs,
-                      const {'under_review'},
-                      fallback: 'requested',
-                    );
+                _countWithFallback(generalDocs, const {
+                  'under_review',
+                }, fallback: 'open') +
+                _countWithFallback(contractDocs, const {
+                  'under_review',
+                }, fallback: 'requested');
 
             final contractReviewCount = contractDocs.length;
 
             final resolvedCount =
-                _countWithFallback(
-                  generalDocs,
-                  const {'resolved', 'valid'},
-                  fallback: 'open',
-                ) +
-                    _countWithFallback(
-                      contractDocs,
-                      const {'resolved'},
-                      fallback: 'requested',
-                    );
+                _countWithFallback(generalDocs, const {
+                  'resolved',
+                  'valid',
+                }, fallback: 'open') +
+                _countWithFallback(contractDocs, const {
+                  'resolved',
+                }, fallback: 'requested');
 
             return GridView.count(
               crossAxisCount: 2,
@@ -569,132 +571,6 @@ class _QuickAccessCard extends StatelessWidget {
   }
 }
 
-class _AdminProfileTab extends StatelessWidget {
-  const _AdminProfileTab({
-    required this.controller,
-    required this.onOpenProfile,
-  });
-
-  final AdminController controller;
-  final VoidCallback onOpenProfile;
-
-  static const Color _primaryPurple = Color(0xFF5A3E9E);
-  static const Color _pageBackground = Color(0xFFFCFAFF);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: _pageBackground,
-      child: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final contentMaxWidth = width > 700 ? 560.0 : width;
-            final horizontalPadding = width > 700 ? 24.0 : 18.0;
-
-            return Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: contentMaxWidth),
-                child: ListView(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    10,
-                    horizontalPadding,
-                    24,
-                  ),
-                  children: [
-                    _DashboardHeader(
-                      controller: controller,
-                      onOpenProfile: onOpenProfile,
-                    ),
-                    const SizedBox(height: 24),
-                    const _SectionTitle(title: 'Profile'),
-                    const SizedBox(height: 12),
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: onOpenProfile,
-                        borderRadius: BorderRadius.circular(16),
-                        child: Ink(
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: _primaryPurple.withOpacity(0.10),
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: _primaryPurple.withOpacity(0.05),
-                                blurRadius: 16,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 46,
-                                height: 46,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF6F2FB),
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: const Icon(
-                                  Icons.person_outline,
-                                  color: _primaryPurple,
-                                  size: 22,
-                                ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Admin Profile',
-                                      style: TextStyle(
-                                        color: Colors.black87,
-                                        fontSize: 15.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Open your account and profile settings.',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.black.withOpacity(0.64),
-                                        fontSize: 12.8,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              const Icon(
-                                Icons.arrow_forward_ios_rounded,
-                                color: _primaryPurple,
-                                size: 16,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
 class _AdminBottomNavigationBar extends StatelessWidget {
   const _AdminBottomNavigationBar({
     required this.currentIndex,
@@ -738,12 +614,6 @@ class _AdminBottomNavigationBar extends StatelessWidget {
             icon: Icons.fact_check_outlined,
             selected: currentIndex == 2,
             onTap: () => onTap(2),
-          ),
-          _AdminNavItem(
-            label: 'Profile',
-            icon: Icons.person_outline,
-            selected: currentIndex == 3,
-            onTap: () => onTap(3),
           ),
         ],
       ),
@@ -816,9 +686,9 @@ int _countWithFallback(
 
 String _normalizedStatus(dynamic value, {required String fallback}) {
   final text = (value ?? '').toString().trim().toLowerCase().replaceAll(
-        ' ',
-        '_',
-      );
+    ' ',
+    '_',
+  );
   if (text.isEmpty) {
     return fallback.trim().toLowerCase().replaceAll(' ', '_');
   }

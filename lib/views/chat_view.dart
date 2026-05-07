@@ -179,6 +179,7 @@ class _ChatViewState extends State<ChatView> {
   static const Color _chatPanelBackground = Colors.white;
   static const Color _chatPanelSurface = Color(0xFFF8F4FD);
   static const Color _chatPanelBorder = Color(0xFFE7DFF4);
+  static const int _adminReviewDetailsMaxLength = 150;
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;
   final ImagePicker _picker = ImagePicker();
@@ -2772,6 +2773,36 @@ class _ChatViewState extends State<ChatView> {
     return fallback;
   }
 
+  Widget _buildLiveContractPartyNameText({
+    required String userId,
+    required String fallbackName,
+  }) {
+    final normalizedUserId = userId.trim();
+    final safeFallback = fallbackName.trim().isEmpty
+        ? '-'
+        : fallbackName.trim();
+    const textStyle = TextStyle(color: Colors.black87, height: 1.4);
+
+    if (normalizedUserId.isEmpty) {
+      return Text(safeFallback, style: textStyle);
+    }
+
+    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      future: FirebaseFirestore.instance
+          .collection('users')
+          .doc(normalizedUserId)
+          .get(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data();
+        final displayName = data == null
+            ? safeFallback
+            : _displayName(data, safeFallback);
+
+        return Text(displayName, style: textStyle);
+      },
+    );
+  }
+
   DateTime? _parseContractDateTime(dynamic value) {
     final text = (value ?? '').toString().trim();
     if (text.isEmpty) return null;
@@ -4113,6 +4144,8 @@ class _ChatViewState extends State<ChatView> {
     final detailsController = TextEditingController();
     final messenger = ScaffoldMessenger.maybeOf(context);
     String? selectedReason;
+    String? sheetErrorMessage;
+    bool detailsLimitReached = false;
     bool isSubmitting = false;
     bool isSheetActive = true;
 
@@ -4137,19 +4170,23 @@ class _ChatViewState extends State<ChatView> {
           return StatefulBuilder(
             builder: (sheetContext, setSheetState) {
               Future<void> submitReview() async {
-                if (selectedReason == null || selectedReason!.trim().isEmpty) {
-                  messenger
-                    ?..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text('Choose a reason before submitting'),
-                      ),
-                    );
+                final normalizedReason = (selectedReason ?? '').trim();
+                final isValidReason = reasonOptions.any(
+                  (option) => option['value'] == normalizedReason,
+                );
+
+                if (!isValidReason) {
+                  if (isSheetActive) {
+                    setSheetState(() {
+                      sheetErrorMessage = 'Choose a reason before submitting';
+                    });
+                  }
                   return;
                 }
 
                 if (isSheetActive) {
                   setSheetState(() {
+                    sheetErrorMessage = null;
                     isSubmitting = true;
                   });
                 }
@@ -4192,9 +4229,9 @@ class _ChatViewState extends State<ChatView> {
 
                   await reviewRef.set({
                     'type': 'contract_review',
-                    'reasonType': selectedReason,
+                    'reasonType': normalizedReason,
                     'reasonLabel': _terminationAdminReviewReasonLabel(
-                      selectedReason!,
+                      normalizedReason,
                     ),
                     'details': detailsController.text.trim(),
                     'requestId': requestId,
@@ -4225,8 +4262,10 @@ class _ChatViewState extends State<ChatView> {
                   }
 
                   isSheetActive = false;
-                  if (Navigator.of(sheetContext).canPop()) {
-                    Navigator.of(sheetContext).pop();
+                  if (!sheetContext.mounted) return;
+                  final sheetNavigator = Navigator.of(sheetContext);
+                  if (sheetNavigator.canPop()) {
+                    sheetNavigator.pop();
                   }
 
                   if (!mounted) return;
@@ -4240,15 +4279,12 @@ class _ChatViewState extends State<ChatView> {
                 } catch (e) {
                   if (!mounted) return;
                   debugPrint('Termination contract review error: $e');
-                  messenger
-                    ?..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Failed to submit contract review: ${_friendlyErrorMessage(e)}',
-                        ),
-                      ),
-                    );
+                  if (isSheetActive) {
+                    setSheetState(() {
+                      sheetErrorMessage =
+                          'Failed to submit contract review: ${_friendlyErrorMessage(e)}';
+                    });
+                  }
                 } finally {
                   if (isSheetActive) {
                     setSheetState(() {
@@ -4308,6 +4344,7 @@ class _ChatViewState extends State<ChatView> {
                                   : () {
                                       setSheetState(() {
                                         selectedReason = value;
+                                        sheetErrorMessage = null;
                                       });
                                     },
                               child: Container(
@@ -4351,9 +4388,52 @@ class _ChatViewState extends State<ChatView> {
                             ),
                           );
                         }),
+                        if (sheetErrorMessage != null) ...[
+                          const SizedBox(height: 2),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF3F3),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFE8A0A0),
+                              ),
+                            ),
+                            child: Text(
+                              sheetErrorMessage!,
+                              style: const TextStyle(
+                                color: Color(0xFF9A3434),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         TextField(
                           controller: detailsController,
+                          onChanged: (value) {
+                            final hasReachedLimit =
+                                value.length >= _adminReviewDetailsMaxLength;
+                            if (detailsLimitReached == hasReachedLimit) {
+                              return;
+                            }
+
+                            setSheetState(() {
+                              detailsLimitReached = hasReachedLimit;
+                            });
+                          },
+                          maxLength: _adminReviewDetailsMaxLength,
+                          maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                          inputFormatters: [
+                            LengthLimitingTextInputFormatter(
+                              _adminReviewDetailsMaxLength,
+                            ),
+                          ],
                           maxLines: 4,
                           enabled: !isSubmitting,
                           decoration: InputDecoration(
@@ -4361,26 +4441,53 @@ class _ChatViewState extends State<ChatView> {
                             alignLabelWithHint: true,
                             filled: true,
                             fillColor: const Color(0xFFF8F6FC),
+                            counterStyle: TextStyle(
+                              color: detailsLimitReached
+                                  ? const Color(0xFFC75A5A)
+                                  : null,
+                              fontWeight: detailsLimitReached
+                                  ? FontWeight.w700
+                                  : null,
+                            ),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
                               borderSide: BorderSide(
-                                color: primary.withOpacity(0.12),
+                                color: detailsLimitReached
+                                    ? const Color(0xFFC75A5A)
+                                    : primary.withOpacity(0.12),
                               ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
                               borderSide: BorderSide(
-                                color: primary.withOpacity(0.12),
+                                color: detailsLimitReached
+                                    ? const Color(0xFFC75A5A)
+                                    : primary.withOpacity(0.12),
                               ),
                             ),
-                            focusedBorder: const OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: const BorderRadius.all(
                                 Radius.circular(16),
                               ),
-                              borderSide: BorderSide(color: primary),
+                              borderSide: BorderSide(
+                                color: detailsLimitReached
+                                    ? const Color(0xFFC75A5A)
+                                    : primary,
+                              ),
                             ),
                           ),
                         ),
+                        if (detailsLimitReached) ...[
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Maximum character limit reached.',
+                            style: TextStyle(
+                              color: Color(0xFFC75A5A),
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         Row(
                           children: [
@@ -4443,9 +4550,15 @@ class _ChatViewState extends State<ChatView> {
             },
           );
         },
-      );
+      ).whenComplete(() {
+        isSheetActive = false;
+      });
     } finally {
-      detailsController.dispose();
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 350), () {
+          detailsController.dispose();
+        }),
+      );
     }
   }
 
@@ -4572,6 +4685,8 @@ class _ChatViewState extends State<ChatView> {
     final detailsController = TextEditingController();
     final messenger = ScaffoldMessenger.maybeOf(context);
     String selectedReason = '';
+    String? sheetErrorMessage;
+    bool detailsLimitReached = false;
     bool isSubmitting = false;
     bool isSheetActive = true;
 
@@ -4591,19 +4706,23 @@ class _ChatViewState extends State<ChatView> {
               ).viewInsets.bottom;
 
               Future<void> submitReviewRequest() async {
-                if (selectedReason.trim().isEmpty) {
-                  messenger
-                    ?..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text('Choose a reason before submitting'),
-                      ),
-                    );
+                final normalizedReason = selectedReason.trim();
+                final isValidReason = options.any(
+                  (option) => option['value'] == normalizedReason,
+                );
+
+                if (!isValidReason) {
+                  if (isSheetActive) {
+                    setSheetState(() {
+                      sheetErrorMessage = 'Choose a reason before submitting';
+                    });
+                  }
                   return;
                 }
 
                 if (isSheetActive) {
                   setSheetState(() {
+                    sheetErrorMessage = null;
                     isSubmitting = true;
                   });
                 }
@@ -4633,8 +4752,8 @@ class _ChatViewState extends State<ChatView> {
                   final payload = <String, dynamic>{
                     'type': 'contract_review',
                     'source': 'contract_termination',
-                    'reasonType': selectedReason,
-                    'reasonLabel': _contractReviewReasonLabel(selectedReason),
+                    'reasonType': normalizedReason,
+                    'reasonLabel': _contractReviewReasonLabel(normalizedReason),
                     'details': detailsController.text.trim(),
                     'requestId': requestId,
                     'contractId': contractId.isEmpty ? requestId : contractId,
@@ -4668,8 +4787,10 @@ class _ChatViewState extends State<ChatView> {
 
                   if (!mounted) return;
                   isSheetActive = false;
-                  if (Navigator.of(sheetContext).canPop()) {
-                    Navigator.of(sheetContext).pop();
+                  if (!sheetContext.mounted) return;
+                  final sheetNavigator = Navigator.of(sheetContext);
+                  if (sheetNavigator.canPop()) {
+                    sheetNavigator.pop();
                   }
                   if (!mounted) return;
                   messenger
@@ -4682,15 +4803,12 @@ class _ChatViewState extends State<ChatView> {
                 } catch (e) {
                   if (!mounted) return;
                   debugPrint('Termination contract review error: $e');
-                  messenger
-                    ?..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Failed to submit contract review: ${_friendlyErrorMessage(e)}',
-                        ),
-                      ),
-                    );
+                  if (isSheetActive) {
+                    setSheetState(() {
+                      sheetErrorMessage =
+                          'Failed to submit contract review: ${_friendlyErrorMessage(e)}';
+                    });
+                  }
                 } finally {
                   if (isSheetActive) {
                     setSheetState(() {
@@ -4760,6 +4878,7 @@ class _ChatViewState extends State<ChatView> {
                                   : () {
                                       setSheetState(() {
                                         selectedReason = value;
+                                        sheetErrorMessage = null;
                                       });
                                     },
                               child: Padding(
@@ -4778,6 +4897,7 @@ class _ChatViewState extends State<ChatView> {
                                               setSheetState(() {
                                                 selectedReason =
                                                     nextValue ?? '';
+                                                sheetErrorMessage = null;
                                               });
                                             },
                                       activeColor: primary,
@@ -4805,9 +4925,52 @@ class _ChatViewState extends State<ChatView> {
                             ),
                           );
                         }),
+                        if (sheetErrorMessage != null) ...[
+                          const SizedBox(height: 2),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF3F3),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFE8A0A0),
+                              ),
+                            ),
+                            child: Text(
+                              sheetErrorMessage!,
+                              style: const TextStyle(
+                                color: Color(0xFF9A3434),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 8),
                         TextField(
                           controller: detailsController,
+                          onChanged: (value) {
+                            final hasReachedLimit =
+                                value.length >= _adminReviewDetailsMaxLength;
+                            if (detailsLimitReached == hasReachedLimit) {
+                              return;
+                            }
+
+                            setSheetState(() {
+                              detailsLimitReached = hasReachedLimit;
+                            });
+                          },
+                          maxLength: _adminReviewDetailsMaxLength,
+                          maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                          inputFormatters: [
+                            LengthLimitingTextInputFormatter(
+                              _adminReviewDetailsMaxLength,
+                            ),
+                          ],
                           maxLines: 4,
                           minLines: 3,
                           enabled: !isSubmitting,
@@ -4817,6 +4980,14 @@ class _ChatViewState extends State<ChatView> {
                             filled: true,
                             fillColor: _chatPanelSurface,
                             contentPadding: const EdgeInsets.all(12),
+                            counterStyle: TextStyle(
+                              color: detailsLimitReached
+                                  ? const Color(0xFFC75A5A)
+                                  : null,
+                              fontWeight: detailsLimitReached
+                                  ? FontWeight.w700
+                                  : null,
+                            ),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
                               borderSide: const BorderSide(
@@ -4825,16 +4996,33 @@ class _ChatViewState extends State<ChatView> {
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
-                              borderSide: const BorderSide(
-                                color: _chatPanelBorder,
+                              borderSide: BorderSide(
+                                color: detailsLimitReached
+                                    ? const Color(0xFFC75A5A)
+                                    : _chatPanelBorder,
                               ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
-                              borderSide: const BorderSide(color: primary),
+                              borderSide: BorderSide(
+                                color: detailsLimitReached
+                                    ? const Color(0xFFC75A5A)
+                                    : primary,
+                              ),
                             ),
                           ),
                         ),
+                        if (detailsLimitReached) ...[
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Maximum character limit reached.',
+                            style: TextStyle(
+                              color: Color(0xFFC75A5A),
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -4874,7 +5062,11 @@ class _ChatViewState extends State<ChatView> {
         isSheetActive = false;
       });
     } finally {
-      detailsController.dispose();
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 350), () {
+          detailsController.dispose();
+        }),
+      );
     }
   }
 
@@ -8077,7 +8269,10 @@ class _ChatViewState extends State<ChatView> {
                 ),
                 actions: [
                   OutlinedButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    onPressed: () {
+                      FocusScope.of(dialogContext).unfocus();
+                      Navigator.of(dialogContext).pop();
+                    },
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFC75A5A),
                       side: const BorderSide(color: Color(0xFFC75A5A)),
@@ -8116,6 +8311,7 @@ class _ChatViewState extends State<ChatView> {
                         return;
                       }
 
+                      FocusScope.of(dialogContext).unfocus();
                       Navigator.of(dialogContext).pop(draft);
                     },
                     style: ElevatedButton.styleFrom(
@@ -8134,8 +8330,12 @@ class _ChatViewState extends State<ChatView> {
         },
       );
     } finally {
-      linkController.dispose();
-      notesController.dispose();
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 350), () {
+          linkController.dispose();
+          notesController.dispose();
+        }),
+      );
     }
   }
 

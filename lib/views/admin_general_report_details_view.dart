@@ -176,6 +176,29 @@ class _AdminGeneralReportDetailsViewState
     }
   }
 
+  Future<void> _unblockReportedUser({required String reportedUserId}) async {
+    setState(() => _isUpdatingStatus = true);
+    try {
+      await _controller.unblockReportedUser(reportedUserId: reportedUserId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User unblocked successfully.')),
+      );
+      setState(() {
+        _detailsFuture = _loadDetails();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+    } finally {
+      if (mounted) {
+        setState(() => _isUpdatingStatus = false);
+      }
+    }
+  }
+
   Future<void> _showAdminActionsSheet({
     required String status,
     required String reportedUserId,
@@ -260,23 +283,32 @@ class _AdminGeneralReportDetailsViewState
                           );
                         },
                 ),
-                if (!isUserBlocked && warningCount >= 3) ...[
+                if (isUserBlocked || warningCount >= 3) ...[
                   const Divider(height: 20, color: kAdminBorder),
                   AdminActionSheetTile(
-                    icon: Icons.block_rounded,
-                    iconColor: kAdminDanger,
-                    title: 'Block User',
-                    subtitle:
-                        'Block the reported user after repeated warnings.',
+                    icon: isUserBlocked
+                        ? Icons.lock_open_rounded
+                        : Icons.block_rounded,
+                    iconColor: isUserBlocked ? kAdminSuccess : kAdminDanger,
+                    title: isUserBlocked ? 'Unblock User' : 'Block User',
+                    subtitle: isUserBlocked
+                        ? 'Restore access for the reported user.'
+                        : 'Block the reported user after repeated warnings.',
                     enabled: !_isUpdatingStatus && reportedUserId.isNotEmpty,
                     onTap: _isUpdatingStatus || reportedUserId.isEmpty
                         ? null
                         : () {
                             Navigator.pop(sheetContext);
-                            _blockReportedUser(
-                              reportedUserId: reportedUserId,
-                              blockedReason: warningReason,
-                            );
+                            if (isUserBlocked) {
+                              _unblockReportedUser(
+                                reportedUserId: reportedUserId,
+                              );
+                            } else {
+                              _blockReportedUser(
+                                reportedUserId: reportedUserId,
+                                blockedReason: warningReason,
+                              );
+                            }
                           },
                   ),
                 ],
@@ -509,9 +541,12 @@ class _AdminGeneralReportDetailsViewState
           final reporterAccountTypeLabel = reporterAccountType.isEmpty
               ? ''
               : adminStatusLabel(reporterAccountType);
-          final reporterPhotoUrl = (reporterData?['photoUrl'] ?? '')
-              .toString()
-              .trim();
+          final reporterPhotoUrl =
+              _firstFilled(<String?>[
+                reporterData?['photoUrl']?.toString(),
+                reporterData?['profile']?.toString(),
+              ]) ??
+              '';
 
           final reportedUserEmail = (reportedUserData?['email'] ?? '')
               .toString()
@@ -521,9 +556,12 @@ class _AdminGeneralReportDetailsViewState
           final reportedUserAccountTypeLabel = reportedUserAccountType.isEmpty
               ? ''
               : adminStatusLabel(reportedUserAccountType);
-          final reportedUserPhotoUrl = (reportedUserData?['photoUrl'] ?? '')
-              .toString()
-              .trim();
+          final reportedUserPhotoUrl =
+              _firstFilled(<String?>[
+                reportedUserData?['photoUrl']?.toString(),
+                reportedUserData?['profile']?.toString(),
+              ]) ??
+              '';
 
           final reason = (reportData['reason'] ?? '').toString().trim();
           final description =
@@ -557,6 +595,7 @@ class _AdminGeneralReportDetailsViewState
           );
           final canReopenReport = _canReopenReport(normalizedStatus);
           final canShowBlockUserAction = !isUserBlocked && warningCount >= 3;
+          final canShowUnblockUserAction = isUserBlocked;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
@@ -805,7 +844,8 @@ class _AdminGeneralReportDetailsViewState
                             ),
                           ),
                         ],
-                        if (canShowBlockUserAction) ...[
+                        if (canShowBlockUserAction ||
+                            canShowUnblockUserAction) ...[
                           const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
@@ -813,17 +853,34 @@ class _AdminGeneralReportDetailsViewState
                               onPressed:
                                   _isUpdatingStatus || rawReportedUserId.isEmpty
                                   ? null
-                                  : () => _blockReportedUser(
-                                      reportedUserId: rawReportedUserId,
-                                      blockedReason: warningReason,
-                                    ),
+                                  : () {
+                                      if (isUserBlocked) {
+                                        _unblockReportedUser(
+                                          reportedUserId: rawReportedUserId,
+                                        );
+                                      } else {
+                                        _blockReportedUser(
+                                          reportedUserId: rawReportedUserId,
+                                          blockedReason: warningReason,
+                                        );
+                                      }
+                                    },
                               style: adminOutlinedButtonStyle(
-                                color: kAdminDanger,
+                                color: isUserBlocked
+                                    ? kAdminSuccess
+                                    : kAdminDanger,
                               ),
-                              icon: const Icon(Icons.block_rounded, size: 18),
-                              label: const Text(
-                                'Block User',
-                                style: TextStyle(fontWeight: FontWeight.w700),
+                              icon: Icon(
+                                isUserBlocked
+                                    ? Icons.lock_open_rounded
+                                    : Icons.block_rounded,
+                                size: 18,
+                              ),
+                              label: Text(
+                                isUserBlocked ? 'Unblock User' : 'Block User',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),

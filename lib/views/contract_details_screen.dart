@@ -134,10 +134,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
     );
   }
 
-  Widget _buildApprovalItem({
-    required String label,
-    required bool approved,
-  }) {
+  Widget _buildApprovalItem({required String label, required bool approved}) {
     return Row(
       children: [
         Icon(
@@ -189,9 +186,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('Delete Contract'),
-          content: const Text(
-            'Are you sure you want to delete this contract?',
-          ),
+          content: const Text('Are you sure you want to delete this contract?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -218,7 +213,9 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
       await _controller.deleteContract(contract);
       if (!mounted) return;
       Navigator.pop(context, contract.contractId);
-      messenger.showSnackBar(const SnackBar(content: Text('Contract deleted.')));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Contract deleted.')),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
@@ -227,9 +224,9 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _deleteErrorMessage(Object error) {
@@ -273,7 +270,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
         backgroundColor: Colors.white,
         foregroundColor: _primary,
         elevation: 0,
-          actions: [
+        actions: [
           if (!widget.readOnlyMode && contract.canDelete)
             IconButton(
               tooltip: 'Delete contract',

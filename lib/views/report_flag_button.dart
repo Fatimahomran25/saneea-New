@@ -496,8 +496,10 @@ Future<void> showReportIssueDialog({
                         children: [
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(),
+                              onPressed: () {
+                                FocusScope.of(dialogContext).unfocus();
+                                Navigator.of(dialogContext).pop();
+                              },
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: kReportPrimaryColor,
                                 side: const BorderSide(
@@ -537,6 +539,7 @@ Future<void> showReportIssueDialog({
                                         return;
                                       }
 
+                                      FocusScope.of(dialogContext).unfocus();
                                       Navigator.of(dialogContext).pop(
                                         _ReportIssueDialogResult(
                                           reasonType: dialogSelectedReason,
@@ -588,7 +591,9 @@ Future<void> showReportIssueDialog({
     },
   );
 
-  generalIssueController.dispose();
+  Future<void>.delayed(const Duration(milliseconds: 350), () {
+    generalIssueController.dispose();
+  });
 
   if (reportSelection == null || reportSelection.reasonType.trim().isEmpty) {
     return;
@@ -607,7 +612,9 @@ Future<void> showReportIssueDialog({
 
     final reporterData = reporterDoc.data() ?? <String, dynamic>{};
     final reporterName = _displayName(reporterData, 'User');
-    final reportRef = FirebaseFirestore.instance.collection('general_reports').doc();
+    final reportRef = FirebaseFirestore.instance
+        .collection('general_reports')
+        .doc();
 
     await reportRef.set({
       'source': source.trim(),
