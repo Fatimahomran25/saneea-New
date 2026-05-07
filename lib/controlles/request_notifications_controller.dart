@@ -20,6 +20,7 @@ class RequestNotificationItem {
   final String? announcementDescription;
   final String? relatedReportId;
   final String? reviewId;
+  final String? appealId;
   final int? warningCount;
   final int? maxWarnings;
   final bool isRead;
@@ -44,6 +45,7 @@ class RequestNotificationItem {
     required this.announcementDescription,
     required this.relatedReportId,
     required this.reviewId,
+    required this.appealId,
     required this.warningCount,
     required this.maxWarnings,
     required this.isRead,
@@ -87,6 +89,7 @@ class RequestNotificationItem {
       announcementDescription: data['announcementDescription']?.toString(),
       relatedReportId: data['relatedReportId']?.toString(),
       reviewId: data['reviewId']?.toString(),
+      appealId: data['appealId']?.toString(),
       warningCount: _intOrNull(data['warningCount']),
       maxWarnings: _intOrNull(data['maxWarnings']),
       isRead: data['isRead'] == true,

@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'app_notification_service.dart';
 
 class AdminReportsController {
+  static const int maxWarnings = 3;
+
   AdminReportsController({FirebaseFirestore? firestore})
     : _firestore = firestore ?? FirebaseFirestore.instance,
       _notificationService = AppNotificationService(
@@ -22,12 +24,42 @@ class AdminReportsController {
     }, SetOptions(merge: true));
   }
 
+  Future<void> updateGeneralReportStatus({
+    required String reportId,
+    required String status,
+  }) async {
+    final normalizedStatus = status.trim().toLowerCase();
+
+    switch (normalizedStatus) {
+      case 'under_review':
+      case 'resolved':
+        break;
+      default:
+        throw Exception('Unsupported general report status.');
+    }
+
+    await _firestore.collection('general_reports').doc(reportId).set({
+      'status': normalizedStatus,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<void> reopenGeneralReport({required String reportId}) async {
     await _firestore.collection('general_reports').doc(reportId).set({
       'status': 'open',
       'handledAt': FieldValue.delete(),
       'handledBy': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> softDeleteGeneralReport({required String reportId}) async {
+    final adminUid = (_auth.currentUser?.uid ?? '').trim();
+
+    await _firestore.collection('general_reports').doc(reportId).set({
+      'isDeleted': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+      if (adminUid.isNotEmpty) 'deletedBy': adminUid,
     }, SetOptions(merge: true));
   }
 
@@ -55,25 +87,34 @@ class AdminReportsController {
 
           final userSnapshot = await transaction.get(userRef);
           final userData = userSnapshot.data() ?? <String, dynamic>{};
-          final currentWarningCount = _intValue(userData['warningCount']);
-          final warningAlreadyApplied = reportData['warningApplied'] == true;
-          final nextWarningCount = warningAlreadyApplied
-              ? currentWarningCount
-              : currentWarningCount + 1;
+          final currentWarningCount = _intValue(
+            userData['warningCount'],
+          ).clamp(0, maxWarnings) as int;
 
-          if (!warningAlreadyApplied) {
-            transaction.set(userRef, {
-              'warningCount': nextWarningCount,
-              'lastWarningAt': FieldValue.serverTimestamp(),
-              'lastWarningReason': warningReason.trim().isEmpty
-                  ? 'General report violation'
-                  : warningReason.trim(),
-              'lastWarningReportId': reportId,
-            }, SetOptions(merge: true));
+          if (userData['isBlocked'] == true) {
+            throw Exception('This user is already blocked.');
           }
 
+          if (currentWarningCount >= maxWarnings) {
+            throw Exception(
+              'This user already has 3 warnings. Please block the user or review the case.',
+            );
+          }
+
+          final nextWarningCount =
+              (currentWarningCount + 1).clamp(0, maxWarnings) as int;
+
+          transaction.set(userRef, {
+            'warningCount': nextWarningCount,
+            'lastWarningAt': FieldValue.serverTimestamp(),
+            'lastWarningReason': warningReason.trim().isEmpty
+                ? 'General report violation'
+                : warningReason.trim(),
+            'lastWarningReportId': reportId,
+          }, SetOptions(merge: true));
+
           transaction.set(reportRef, {
-            'status': 'valid',
+            'status': 'resolved',
             'warningApplied': true,
             'warningReason': warningReason.trim(),
             'warningIssuedAt': FieldValue.serverTimestamp(),
@@ -81,16 +122,10 @@ class AdminReportsController {
             'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
 
-          return {
-            'didApplyWarning': !warningAlreadyApplied,
-            'warningCount': nextWarningCount,
-          };
+          return {'warningCount': nextWarningCount};
         });
 
-    final didApplyWarning = warningOutcome['didApplyWarning'] == true;
     final nextWarningCount = _intValue(warningOutcome['warningCount']);
-
-    if (!didApplyWarning) return;
 
     try {
       await _notificationService.createAdminWarningNotification(
@@ -108,30 +143,39 @@ class AdminReportsController {
     required String blockedReason,
   }) async {
     final trimmedReportedUserId = reportedUserId.trim();
+    final adminUid = (_auth.currentUser?.uid ?? '').trim();
     if (trimmedReportedUserId.isEmpty) {
       throw Exception('Reported user ID is missing.');
     }
 
-    await _firestore.collection('users').doc(trimmedReportedUserId).set({
+    final blockedUserUpdate = <String, dynamic>{
       'isBlocked': true,
+      'warningCount': maxWarnings,
       'blockedAt': FieldValue.serverTimestamp(),
       'blockedReason': blockedReason.trim().isEmpty
           ? 'Repeated violations'
           : blockedReason.trim(),
-    }, SetOptions(merge: true));
+      if (adminUid.isNotEmpty) 'blockedBy': adminUid,
+    };
+
+    await _firestore
+        .collection('users')
+        .doc(trimmedReportedUserId)
+        .set(blockedUserUpdate, SetOptions(merge: true));
   }
 
   Future<void> unblockReportedUser({required String reportedUserId}) async {
     final trimmedReportedUserId = reportedUserId.trim();
+    final adminUid = (_auth.currentUser?.uid ?? '').trim();
     if (trimmedReportedUserId.isEmpty) {
       throw Exception('Reported user ID is missing.');
     }
 
     await _firestore.collection('users').doc(trimmedReportedUserId).set({
       'isBlocked': false,
+      'warningCount': 0,
       'unblockedAt': FieldValue.serverTimestamp(),
-      'blockedAt': FieldValue.delete(),
-      'blockedReason': FieldValue.delete(),
+      if (adminUid.isNotEmpty) 'unblockedBy': adminUid,
     }, SetOptions(merge: true));
   }
 
@@ -188,6 +232,16 @@ class AdminReportsController {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     });
+  }
+
+  Future<void> softDeleteContractReview({required String reviewId}) async {
+    final adminUid = (_auth.currentUser?.uid ?? '').trim();
+
+    await _firestore.collection('contract_reports').doc(reviewId).set({
+      'isDeleted': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+      if (adminUid.isNotEmpty) 'deletedBy': adminUid,
+    }, SetOptions(merge: true));
   }
 
   Future<DocumentReference<Map<String, dynamic>>?> _findRelatedRequestRef({

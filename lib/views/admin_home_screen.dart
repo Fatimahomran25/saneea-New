@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../controlles/admin_controller.dart';
 import '../controlles/notification_navigation_service.dart';
 import '../controlles/request_notifications_controller.dart';
+import 'admin_blocked_user_appeals_view.dart';
 import 'admin_contract_reviews_view.dart';
 import 'admin_general_reports_view.dart';
 import 'request_notifications_sheet.dart';
@@ -42,10 +43,12 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             controller: _controller,
             onOpenGeneralReports: () => _selectTab(1),
             onOpenContractReviews: () => _selectTab(2),
+            onOpenBlockedUserAppeals: () => _selectTab(3),
             onOpenProfile: _openProfile,
           ),
           const AdminGeneralReportsView(),
           const AdminContractReviewsView(),
+          const AdminBlockedUserAppealsView(),
         ],
       ),
       bottomNavigationBar: _AdminBottomNavigationBar(
@@ -61,12 +64,14 @@ class _AdminDashboardTab extends StatelessWidget {
     required this.controller,
     required this.onOpenGeneralReports,
     required this.onOpenContractReviews,
+    required this.onOpenBlockedUserAppeals,
     required this.onOpenProfile,
   });
 
   final AdminController controller;
   final VoidCallback onOpenGeneralReports;
   final VoidCallback onOpenContractReviews;
+  final VoidCallback onOpenBlockedUserAppeals;
   final VoidCallback onOpenProfile;
 
   static const Color _pageBackground = Color(0xFFFCFAFF);
@@ -117,6 +122,13 @@ class _AdminDashboardTab extends StatelessWidget {
                       title: 'Contract Reviews',
                       description: 'Check disputes and contract requests.',
                       onTap: onOpenContractReviews,
+                    ),
+                    const SizedBox(height: 12),
+                    _QuickAccessCard(
+                      icon: Icons.shield_outlined,
+                      title: 'Blocked User Appeals',
+                      description: 'Review blocked account appeal requests.',
+                      onTap: onOpenBlockedUserAppeals,
                     ),
                   ],
                 ),
@@ -357,7 +369,6 @@ class _OverviewSection extends StatelessWidget {
             final resolvedCount =
                 _countWithFallback(generalDocs, const {
                   'resolved',
-                  'valid',
                 }, fallback: 'open') +
                 _countWithFallback(contractDocs, const {
                   'resolved',
@@ -614,6 +625,12 @@ class _AdminBottomNavigationBar extends StatelessWidget {
             icon: Icons.fact_check_outlined,
             selected: currentIndex == 2,
             onTap: () => onTap(2),
+          ),
+          _AdminNavItem(
+            label: 'Appeals',
+            icon: Icons.shield_outlined,
+            selected: currentIndex == 3,
+            onTap: () => onTap(3),
           ),
         ],
       ),

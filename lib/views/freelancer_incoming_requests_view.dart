@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/freelancer_requests_controller.dart';
 import 'freelancer_client_profile_view.dart';
 import '../controlles/chat_controller.dart';
@@ -38,6 +39,21 @@ class _FreelancerIncomingRequestsViewState
     setState(() {
       _futureRequests = controller.getIncomingRequests();
     });
+  }
+
+  void _showActionError(Object error, String fallbackMessage) {
+    if (!mounted) return;
+
+    final errorMessage = error.toString().replaceFirst('Exception: ', '').trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          errorMessage == AccountAccessService.blockedActionMessage
+              ? errorMessage
+              : fallbackMessage,
+        ),
+      ),
+    );
   }
 
   String _formatBudget(dynamic budget) {
@@ -505,10 +521,17 @@ class _FreelancerIncomingRequestsViewState
                                         ),
                                       ),
                                       onPressed: () async {
-                                        await _acceptRequestAndPrepareChat(
-                                          requestId: doc.id,
-                                          clientId: clientId,
-                                        );
+                                        try {
+                                          await _acceptRequestAndPrepareChat(
+                                            requestId: doc.id,
+                                            clientId: clientId,
+                                          );
+                                        } catch (error) {
+                                          _showActionError(
+                                            error,
+                                            'Unable to accept request right now.',
+                                          );
+                                        }
                                       },
                                       child: const Text(
                                         'Accept',
@@ -536,9 +559,15 @@ class _FreelancerIncomingRequestsViewState
                                         ),
                                       ),
                                       onPressed: () async {
-                                        await controller.rejectRequest(doc.id);
-
-                                        await _reload();
+                                        try {
+                                          await controller.rejectRequest(doc.id);
+                                          await _reload();
+                                        } catch (error) {
+                                          _showActionError(
+                                            error,
+                                            'Unable to reject request right now.',
+                                          );
+                                        }
                                       },
                                       child: const Text(
                                         'Reject',

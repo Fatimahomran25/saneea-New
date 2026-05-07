@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/contract_model.dart';
+import '../views/admin_blocked_user_appeals_view.dart';
 import '../views/admin_contract_review_details_view.dart';
 import '../views/admin_general_report_details_view.dart';
 import '../views/announcement_requests_view.dart';
@@ -110,6 +111,19 @@ Future<void> handleNotificationTap({
         await navigator.push(
           MaterialPageRoute(
             builder: (_) => AdminContractReviewDetailsView(reviewId: reviewId),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (type == 'blocked_user_appeal') {
+      final appealId = _clean(notification.appealId);
+      if (appealId.isNotEmpty) {
+        await navigator.push(
+          MaterialPageRoute(
+            builder: (_) =>
+                AdminBlockedUserAppealDetailsView(appealId: appealId),
           ),
         );
         return;

@@ -71,17 +71,51 @@ class _AdminGeneralReportDetailsViewState
     );
   }
 
+  void _refresh() {
+    setState(() {
+      _detailsFuture = _loadDetails();
+    });
+  }
+
+  Future<void> _updateReportStatus(String status) async {
+    setState(() => _isUpdatingStatus = true);
+    try {
+      await _controller.updateGeneralReportStatus(
+        reportId: widget.reportId,
+        status: status,
+      );
+      if (!mounted) return;
+      _refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            status == 'under_review'
+                ? 'Report marked under review.'
+                : 'Report marked resolved.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+    } finally {
+      if (mounted) {
+        setState(() => _isUpdatingStatus = false);
+      }
+    }
+  }
+
   Future<void> _dismissReport() async {
     setState(() => _isUpdatingStatus = true);
     try {
       await _controller.dismissGeneralReport(reportId: widget.reportId);
       if (!mounted) return;
+      _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Report dismissed successfully.')),
       );
-      setState(() {
-        _detailsFuture = _loadDetails();
-      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -106,12 +140,12 @@ class _AdminGeneralReportDetailsViewState
         warningReason: warningReason,
       );
       if (!mounted) return;
+      _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Report marked valid and warning saved.')),
+        const SnackBar(
+          content: Text('Warning saved and report resolved successfully.'),
+        ),
       );
-      setState(() {
-        _detailsFuture = _loadDetails();
-      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -129,12 +163,10 @@ class _AdminGeneralReportDetailsViewState
     try {
       await _controller.reopenGeneralReport(reportId: widget.reportId);
       if (!mounted) return;
+      _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Report reopened successfully.')),
       );
-      setState(() {
-        _detailsFuture = _loadDetails();
-      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -158,12 +190,10 @@ class _AdminGeneralReportDetailsViewState
         blockedReason: blockedReason,
       );
       if (!mounted) return;
+      _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('User blocked successfully.')),
       );
-      setState(() {
-        _detailsFuture = _loadDetails();
-      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -181,12 +211,10 @@ class _AdminGeneralReportDetailsViewState
     try {
       await _controller.unblockReportedUser(reportedUserId: reportedUserId);
       if (!mounted) return;
+      _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('User unblocked successfully.')),
       );
-      setState(() {
-        _detailsFuture = _loadDetails();
-      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -197,6 +225,147 @@ class _AdminGeneralReportDetailsViewState
         setState(() => _isUpdatingStatus = false);
       }
     }
+  }
+
+  Future<void> _removeReport() async {
+    final shouldRemove = await _showRemoveReportDialog();
+    if (!shouldRemove || !mounted) return;
+
+    setState(() => _isUpdatingStatus = true);
+    try {
+      await _controller.softDeleteGeneralReport(reportId: widget.reportId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Report removed from admin list.')),
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+    } finally {
+      if (mounted) {
+        setState(() => _isUpdatingStatus = false);
+      }
+    }
+  }
+
+  Future<bool> _showRemoveReportDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Remove Report?'),
+          content: const Text(
+            "This will remove the report from the admin list only. The user's warning count and block status will not be changed.",
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          actions: [
+            AdminDialogActionRow(
+              cancelLabel: 'Cancel',
+              confirmLabel: 'Remove',
+              confirmColor: kAdminDanger,
+              onCancel: () => Navigator.pop(dialogContext, false),
+              onConfirm: () => Navigator.pop(dialogContext, true),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
+  }
+
+  Future<void> _showReportStatusSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.48,
+            minChildSize: 0.32,
+            maxChildSize: 0.70,
+            builder: (context, scrollController) {
+              return SingleChildScrollView(
+                controller: scrollController,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: kAdminBorder,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Update Report Status',
+                        style: TextStyle(
+                          color: kAdminPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Choose a new status for this general report.',
+                        style: TextStyle(
+                          color: kAdminTextSecondary,
+                          fontSize: 13.5,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      AdminActionSheetTile(
+                        icon: Icons.visibility_outlined,
+                        iconColor: kAdminWarning,
+                        title: 'Mark as Under Review',
+                        subtitle: 'Move this report into active review.',
+                        enabled: !_isUpdatingStatus,
+                        onTap: _isUpdatingStatus
+                            ? null
+                            : () {
+                                Navigator.pop(sheetContext);
+                                _updateReportStatus('under_review');
+                              },
+                      ),
+                      const Divider(height: 20, color: kAdminBorder),
+                      AdminActionSheetTile(
+                        icon: Icons.task_alt_rounded,
+                        iconColor: kAdminSuccess,
+                        title: 'Mark as Resolved',
+                        subtitle: 'Resolve this report after review.',
+                        enabled: !_isUpdatingStatus,
+                        onTap: _isUpdatingStatus
+                            ? null
+                            : () {
+                                Navigator.pop(sheetContext);
+                                _updateReportStatus('resolved');
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _showAdminActionsSheet({
@@ -213,107 +382,144 @@ class _AdminGeneralReportDetailsViewState
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: kAdminBorder,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.58,
+            minChildSize: 0.34,
+            maxChildSize: 0.80,
+            builder: (context, scrollController) {
+              return SingleChildScrollView(
+                controller: scrollController,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: kAdminBorder,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Admin Actions',
+                        style: TextStyle(
+                          color: kAdminPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Choose how you want to manage this general report.',
+                        style: TextStyle(
+                          color: kAdminTextSecondary,
+                          fontSize: 13.5,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      AdminActionSheetTile(
+                        icon: Icons.do_disturb_alt_outlined,
+                        iconColor: kAdminMuted,
+                        title: 'Dismiss / Invalid',
+                        subtitle: 'Close this report as dismissed or invalid.',
+                        enabled: !_isUpdatingStatus,
+                        onTap: _isUpdatingStatus
+                            ? null
+                            : () {
+                                Navigator.pop(sheetContext);
+                                _dismissReport();
+                              },
+                      ),
+                      if (_canShowGiveWarningAction(
+                        warningCount: warningCount,
+                        isUserBlocked: isUserBlocked,
+                      )) ...[
+                        const Divider(height: 20, color: kAdminBorder),
+                        AdminActionSheetTile(
+                          icon: Icons.warning_amber_rounded,
+                          iconColor: kAdminWarning,
+                          title: 'Mark Valid / Give Warning',
+                          subtitle:
+                              'Resolve this report and save a warning for the user.',
+                          enabled:
+                              !_isUpdatingStatus && reportedUserId.isNotEmpty,
+                          onTap: _isUpdatingStatus || reportedUserId.isEmpty
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _markValidAndGiveWarning(
+                                    reportedUserId: reportedUserId,
+                                    warningReason: warningReason,
+                                  );
+                                },
+                        ),
+                      ],
+                      if (_canShowBlockUserAction(
+                        warningCount: warningCount,
+                        isUserBlocked: isUserBlocked,
+                      )) ...[
+                        const Divider(height: 20, color: kAdminBorder),
+                        AdminActionSheetTile(
+                          icon: Icons.block_rounded,
+                          iconColor: kAdminDanger,
+                          title: 'Block User',
+                          subtitle:
+                              'Block the reported user after repeated warnings.',
+                          enabled:
+                              !_isUpdatingStatus && reportedUserId.isNotEmpty,
+                          onTap: _isUpdatingStatus || reportedUserId.isEmpty
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _blockReportedUser(
+                                    reportedUserId: reportedUserId,
+                                    blockedReason: warningReason,
+                                  );
+                                },
+                        ),
+                      ],
+                      if (_canShowUnblockUserAction(
+                        status: status,
+                        isUserBlocked: isUserBlocked,
+                      )) ...[
+                        const Divider(height: 20, color: kAdminBorder),
+                        AdminActionSheetTile(
+                          icon: Icons.lock_open_rounded,
+                          iconColor: kAdminSuccess,
+                          title: 'Unblock User',
+                          subtitle:
+                              'Lift the user restriction and reset warnings so future actions start fresh.',
+                          enabled:
+                              !_isUpdatingStatus && reportedUserId.isNotEmpty,
+                          onTap: _isUpdatingStatus || reportedUserId.isEmpty
+                              ? null
+                              : () {
+                                  Navigator.pop(sheetContext);
+                                  _unblockReportedUser(
+                                    reportedUserId: reportedUserId,
+                                  );
+                                },
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Admin Actions',
-                  style: TextStyle(
-                    color: kAdminPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Choose how you want to handle this report.',
-                  style: TextStyle(
-                    color: kAdminTextSecondary,
-                    fontSize: 13.5,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                AdminActionSheetTile(
-                  icon: Icons.close_rounded,
-                  iconColor: kAdminPrimary,
-                  title: 'Dismiss Report',
-                  subtitle: 'Close this report without further action.',
-                  enabled: !_isUpdatingStatus,
-                  onTap: _isUpdatingStatus
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          _dismissReport();
-                        },
-                ),
-                const Divider(height: 20, color: kAdminBorder),
-                AdminActionSheetTile(
-                  icon: Icons.warning_amber_rounded,
-                  iconColor: kAdminWarning,
-                  title: 'Mark Valid / Give Warning',
-                  subtitle: 'Keep the report valid and save a warning.',
-                  enabled: !_isUpdatingStatus && reportedUserId.isNotEmpty,
-                  onTap: _isUpdatingStatus || reportedUserId.isEmpty
-                      ? null
-                      : () {
-                          Navigator.pop(sheetContext);
-                          _markValidAndGiveWarning(
-                            reportedUserId: reportedUserId,
-                            warningReason: warningReason,
-                          );
-                        },
-                ),
-                if (isUserBlocked || warningCount >= 3) ...[
-                  const Divider(height: 20, color: kAdminBorder),
-                  AdminActionSheetTile(
-                    icon: isUserBlocked
-                        ? Icons.lock_open_rounded
-                        : Icons.block_rounded,
-                    iconColor: isUserBlocked ? kAdminSuccess : kAdminDanger,
-                    title: isUserBlocked ? 'Unblock User' : 'Block User',
-                    subtitle: isUserBlocked
-                        ? 'Restore access for the reported user.'
-                        : 'Block the reported user after repeated warnings.',
-                    enabled: !_isUpdatingStatus && reportedUserId.isNotEmpty,
-                    onTap: _isUpdatingStatus || reportedUserId.isEmpty
-                        ? null
-                        : () {
-                            Navigator.pop(sheetContext);
-                            if (isUserBlocked) {
-                              _unblockReportedUser(
-                                reportedUserId: reportedUserId,
-                              );
-                            } else {
-                              _blockReportedUser(
-                                reportedUserId: reportedUserId,
-                                blockedReason: warningReason,
-                              );
-                            }
-                          },
-                  ),
-                ],
-              ],
-            ),
+              );
+            },
           ),
         );
       },
@@ -323,8 +529,10 @@ class _AdminGeneralReportDetailsViewState
   bool _showsStandardAdminActions(String status) {
     switch (status.trim().toLowerCase()) {
       case 'dismissed':
+      case 'invalid':
       case 'valid':
       case 'warning':
+      case 'warning_given':
       case 'resolved':
         return false;
       default:
@@ -335,8 +543,10 @@ class _AdminGeneralReportDetailsViewState
   bool _canReopenReport(String status) {
     switch (status.trim().toLowerCase()) {
       case 'dismissed':
+      case 'invalid':
       case 'valid':
       case 'warning':
+      case 'warning_given':
       case 'resolved':
         return true;
       default:
@@ -344,14 +554,55 @@ class _AdminGeneralReportDetailsViewState
     }
   }
 
-  String? _handledAdminMessage(String status) {
+  bool _isOpenOrReopenedStatus(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'submitted':
+      case 'open':
+      case 'pending':
+      case 'reopened':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _canShowUnblockUserAction({
+    required String status,
+    required bool isUserBlocked,
+  }) {
+    return isUserBlocked && _isOpenOrReopenedStatus(status);
+  }
+
+  bool _canShowGiveWarningAction({
+    required int warningCount,
+    required bool isUserBlocked,
+  }) {
+    return !isUserBlocked && warningCount < AdminReportsController.maxWarnings;
+  }
+
+  bool _canShowBlockUserAction({
+    required int warningCount,
+    required bool isUserBlocked,
+  }) {
+    return !isUserBlocked && warningCount >= AdminReportsController.maxWarnings;
+  }
+
+  String? _handledAdminMessage({
+    required String status,
+    required bool warningApplied,
+  }) {
     switch (status.trim().toLowerCase()) {
       case 'dismissed':
+      case 'invalid':
         return 'This report has already been dismissed.';
       case 'valid':
       case 'warning':
+      case 'warning_given':
+        return 'This report has already been reviewed and a warning was issued.';
       case 'resolved':
-        return 'This report has already been reviewed and marked as valid.';
+        return warningApplied
+            ? 'This report has been resolved and a warning was issued.'
+            : 'This report has already been reviewed by the admin.';
       default:
         return null;
     }
@@ -366,6 +617,7 @@ class _AdminGeneralReportDetailsViewState
     required String accountTypeLabel,
     required String photoUrl,
     int? warningCount,
+    bool isBlocked = false,
   }) {
     final normalizedUserId = userId.trim();
     final normalizedAccountType = accountType.trim().toLowerCase();
@@ -379,6 +631,7 @@ class _AdminGeneralReportDetailsViewState
         accountTypeLabel: accountTypeLabel,
         photoUrl: photoUrl,
         warningCount: warningCount,
+        isBlocked: isBlocked,
       );
       return;
     }
@@ -394,6 +647,7 @@ class _AdminGeneralReportDetailsViewState
         accountTypeLabel: accountTypeLabel,
         photoUrl: photoUrl,
         warningCount: warningCount,
+        isBlocked: isBlocked,
       );
       return;
     }
@@ -428,6 +682,7 @@ class _AdminGeneralReportDetailsViewState
         accountTypeLabel: accountTypeLabel,
         photoUrl: photoUrl,
         warningCount: warningCount,
+        isBlocked: isBlocked,
       );
       return;
     }
@@ -442,6 +697,7 @@ class _AdminGeneralReportDetailsViewState
     required String accountTypeLabel,
     required String photoUrl,
     int? warningCount,
+    bool isBlocked = false,
   }) {
     Navigator.push(
       context,
@@ -452,13 +708,17 @@ class _AdminGeneralReportDetailsViewState
           email: email,
           accountType: accountTypeLabel,
           photoUrl: photoUrl,
-          secondaryPillLabel: warningCount != null
+          secondaryPillLabel: isBlocked
+              ? 'Blocked'
+              : warningCount != null
               ? 'Warnings: $warningCount'
               : '',
-          secondaryPillIcon: warningCount != null
+          secondaryPillIcon: isBlocked
+              ? Icons.block_rounded
+              : warningCount != null
               ? Icons.warning_amber_rounded
               : null,
-          secondaryPillColor: kAdminWarning,
+          secondaryPillColor: isBlocked ? kAdminDanger : kAdminWarning,
         ),
       ),
     );
@@ -476,15 +736,31 @@ class _AdminGeneralReportDetailsViewState
     return Scaffold(
       backgroundColor: kAdminBackground,
       appBar: AppBar(
+        title: const Text(
+          'General Report Details',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        centerTitle: true,
         backgroundColor: Colors.white,
+        foregroundColor: kAdminPrimary,
         surfaceTintColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: const Text(
-          'General Report Details',
-          style: TextStyle(color: kAdminPrimary, fontWeight: FontWeight.w700),
-        ),
-        iconTheme: const IconThemeData(color: kAdminPrimary),
+        actions: [
+          IconButton(
+            onPressed: _isUpdatingStatus ? null : _showReportStatusSheet,
+            tooltip: 'Update Report Status',
+            icon: const Icon(Icons.edit_note_rounded),
+          ),
+          IconButton(
+            onPressed: _isUpdatingStatus ? null : _removeReport,
+            tooltip: 'Remove Report',
+            icon: Icon(
+              Icons.delete_outline_rounded,
+              color: _isUpdatingStatus ? kAdminMuted : kAdminDanger,
+            ),
+          ),
+        ],
       ),
       body: FutureBuilder<_GeneralReportDetailsData>(
         future: _detailsFuture,
@@ -585,17 +861,19 @@ class _AdminGeneralReportDetailsViewState
               reportedUserData?['warningCount'] ?? reportData['warningCount'];
           final warningCount = _intValue(warningCountValue);
           final hasWarningCount = warningCountValue != null;
-          final isUserBlocked =
-              reportData['isBlocked'] == true ||
-              reportedUserData?['isBlocked'] == true;
+          final isUserBlocked = reportedUserData != null
+              ? reportedUserData['isBlocked'] == true
+              : reportData['isBlocked'] == true;
+          final warningApplied = reportData['warningApplied'] == true;
           final warningReason = reason.isEmpty ? 'Repeated violations' : reason;
-          final handledAdminMessage = _handledAdminMessage(normalizedStatus);
+          final handledAdminMessage = _handledAdminMessage(
+            status: normalizedStatus,
+            warningApplied: warningApplied,
+          );
           final showsStandardAdminActions = _showsStandardAdminActions(
             normalizedStatus,
           );
           final canReopenReport = _canReopenReport(normalizedStatus);
-          final canShowBlockUserAction = !isUserBlocked && warningCount >= 3;
-          final canShowUnblockUserAction = isUserBlocked;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
@@ -710,6 +988,11 @@ class _AdminGeneralReportDetailsViewState
                     email: reportedUserEmail,
                     accountType: reportedUserAccountTypeLabel,
                     photoUrl: reportedUserPhotoUrl,
+                    secondaryPillLabel: isUserBlocked ? 'Blocked' : null,
+                    secondaryPillIcon: isUserBlocked
+                        ? Icons.block_rounded
+                        : null,
+                    secondaryPillColor: kAdminDanger,
                     onTap: () => _openUserProfile(
                       title: 'Reported User Profile',
                       userId: rawReportedUserId,
@@ -719,6 +1002,7 @@ class _AdminGeneralReportDetailsViewState
                       accountTypeLabel: reportedUserAccountTypeLabel,
                       photoUrl: reportedUserPhotoUrl,
                       warningCount: warningCount > 0 ? warningCount : null,
+                      isBlocked: isUserBlocked,
                     ),
                   ),
                 ),
@@ -748,10 +1032,12 @@ class _AdminGeneralReportDetailsViewState
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
-                                  normalizedStatus == 'dismissed'
+                                  normalizedStatus == 'dismissed' ||
+                                          normalizedStatus == 'invalid'
                                       ? Icons.close_rounded
                                       : Icons.verified_rounded,
-                                  color: normalizedStatus == 'dismissed'
+                                  color: normalizedStatus == 'dismissed' ||
+                                          normalizedStatus == 'invalid'
                                       ? kAdminMuted
                                       : kAdminSuccess,
                                   size: 18,
@@ -840,47 +1126,6 @@ class _AdminGeneralReportDetailsViewState
                               label: const Text(
                                 'Reopen Report',
                                 style: TextStyle(fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                          ),
-                        ],
-                        if (canShowBlockUserAction ||
-                            canShowUnblockUserAction) ...[
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed:
-                                  _isUpdatingStatus || rawReportedUserId.isEmpty
-                                  ? null
-                                  : () {
-                                      if (isUserBlocked) {
-                                        _unblockReportedUser(
-                                          reportedUserId: rawReportedUserId,
-                                        );
-                                      } else {
-                                        _blockReportedUser(
-                                          reportedUserId: rawReportedUserId,
-                                          blockedReason: warningReason,
-                                        );
-                                      }
-                                    },
-                              style: adminOutlinedButtonStyle(
-                                color: isUserBlocked
-                                    ? kAdminSuccess
-                                    : kAdminDanger,
-                              ),
-                              icon: Icon(
-                                isUserBlocked
-                                    ? Icons.lock_open_rounded
-                                    : Icons.block_rounded,
-                                size: 18,
-                              ),
-                              label: Text(
-                                isUserBlocked ? 'Unblock User' : 'Block User',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
                               ),
                             ),
                           ),

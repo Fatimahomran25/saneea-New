@@ -108,6 +108,74 @@ class AppNotificationService {
     );
   }
 
+  Future<void> createBlockedUserAppealNotification({
+    required String appealId,
+    required String userId,
+    required String userName,
+  }) async {
+    final trimmedAppealId = appealId.trim();
+    final trimmedUserId = userId.trim();
+    if (trimmedAppealId.isEmpty || trimmedUserId.isEmpty) return;
+
+    final safeUserName = userName.trim().isEmpty
+        ? 'A blocked user'
+        : userName.trim();
+    final message =
+        '$safeUserName submitted a request to review their blocked account.';
+
+    await _createNotificationForAdmins(
+      documentId: 'blocked_user_appeal_$trimmedAppealId',
+      payload: {
+        'type': 'blocked_user_appeal',
+        'senderId': trimmedUserId,
+        'senderName': safeUserName,
+        'senderProfileUrl': '',
+        'title': 'Blocked User Review Request',
+        'message': message,
+        'actionText': message,
+        'snippet': 'Open to review the blocked account appeal.',
+        'appealId': trimmedAppealId,
+        'userId': trimmedUserId,
+        'targetRole': 'admin',
+      },
+    );
+  }
+
+  Future<void> createBlockedUserAppealDecisionNotification({
+    required String appealId,
+    required String userId,
+    required bool approved,
+  }) async {
+    final trimmedAppealId = appealId.trim();
+    final trimmedUserId = userId.trim();
+    if (trimmedAppealId.isEmpty || trimmedUserId.isEmpty) return;
+
+    final type = approved ? 'appeal_approved' : 'appeal_rejected';
+    final title = approved
+        ? 'Account Restriction Lifted'
+        : 'Review Request Rejected';
+    final message = approved
+        ? 'Your review request was approved. You can use your account again.'
+        : 'Your account restriction remains active after admin review.';
+
+    await _createUserNotification(
+      receiverId: trimmedUserId,
+      documentId: '${type}_$trimmedAppealId',
+      payload: {
+        'type': type,
+        'senderId': 'admin',
+        'senderName': 'Admin',
+        'senderProfileUrl': '',
+        'title': title,
+        'message': message,
+        'actionText': message,
+        'snippet': message,
+        'appealId': trimmedAppealId,
+        'userId': trimmedUserId,
+      },
+    );
+  }
+
   Future<void> _createNotificationForAdmins({
     required String documentId,
     required Map<String, dynamic> payload,

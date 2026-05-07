@@ -5,9 +5,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/chat_model.dart';
 import '../models/message_model.dart';
 
+import 'account_access_service.dart';
+
 class ChatController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final AccountAccessService _accountAccessService = AccountAccessService();
 
   final String _chatCollection = 'chat';
   String? get currentUserId => _auth.currentUser?.uid;
@@ -18,6 +21,8 @@ class ChatController {
     required String chatId,
     required File imageFile,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in user found.');
@@ -265,6 +270,8 @@ class ChatController {
     required String text,
     required List<File> imageFiles,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in user found.');
@@ -342,6 +349,8 @@ class ChatController {
     required String chatId,
     required List<File> imageFiles,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in user found.');
@@ -382,6 +391,8 @@ class ChatController {
     required File file,
     required String fileName,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in user found.');
@@ -418,6 +429,8 @@ class ChatController {
     required String chatId,
     required String text,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in user found.');

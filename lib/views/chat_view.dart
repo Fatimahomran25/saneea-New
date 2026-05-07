@@ -11,6 +11,7 @@ import 'dart:ui' as ui;
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import '../config/api_config.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/chat_controller.dart';
 import '../models/message_model.dart';
 import 'freelancer_client_profile_view.dart';
@@ -77,6 +78,10 @@ String _friendlyErrorMessage(Object error) {
   final firebaseCode = error is FirebaseException
       ? error.code.trim().toLowerCase()
       : '';
+
+  if (rawError == AccountAccessService.blockedActionMessage) {
+    return rawError;
+  }
 
   if (error is TimeoutException ||
       normalizedError.contains('timeout') ||
@@ -183,6 +188,7 @@ class _ChatViewState extends State<ChatView> {
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;
   final ImagePicker _picker = ImagePicker();
+  final AccountAccessService _accountAccessService = AccountAccessService();
   final ChatController _controller = ChatController();
   final TextEditingController _messageController = TextEditingController();
   Map<String, dynamic>? _contractData;
@@ -247,6 +253,25 @@ class _ChatViewState extends State<ChatView> {
 
   Future<void> _showErrorDialog(String message) {
     return _showErrorDialogForContext(context, message);
+  }
+
+  Future<bool> _isCurrentUserBlocked() {
+    return _accountAccessService.isCurrentUserBlocked();
+  }
+
+  Future<bool> _showBlockedActionAndStopIfNeeded() async {
+    if (!await _isCurrentUserBlocked()) return false;
+    if (!mounted) return true;
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(AccountAccessService.blockedActionMessage),
+        ),
+      );
+    return true;
   }
 
   bool _isSuccessfulStatusCode(int statusCode) =>
@@ -408,6 +433,8 @@ class _ChatViewState extends State<ChatView> {
     required String logLabel,
     Duration? timeout,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final uri = _backendUri(endpointPath);
     final encodedBody = jsonEncode(body);
 
@@ -779,6 +806,8 @@ class _ChatViewState extends State<ChatView> {
     required int rating,
     required String reviewText,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final currentUserId = _controller.currentUserId;
     final reviewedUserId = widget.otherUserId.trim();
     final requestId = (_requestId ?? '').trim();
@@ -951,6 +980,12 @@ class _ChatViewState extends State<ChatView> {
               ),
             );
             return true;
+          } catch (error) {
+            if (!mounted) return false;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(_friendlyErrorMessage(error))),
+            );
+            return false;
           } finally {
             if (mounted) {
               setState(() {
@@ -1157,6 +1192,7 @@ class _ChatViewState extends State<ChatView> {
     final text = _messageController.text.trim();
 
     if (text.isEmpty && _selectedImages.isEmpty) return;
+    if (await _showBlockedActionAndStopIfNeeded()) return;
 
     setState(() {
       _isSending = true;
@@ -1916,6 +1952,8 @@ class _ChatViewState extends State<ChatView> {
       width: double.infinity,
       child: ElevatedButton(
         onPressed: () async {
+          if (await _showBlockedActionAndStopIfNeeded()) return;
+
           setState(() {
             _isGeneratingContract = true;
             _contractError = null;
@@ -3431,6 +3469,7 @@ class _ChatViewState extends State<ChatView> {
   Future<void> _submitDeliveryWork() async {
     final contractData = _contractData;
     if (contractData == null) return;
+    if (await _showBlockedActionAndStopIfNeeded()) return;
 
     try {
       final deliveryData = _asMap(contractData['deliveryData']);
@@ -5760,6 +5799,7 @@ class _ChatViewState extends State<ChatView> {
   Future<void> _openMoyasarPayment() async {
     final contractData = _contractData;
     if (contractData == null) return;
+    if (await _showBlockedActionAndStopIfNeeded()) return;
 
     final payment = _asMap(contractData['payment']);
     final amountText = (payment['amount'] ?? '').toString().trim();
@@ -5823,6 +5863,8 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Future<void> _openTerminationCompensationPayment() async {
+    if (await _showBlockedActionAndStopIfNeeded()) return;
+
     final compensationAmount = _terminationCompensationAmount();
     if (compensationAmount == null || compensationAmount <= 0) {
       await _showErrorDialog('Invalid compensation amount');
@@ -5915,6 +5957,8 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Future<void> _verifyPayment(String paymentId) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final chatDoc = await FirebaseFirestore.instance
         .collection('chat')
         .doc(widget.chatId)
@@ -5985,6 +6029,8 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Future<void> _verifyTerminationCompensationPayment(String paymentId) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final chatDoc = await FirebaseFirestore.instance
         .collection('chat')
         .doc(widget.chatId)
@@ -8565,6 +8611,7 @@ class _ChatViewState extends State<ChatView> {
   Future<void> _openSignatureAndApprove() async {
     final contractData = _contractData;
     if (contractData == null) return;
+    if (await _showBlockedActionAndStopIfNeeded()) return;
 
     final signatureData = await showModalBottomSheet<String>(
       context: context,

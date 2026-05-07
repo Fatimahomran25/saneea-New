@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/chat_controller.dart';
 import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
@@ -192,11 +193,29 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () async {
-                      await _controller.updateAnnouncementRequestStatus(
-                        requestId: request.id,
-                        status: 'accepted',
-                      );
-                      _loadRequests();
+                      try {
+                        await _controller.updateAnnouncementRequestStatus(
+                          requestId: request.id,
+                          status: 'accepted',
+                        );
+                        _loadRequests();
+                      } catch (error) {
+                        if (!mounted) return;
+                        final errorMessage = error
+                            .toString()
+                            .replaceFirst('Exception: ', '')
+                            .trim();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              errorMessage ==
+                                      AccountAccessService.blockedActionMessage
+                                  ? errorMessage
+                                  : 'Unable to accept proposal right now.',
+                            ),
+                          ),
+                        );
+                      }
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -223,11 +242,29 @@ class _AnnouncementRequestsViewState extends State<AnnouncementRequestsView> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () async {
-                      await _controller.updateAnnouncementRequestStatus(
-                        requestId: request.id,
-                        status: 'rejected',
-                      );
-                      _loadRequests();
+                      try {
+                        await _controller.updateAnnouncementRequestStatus(
+                          requestId: request.id,
+                          status: 'rejected',
+                        );
+                        _loadRequests();
+                      } catch (error) {
+                        if (!mounted) return;
+                        final errorMessage = error
+                            .toString()
+                            .replaceFirst('Exception: ', '')
+                            .trim();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              errorMessage ==
+                                      AccountAccessService.blockedActionMessage
+                                  ? errorMessage
+                                  : 'Unable to reject proposal right now.',
+                            ),
+                          ),
+                        );
+                      }
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 14),

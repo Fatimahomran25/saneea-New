@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:saneea_app/views/client_home_screen.dart';
 import '../views/anouncment_view.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/freelancer_profile_controller.dart';
 import '../models/freelancer_profile_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -64,6 +65,19 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
   String get _displayServiceField {
     final field = c.profile?.serviceField?.trim() ?? '';
     return field.isEmpty ? 'Freelancer' : field;
+  }
+
+  void _showBlockedActionSnackBarIfNeeded() {
+    if (!mounted) return;
+    if (c.error != AccountAccessService.blockedActionMessage) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(AccountAccessService.blockedActionMessage),
+        ),
+      );
   }
 
   @override
@@ -293,9 +307,10 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
             lastNameValidator: c.validateLastName,
             serviceFieldOptions:
                 FreelancerProfileController.serviceFieldOptions,
-            onServiceFieldChanged: (value) {
+            onServiceFieldChanged: (value) async {
               if (_isOwnProfile) {
-                c.setServiceFieldAndPersist(value);
+                await c.setServiceFieldAndPersist(value);
+                _showBlockedActionSnackBarIfNeeded();
               }
             },
           ),
@@ -455,7 +470,10 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                         options: FreelancerProfileController.serviceTypeOptions,
                         value: c.profile!.serviceType,
                         enabled: c.isEditing,
-                        onChanged: (v) => c.setServiceTypeAndPersist(v),
+                        onChanged: (v) async {
+                          await c.setServiceTypeAndPersist(v);
+                          _showBlockedActionSnackBarIfNeeded();
+                        },
                         purple: kPurple,
                       ),
                     ],
@@ -480,7 +498,10 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                         options: FreelancerProfileController.workingModeOptions,
                         value: c.profile!.workingMode,
                         enabled: c.isEditing,
-                        onChanged: (v) => c.setWorkingModeAndPersist(v),
+                        onChanged: (v) async {
+                          await c.setWorkingModeAndPersist(v);
+                          _showBlockedActionSnackBarIfNeeded();
+                        },
                         purple: kPurple,
                       ),
                     ],
@@ -504,6 +525,7 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                             final res = await _experienceDialog();
                             if (res == null) return;
                             await c.addExperience(res);
+                            _showBlockedActionSnackBarIfNeeded();
                           },
                           icon: const Icon(Icons.add, size: 18),
                           label: const Text("Add"),
@@ -525,8 +547,12 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                           final res = await _experienceDialog(initial: e);
                           if (res == null) return;
                           await c.editExperience(i, res);
+                          _showBlockedActionSnackBarIfNeeded();
                         },
-                        onDelete: () async => await c.deleteExperience(i),
+                        onDelete: () async {
+                          await c.deleteExperience(i);
+                          _showBlockedActionSnackBarIfNeeded();
+                        },
                       ),
                     );
                   }),
@@ -673,8 +699,12 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                                             top: 6,
                                             right: 6,
                                             child: GestureDetector(
-                                              onTap: () =>
-                                                  c.deletePortfolioImage(url),
+                                              onTap: () async {
+                                                await c.deletePortfolioImage(
+                                                  url,
+                                                );
+                                                _showBlockedActionSnackBarIfNeeded();
+                                              },
                                               child: Container(
                                                 padding: const EdgeInsets.all(
                                                   4,
@@ -776,6 +806,10 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                                         content: Text(
                                           saved
                                               ? "Saved successfully ✅"
+                                              : c.error ==
+                                                    AccountAccessService
+                                                        .blockedActionMessage
+                                              ? c.error!
                                               : "Save failed: ${c.error ?? ''}",
                                         ),
                                       ),
@@ -864,6 +898,10 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
               ),
             ),
           ),
+          if (widget.readOnlyMode && profile.isBlocked) ...[
+            const SizedBox(height: 12),
+            const Center(child: _BlockedStatusBadge()),
+          ],
           const SizedBox(height: 10),
 
           const SizedBox(height: 10),
@@ -1178,6 +1216,36 @@ class _FreelancerProfileViewState extends State<FreelancerProfileView> {
                 : (_isOwnProfile ? _buildOwnProfile() : _buildOtherProfile()),
           );
         },
+      ),
+    );
+  }
+}
+
+class _BlockedStatusBadge extends StatelessWidget {
+  const _BlockedStatusBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.red.withOpacity(0.22)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.block_rounded, color: Colors.red, size: 18),
+          SizedBox(width: 8),
+          Text(
+            'Blocked',
+            style: TextStyle(
+              color: Colors.red,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

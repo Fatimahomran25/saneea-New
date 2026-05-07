@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../controlles/account_access_service.dart';
 import '../controlles/client_profile_controller.dart';
 import 'favorite_heart_button.dart';
 import 'report_flag_button.dart';
@@ -369,7 +370,11 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
                                       ).showSnackBar(
                                         SnackBar(
                                           content: Text(
-                                            "Save failed: ${c.error ?? ''}",
+                                            c.error ==
+                                                    AccountAccessService
+                                                        .blockedActionMessage
+                                                ? c.error!
+                                                : "Save failed: ${c.error ?? ''}",
                                           ),
                                         ),
                                       );
@@ -459,6 +464,10 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
               ),
             ),
           ),
+          if (widget.readOnlyMode && p.isBlocked) ...[
+            const SizedBox(height: 12),
+            const Center(child: _BlockedStatusBadge()),
+          ],
           const SizedBox(height: 8),
 
           Center(child: _StarsReadOnly(value: p.rating, size: 20)),
@@ -511,6 +520,36 @@ class _ClientProfileBodyState extends State<_ClientProfileBody> {
                     ),
                   ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BlockedStatusBadge extends StatelessWidget {
+  const _BlockedStatusBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.red.withOpacity(0.22)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.block_rounded, color: Colors.red, size: 18),
+          SizedBox(width: 8),
+          Text(
+            'Blocked',
+            style: TextStyle(
+              color: Colors.red,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -650,13 +689,19 @@ class _HeaderOwnClient extends StatelessWidget {
                                     await context
                                         .read<ClientProfileController>()
                                         .deleteProfileImage();
+                                    final controller =
+                                        context.read<ClientProfileController>();
 
                                     if (!context.mounted) return;
 
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
+                                      SnackBar(
                                         content: Text(
-                                          'Profile image deleted successfully',
+                                          controller.error ==
+                                                  AccountAccessService
+                                                      .blockedActionMessage
+                                              ? controller.error!
+                                              : 'Profile image deleted successfully',
                                         ),
                                       ),
                                     );

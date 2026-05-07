@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../controlles/admin_reports_controller.dart';
 import 'admin_contract_review_details_view.dart';
 import 'admin_ui.dart';
 
@@ -64,6 +65,7 @@ class _AdminContractReviewsViewState extends State<AdminContractReviewsView> {
 
                   final reviews = snapshot.data!.docs
                       .map((doc) => _ContractReviewCardData.fromDoc(doc))
+                      .where((review) => !review.isDeleted)
                       .where(_matchesFilter)
                       .toList();
 
@@ -142,118 +144,23 @@ class _ContractReviewListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  AdminContractReviewDetailsView(reviewId: review.id),
-            ),
-          );
-        },
-        child: Ink(
-          padding: const EdgeInsets.all(16),
-          decoration: adminCardDecoration(),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: kAdminSoftSurface,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Icon(
-                  Icons.fact_check_outlined,
-                  color: kAdminPrimary,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            review.reporterName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kAdminTextPrimary,
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        AdminStatusChip(
-                          status: review.normalizedStatus,
-                          label: review.statusLabel,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      'Other party: ${review.otherPartyName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kAdminTextSecondary,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 9,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kAdminSoftSurface,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        review.reasonLabel,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: kAdminTextPrimary,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        if (review.contractStatusRaw.isNotEmpty)
-                          AdminStatusChip(
-                            status: review.contractStatusRaw,
-                            label: review.contractStatusLabel,
-                          ),
-                        AdminMetaPill(
-                          label: review.createdAtLabel,
-                          icon: Icons.schedule_rounded,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    return AdminModerationListCard(
+      icon: Icons.fact_check_outlined,
+      title: review.reporterName,
+      subtitle: 'Other party: ${review.otherPartyName}',
+      reason: review.reasonLabel,
+      status: review.normalizedStatus,
+      statusLabel: review.statusLabel,
+      createdAtLabel: review.createdAtLabel,
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AdminContractReviewDetailsView(reviewId: review.id),
           ),
-        ),
-      ),
+        );
+      },
+      onRemove: () => _removeContractReview(context, review.id),
     );
   }
 }
@@ -266,9 +173,8 @@ class _ContractReviewCardData {
     required this.reasonLabel,
     required this.statusLabel,
     required this.normalizedStatus,
-    required this.contractStatusRaw,
-    required this.contractStatusLabel,
     required this.createdAtLabel,
+    required this.isDeleted,
   });
 
   final String id;
@@ -277,9 +183,8 @@ class _ContractReviewCardData {
   final String reasonLabel;
   final String statusLabel;
   final String normalizedStatus;
-  final String contractStatusRaw;
-  final String contractStatusLabel;
   final String createdAtLabel;
+  final bool isDeleted;
 
   factory _ContractReviewCardData.fromDoc(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
@@ -287,8 +192,6 @@ class _ContractReviewCardData {
     final data = doc.data();
 
     final rawStatus = _firstFilled([data['status'], 'requested']);
-
-    final rawContractStatus = _firstFilled([data['contractStatus']]);
 
     return _ContractReviewCardData(
       id: doc.id,
@@ -311,11 +214,65 @@ class _ContractReviewCardData {
       ]),
       statusLabel: adminStatusLabel(rawStatus),
       normalizedStatus: rawStatus.toLowerCase().replaceAll(' ', '_'),
-      contractStatusRaw: rawContractStatus,
-      contractStatusLabel: adminStatusLabel(rawContractStatus),
       createdAtLabel: _formatCreatedAt(data['createdAt']),
+      isDeleted: data['isDeleted'] == true,
     );
   }
+}
+
+Future<void> _removeContractReview(
+  BuildContext context,
+  String reviewId,
+) async {
+  final shouldRemove = await _showRemoveReportDialog(context);
+  if (!context.mounted || !shouldRemove) return;
+
+  try {
+    await AdminReportsController().softDeleteContractReview(reviewId: reviewId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report removed from admin list.')),
+    );
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+  }
+}
+
+Future<bool> _showRemoveReportDialog(BuildContext context) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: const Text('Remove Report?'),
+        content: const Text(
+          "This will remove the report from the admin list only. The user's warning count and block status will not be changed.",
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+        actions: [
+          AdminDialogActionRow(
+            cancelLabel: 'Cancel',
+            confirmLabel: 'Remove',
+            confirmColor: kAdminDanger,
+            onCancel: () => Navigator.pop(dialogContext, false),
+            onConfirm: () => Navigator.pop(dialogContext, true),
+          ),
+        ],
+      );
+    },
+  );
+
+  return result ?? false;
+}
+
+String _friendlyError(Object error) {
+  final message = error.toString().trim();
+  if (message.startsWith('Exception: ')) {
+    return message.substring('Exception: '.length);
+  }
+  return 'Something went wrong. Please try again.';
 }
 
 String _firstFilled(List<dynamic> values) {

@@ -5,12 +5,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/freelancer_profile_model.dart';
+import 'account_access_service.dart';
 import 'messaging_controller.dart';
 
 class FreelancerProfileController extends ChangeNotifier {
   final _auth = FirebaseAuth.instance;
   final _db = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
+  final AccountAccessService _accountAccessService = AccountAccessService();
 
   bool isLoading = true;
   bool isSaving = false;
@@ -212,6 +214,13 @@ class FreelancerProfileController extends ChangeNotifier {
 
   Future<void> deletePortfolioImage(String imageUrl) async {
     if (!isEditing || profile == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     try {
       final updatedUrls = List<String>.from(profile!.portfolioUrls)
@@ -233,6 +242,13 @@ class FreelancerProfileController extends ChangeNotifier {
 
   Future<void> deleteProfileImage() async {
     if (profile == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     try {
       final user = _auth.currentUser;
@@ -263,6 +279,13 @@ class FreelancerProfileController extends ChangeNotifier {
 
   Future<void> setServiceFieldAndPersist(String v) async {
     if (!isEditing || profile == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     final old = profile!.serviceField;
     profile = profile!.copyWith(serviceField: v);
@@ -364,6 +387,13 @@ class FreelancerProfileController extends ChangeNotifier {
 
   Future<void> setServiceTypeAndPersist(String v) async {
     if (!isEditing || profile == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     final old = profile!.serviceType;
     profile = profile!.copyWith(serviceType: v);
@@ -382,6 +412,13 @@ class FreelancerProfileController extends ChangeNotifier {
 
   Future<void> setWorkingModeAndPersist(String v) async {
     if (!isEditing || profile == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     final old = profile!.workingMode;
     profile = profile!.copyWith(workingMode: v);
@@ -401,6 +438,13 @@ class FreelancerProfileController extends ChangeNotifier {
   // ✅ experiences (update same users doc)
   Future<void> addExperience(ExperienceModel exp) async {
     if (!isEditing || profile == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     final list = [...profile!.experiences, exp];
     profile = profile!.copyWith(experiences: list);
@@ -420,6 +464,13 @@ class FreelancerProfileController extends ChangeNotifier {
     if (!isEditing || profile == null) return;
     final list = [...profile!.experiences];
     if (index < 0 || index >= list.length) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     list[index] = exp;
     profile = profile!.copyWith(experiences: list);
@@ -439,6 +490,13 @@ class FreelancerProfileController extends ChangeNotifier {
     if (!isEditing || profile == null) return;
     final list = [...profile!.experiences];
     if (index < 0 || index >= list.length) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     list.removeAt(index);
     profile = profile!.copyWith(experiences: list);
@@ -465,6 +523,7 @@ class FreelancerProfileController extends ChangeNotifier {
     try {
       final user = _auth.currentUser;
       if (user == null) throw "Not logged in";
+      await _accountAccessService.ensureCurrentUserNotBlocked();
       final uid = user.uid;
 
       String? profileUrl = profile!.photoUrl;

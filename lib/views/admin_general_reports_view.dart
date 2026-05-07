@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../controlles/admin_reports_controller.dart';
 import 'admin_general_report_details_view.dart';
 import 'admin_ui.dart';
 
@@ -64,6 +65,7 @@ class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
 
                   final reports = snapshot.data!.docs
                       .map((doc) => _GeneralReportCardData.fromDoc(doc))
+                      .where((report) => !report.isDeleted)
                       .where(_matchesFilters)
                       .toList();
 
@@ -127,8 +129,7 @@ class _AdminGeneralReportsViewState extends State<AdminGeneralReportsView> {
       case 'Under Review':
         return report.normalizedStatus == 'under_review';
       case 'Resolved':
-        return report.normalizedStatus == 'resolved' ||
-            report.normalizedStatus == 'valid';
+        return report.normalizedStatus == 'resolved';
       case 'Dismissed':
         return report.normalizedStatus == 'dismissed' ||
             report.normalizedStatus == 'invalid';
@@ -146,127 +147,23 @@ class _GeneralReportListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AdminGeneralReportDetailsView(
-                reportId: report.id,
-              ),
-            ),
-          );
-        },
-        child: Ink(
-          padding: const EdgeInsets.all(18),
-          decoration: adminCardDecoration(),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: kAdminSoftSurface,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Icon(
-                  Icons.person_search_rounded,
-                  color: kAdminPrimary,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            report.reporterName,
-                            style: const TextStyle(
-                              color: kAdminTextPrimary,
-                              fontSize: 15.8,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        AdminStatusChip(status: report.normalizedStatus),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Reported user: ${report.reportedUserName}',
-                      style: const TextStyle(
-                        color: kAdminTextSecondary,
-                        fontSize: 13.25,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 240),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: kAdminSoftSurface,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            report.reason,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: kAdminTextPrimary,
-                              fontSize: 13.2,
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        AdminMetaPill(
-                          label: report.createdAtLabel,
-                          icon: Icons.schedule_rounded,
-                        ),
-                        const Spacer(),
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: kAdminSoftSurface,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.arrow_forward_ios_rounded,
-                            color: kAdminPrimary,
-                            size: 15,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    return AdminModerationListCard(
+      icon: Icons.person_search_rounded,
+      title: report.reporterName,
+      subtitle: 'Reported user: ${report.reportedUserName}',
+      reason: report.reason,
+      status: report.normalizedStatus,
+      statusLabel: report.statusLabel,
+      createdAtLabel: report.createdAtLabel,
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AdminGeneralReportDetailsView(reportId: report.id),
           ),
-        ),
-      ),
+        );
+      },
+      onRemove: () => _removeGeneralReport(context, report.id),
     );
   }
 }
@@ -280,6 +177,7 @@ class _GeneralReportCardData {
     required this.statusLabel,
     required this.normalizedStatus,
     required this.createdAtLabel,
+    required this.isDeleted,
   });
 
   final String id;
@@ -289,6 +187,7 @@ class _GeneralReportCardData {
   final String statusLabel;
   final String normalizedStatus;
   final String createdAtLabel;
+  final bool isDeleted;
 
   factory _GeneralReportCardData.fromDoc(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
@@ -319,8 +218,61 @@ class _GeneralReportCardData {
       statusLabel: adminStatusLabel(rawStatus),
       normalizedStatus: rawStatus.toLowerCase().replaceAll(' ', '_'),
       createdAtLabel: _formatCreatedAt(data['createdAt']),
+      isDeleted: data['isDeleted'] == true,
     );
   }
+}
+
+Future<void> _removeGeneralReport(BuildContext context, String reportId) async {
+  final shouldRemove = await _showRemoveReportDialog(context);
+  if (!context.mounted || !shouldRemove) return;
+
+  try {
+    await AdminReportsController().softDeleteGeneralReport(reportId: reportId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report removed from admin list.')),
+    );
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+  }
+}
+
+Future<bool> _showRemoveReportDialog(BuildContext context) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: const Text('Remove Report?'),
+        content: const Text(
+          "This will remove the report from the admin list only. The user's warning count and block status will not be changed.",
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+        actions: [
+          AdminDialogActionRow(
+            cancelLabel: 'Cancel',
+            confirmLabel: 'Remove',
+            confirmColor: kAdminDanger,
+            onCancel: () => Navigator.pop(dialogContext, false),
+            onConfirm: () => Navigator.pop(dialogContext, true),
+          ),
+        ],
+      );
+    },
+  );
+
+  return result ?? false;
+}
+
+String _friendlyError(Object error) {
+  final message = error.toString().trim();
+  if (message.startsWith('Exception: ')) {
+    return message.substring('Exception: '.length);
+  }
+  return 'Something went wrong. Please try again.';
 }
 
 String _firstFilled(List<dynamic> values) {

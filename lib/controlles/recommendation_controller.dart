@@ -6,9 +6,12 @@ import '../config/api_config.dart';
 import '../models/recommendation_model.dart';
 import 'dart:async';
 
+import 'account_access_service.dart';
+
 class RecommendationController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final AccountAccessService _accountAccessService = AccountAccessService();
 
   final String backendBaseUrl = ApiConfig.baseUrl;
 
@@ -264,6 +267,8 @@ class RecommendationController {
     required double budget,
     required String deadline,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final currentUser = _auth.currentUser;
 
     if (currentUser == null) {
@@ -341,6 +346,8 @@ class RecommendationController {
     required double budget,
     required String deadline,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     await _firestore.collection('requests').doc(requestId).update({
       'description': description,
       'budget': budget,
@@ -351,6 +358,8 @@ class RecommendationController {
   }
 
   Future<void> cancelRequest({required String requestId}) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final currentUser = _auth.currentUser;
     final requestRef = _firestore.collection('requests').doc(requestId);
     final requestDoc = await requestRef.get();
@@ -460,6 +469,8 @@ class RecommendationController {
     required String clientId,
     required String proposalText,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final currentUser = _auth.currentUser;
 
     if (currentUser == null) {
@@ -559,6 +570,8 @@ class RecommendationController {
     required String requestId,
     required String status,
   }) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final normalizedStatus = status.trim().toLowerCase();
     final requestRef = _firestore
         .collection('announcement_requests')
@@ -645,6 +658,8 @@ class RecommendationController {
   }
 
   Future<void> cancelAnnouncementRequest({required String requestId}) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     await _firestore.collection('announcement_requests').doc(requestId).update({
       'status': 'cancelled',
     });

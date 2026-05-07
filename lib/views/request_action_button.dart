@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/recommendation_controller.dart';
 import 'anouncment_view.dart';
 import 'my_requests_view.dart';
@@ -216,7 +217,7 @@ class _SendRequestButtonState extends State<SendRequestButton> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Request cancelled successfully.')),
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
 
       setState(() {
@@ -224,7 +225,14 @@ class _SendRequestButtonState extends State<SendRequestButton> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to cancel request.')),
+        SnackBar(
+          content: Text(
+            error.toString().replaceFirst('Exception: ', '').trim() ==
+                    AccountAccessService.blockedActionMessage
+                ? AccountAccessService.blockedActionMessage
+                : 'Failed to cancel request.',
+          ),
+        ),
       );
     }
   }

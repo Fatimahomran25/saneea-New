@@ -1,11 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'account_access_service.dart';
 import 'chat_controller.dart';
 
 class FreelancerRequestsController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final AccountAccessService _accountAccessService = AccountAccessService();
 
   String _singleLineSnippet(String rawText) {
     final text = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -72,6 +74,8 @@ class FreelancerRequestsController {
   }
 
   Future<void> acceptRequest(String requestId) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in freelancer found.');
@@ -138,6 +142,8 @@ class FreelancerRequestsController {
   }
 
   Future<void> rejectRequest(String requestId) async {
+    await _accountAccessService.ensureCurrentUserNotBlocked();
+
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No logged in freelancer found.');

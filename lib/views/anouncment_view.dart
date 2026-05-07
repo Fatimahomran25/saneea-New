@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../controlles/account_access_service.dart';
 import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
 
@@ -377,6 +378,16 @@ class _AnnouncementViewState extends State<AnnouncementView> {
       return;
     }
 
+    if (await AccountAccessService().isCurrentUserBlocked()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(AccountAccessService.blockedActionMessage),
+        ),
+      );
+      return;
+    }
+
     final hasInternet = await _hasInternetConnection();
     if (!hasInternet) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -432,9 +443,18 @@ class _AnnouncementViewState extends State<AnnouncementView> {
       );
     } catch (e) {
       if (!mounted) return;
+      final errorMessage = e.toString().replaceFirst('Exception: ', '').trim();
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to publish: $e')));
+      ).showSnackBar(
+        SnackBar(
+          content: Text(
+            errorMessage == AccountAccessService.blockedActionMessage
+                ? errorMessage
+                : 'Failed to publish: $e',
+          ),
+        ),
+      );
     }
   }
 
@@ -513,10 +533,13 @@ class _AnnouncementViewState extends State<AnnouncementView> {
       );
     } catch (e) {
       if (!mounted) return;
+      final errorMessage = e.toString().replaceFirst('Exception: ', '').trim();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            e.toString().contains('already sent')
+            errorMessage == AccountAccessService.blockedActionMessage
+                ? errorMessage
+                : e.toString().contains('already sent')
                 ? 'You can only send one request. Cancel it first or wait for response.'
                 : 'Failed to send request.',
           ),

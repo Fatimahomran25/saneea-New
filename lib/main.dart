@@ -8,6 +8,7 @@ import 'package:firebase_dynamic_links/firebase_dynamic_links.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'controlles/account_access_service.dart';
 import 'controlles/messaging_controller.dart';
 import 'views/intro.dart';
 import 'views/signup.dart';
@@ -27,6 +28,7 @@ import 'views/chat_view.dart';
 import 'views/freelancer_incoming_requests_view.dart';
 import 'views/my_announcement_requests_view.dart';
 import 'views/my_requests_view.dart';
+import 'views/blocked_account_view.dart';
 import 'views/warning_notice_view.dart';
 
 final navigatorKey = GlobalKey<NavigatorState>();
@@ -45,6 +47,7 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  final AccountAccessService _accountAccessService = AccountAccessService();
   final MessagingController _messagingController = MessagingController();
   bool _isInitialNotificationHandled = false;
   bool _isAuthReady = false;
@@ -88,23 +91,8 @@ class _MyAppState extends State<MyApp> {
           debugPrint('🏠 [APP] User logged in, resolving account type...');
 
           try {
-            final userDoc = await FirebaseFirestore.instance
-                .collection('users')
-                .doc(user.uid)
-                .get();
-
-            final accountType = (userDoc.data()?['accountType'] ?? '')
-                .toString()
-                .trim()
-                .toLowerCase();
-
-            if (accountType == 'admin') {
-              targetRoute = '/adminHome';
-            } else if (accountType == 'client') {
-              targetRoute = '/clientHome';
-            } else {
-              targetRoute = '/freelancerHome';
-            }
+            targetRoute = await _resolveSignedInRoute(user);
+            final accountType = targetRoute;
 
             debugPrint(
               '✅ [APP] accountType=$accountType, routing to $targetRoute',
@@ -118,17 +106,35 @@ class _MyAppState extends State<MyApp> {
         }
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (targetRoute == '/adminHome') {
-            navigatorKey.currentState?.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
-              (route) => false,
-            );
-          } else {
-            navigatorKey.currentState?.pushReplacementNamed(targetRoute);
-          }
+          _pushRootRoute(targetRoute);
         });
       }
     });
+  }
+
+  String _homeRouteForAccountType(String accountType) {
+    if (accountType == 'admin') return '/adminHome';
+    if (accountType == 'client') return '/clientHome';
+    return '/freelancerHome';
+  }
+
+  Future<String> _resolveSignedInRoute(User user) async {
+    final accessState = await _accountAccessService.loadAccessState(
+      uid: user.uid,
+    );
+
+    if (accessState.isBlocked) {
+      return '/blockedAccount';
+    }
+
+    return _homeRouteForAccountType(accessState.accountType);
+  }
+
+  void _pushRootRoute(String routeName) {
+    navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      routeName,
+      (route) => false,
+    );
   }
 
   Future<void> _bindInAppNotifications(User? user) async {
@@ -193,33 +199,14 @@ class _MyAppState extends State<MyApp> {
   Future<void> _navigateToCorrectHome() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      navigatorKey.currentState?.pushNamed('/intro');
+      _pushRootRoute('/intro');
       return;
     }
 
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      final accountType = (userDoc.data()?['accountType'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
-
-      if (accountType == 'admin') {
-        navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
-          (route) => false,
-        );
-      } else if (accountType == 'client') {
-        navigatorKey.currentState?.pushNamed('/clientHome');
-      } else {
-        navigatorKey.currentState?.pushNamed('/freelancerHome');
-      }
+      _pushRootRoute(await _resolveSignedInRoute(user));
     } catch (_) {
-      navigatorKey.currentState?.pushNamed('/freelancerHome');
+      _pushRootRoute('/freelancerHome');
     }
   }
 
@@ -744,12 +731,19 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navigatorKey,
       title: 'Saneea',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        return _BlockedUserGate(
+          accountAccessService: _accountAccessService,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       initialRoute: _isAuthReady ? '/intro' : '/loading',
       routes: {
         '/loading': (context) => const _LoadingScreen(),
         '/intro': (context) => const IntroScreen(),
         '/signup': (context) => const SignupScreen(),
         '/login': (context) => const login(),
+        '/blockedAccount': (_) => const BlockedAccountView(),
         '/freelancerHome': (_) => const FreelancerHomeView(),
         '/clientHome': (_) => const ClientHomeScreen(),
         '/adminHome': (context) => const AdminHomeScreen(),
@@ -769,6 +763,43 @@ class _LoadingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
+
+class _BlockedUserGate extends StatelessWidget {
+  const _BlockedUserGate({
+    required this.accountAccessService,
+    required this.child,
+  });
+
+  final AccountAccessService accountAccessService;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      initialData: FirebaseAuth.instance.currentUser,
+      builder: (context, authSnapshot) {
+        final user = authSnapshot.data;
+        if (user == null) return child;
+
+        return StreamBuilder<bool>(
+          stream: accountAccessService.watchBlockedState(uid: user.uid),
+          builder: (context, blockedSnapshot) {
+            if (blockedSnapshot.hasError) {
+              return child;
+            }
+
+            if (blockedSnapshot.data == true) {
+              return const BlockedAccountView();
+            }
+
+            return child;
+          },
+        );
+      },
+    );
   }
 }
 

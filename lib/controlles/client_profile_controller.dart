@@ -7,12 +7,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/client_profile_model.dart';
+import 'account_access_service.dart';
 import 'messaging_controller.dart';
 
 class ClientProfileController extends ChangeNotifier {
   final _auth = FirebaseAuth.instance;
   final _db = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
+  final AccountAccessService _accountAccessService = AccountAccessService();
 
   bool isLoading = true;
   bool isSaving = false;
@@ -188,6 +190,13 @@ class ClientProfileController extends ChangeNotifier {
 
     final user = _auth.currentUser;
     if (user == null) return;
+    error = null;
+
+    if (await _accountAccessService.isCurrentUserBlocked()) {
+      error = AccountAccessService.blockedActionMessage;
+      notifyListeners();
+      return;
+    }
 
     try {
       final doc = await _db.collection('users').doc(user.uid).get();
@@ -280,6 +289,7 @@ class ClientProfileController extends ChangeNotifier {
     try {
       final user = _auth.currentUser;
       if (user == null) throw "Not logged in";
+      await _accountAccessService.ensureCurrentUserNotBlocked();
 
       final newName = nameCtrl.text.trim();
       final parts = newName

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/login_controller.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'admin_home_screen.dart';
 import 'signup.dart';
 
 //تمت
@@ -15,6 +14,7 @@ class login extends StatefulWidget {
 }
 
 class _loginState extends State<login> {
+  final AccountAccessService _accountAccessService = AccountAccessService();
   final LoginController c = LoginController();
   final _nidFocus = FocusNode();
   final _passFocus = FocusNode();
@@ -331,27 +331,35 @@ class _loginState extends State<login> {
 
                                     final user =
                                         FirebaseAuth.instance.currentUser;
-                                    final doc = await FirebaseFirestore.instance
-                                        .collection('users')
-                                        .doc(user!.uid)
-                                        .get();
+                                    if (user == null) {
+                                      setState(() {
+                                        showTopMessage = true;
+                                        topMessage = 'Login failed.';
+                                      });
+                                      return;
+                                    }
 
-                                    final accountType =
-                                        (doc.data()?['accountType'] ?? '')
-                                            .toString()
-                                            .toLowerCase()
-                                            .trim();
+                                    final accessState =
+                                        await _accountAccessService
+                                            .loadAccessState(uid: user.uid);
 
-                                    if (accountType == 'admin') {
-                                      Navigator.pushAndRemoveUntil(
+                                    if (!mounted) return;
+
+                                    if (accessState.isBlocked) {
+                                      Navigator.pushNamedAndRemoveUntil(
                                         context,
-                                        MaterialPageRoute(
-                                          builder: (_) =>
-                                              const AdminHomeScreen(),
-                                        ),
+                                        '/blockedAccount',
                                         (route) => false,
                                       );
-                                    } else if (accountType == 'freelancer') {
+                                    } else if (accessState.accountType ==
+                                        'admin') {
+                                      Navigator.pushNamedAndRemoveUntil(
+                                        context,
+                                        '/adminHome',
+                                        (route) => false,
+                                      );
+                                    } else if (accessState.accountType ==
+                                        'freelancer') {
                                       Navigator.pushReplacementNamed(
                                         context,
                                         '/freelancerHome',

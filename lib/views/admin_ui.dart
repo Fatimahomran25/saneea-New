@@ -73,6 +73,10 @@ String adminStatusLabel(String status) {
 
 Color adminStatusColor(String status) {
   switch (status.trim().toLowerCase()) {
+    case 'approved':
+      return kAdminSuccess;
+    case 'rejected':
+      return kAdminDanger;
     case 'under_review':
       return kAdminWarning;
     case 'resolved':
@@ -289,6 +293,247 @@ class AdminMetaPill extends StatelessWidget {
               color: color,
               fontSize: 12,
               fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AdminModerationListCard extends StatelessWidget {
+  const AdminModerationListCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.reason,
+    required this.status,
+    required this.createdAtLabel,
+    required this.onTap,
+    this.statusLabel,
+    this.onRemove,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String reason;
+  final String status;
+  final String createdAtLabel;
+  final String? statusLabel;
+  final VoidCallback onTap;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        decoration: adminCardDecoration(),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(kAdminRadius),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.all(kAdminCardPadding),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: kAdminSoftSurface,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Icon(icon, color: kAdminPrimary, size: 22),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: kAdminTextPrimary,
+                                      fontSize: 15.8,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                AdminStatusChip(
+                                  status: status,
+                                  label: statusLabel,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: kAdminTextSecondary,
+                                fontSize: 13.25,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 240),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: kAdminSoftSurface,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    reason,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: kAdminTextPrimary,
+                                      fontSize: 13.2,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                AdminMetaPill(
+                                  label: createdAtLabel,
+                                  icon: Icons.schedule_rounded,
+                                ),
+                                const Spacer(),
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: kAdminSoftSurface,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.arrow_forward_ios_rounded,
+                                    color: kAdminPrimary,
+                                    size: 15,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (onRemove != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 10, 8, 0),
+                child: IconButton(
+                  onPressed: onRemove,
+                  tooltip: 'Remove Report',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: kAdminDanger,
+                    size: 20,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AdminDialogActionRow extends StatelessWidget {
+  const AdminDialogActionRow({
+    super.key,
+    required this.onCancel,
+    required this.onConfirm,
+    this.cancelLabel = 'Cancel',
+    this.confirmLabel = 'Confirm',
+    this.confirmColor = kAdminPrimary,
+  });
+
+  final VoidCallback onCancel;
+  final VoidCallback onConfirm;
+  final String cancelLabel;
+  final String confirmLabel;
+  final Color confirmColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(14),
+    );
+
+    return SizedBox(
+      width: double.infinity,
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: onCancel,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: kAdminPrimary,
+                side: BorderSide(color: kAdminPrimary.withOpacity(0.32)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 14,
+                ),
+                minimumSize: const Size(0, 48),
+                shape: buttonShape,
+                textStyle: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              child: Text(cancelLabel),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FilledButton(
+              onPressed: onConfirm,
+              style: FilledButton.styleFrom(
+                backgroundColor: confirmColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 14,
+                ),
+                minimumSize: const Size(0, 48),
+                shape: buttonShape,
+                textStyle: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              child: Text(confirmLabel),
             ),
           ),
         ],

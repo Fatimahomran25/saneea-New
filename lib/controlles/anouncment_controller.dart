@@ -3,6 +3,8 @@ import '../models/anouncment_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'account_access_service.dart';
+
 class AnnouncementController extends ChangeNotifier {
   AnnouncementModel _model = AnnouncementModel();
 
@@ -54,6 +56,15 @@ if (selectedDuration == null) {
 }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Write something before publishing')),
+      );
+      return;
+    }
+
+    if (await AccountAccessService().isCurrentUserBlocked()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(AccountAccessService.blockedActionMessage),
+        ),
       );
       return;
     }

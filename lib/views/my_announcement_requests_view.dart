@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/chat_controller.dart';
 import '../controlles/recommendation_controller.dart';
 import '../models/recommendation_model.dart';
@@ -176,7 +177,16 @@ class _MyAnnouncementRequestsViewState
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to cancel request: $e')));
+      ).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst('Exception: ', '').trim() ==
+                    AccountAccessService.blockedActionMessage
+                ? AccountAccessService.blockedActionMessage
+                : 'Failed to cancel request: $e',
+          ),
+        ),
+      );
     }
   }
 

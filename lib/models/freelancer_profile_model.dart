@@ -14,7 +14,8 @@ class FreelancerProfileModel {
   final String email;
   final String bio;
   final String? photoUrl;
- final String? serviceField;
+  final bool isBlocked;
+  final String? serviceField;
   final String? serviceType;
   final String? workingMode;
 
@@ -32,7 +33,8 @@ class FreelancerProfileModel {
     required this.email,
     required this.bio,
     required this.photoUrl,
-    required this.serviceField, 
+    required this.isBlocked,
+    required this.serviceField,
     required this.serviceType,
     required this.workingMode,
     required this.iban,
@@ -47,6 +49,7 @@ class FreelancerProfileModel {
     String? bio,
     String? photoUrl,
     bool clearPhotoUrl = false,
+    bool? isBlocked,
     String? serviceField,
     String? serviceType,
     bool clearServiceType = false,
@@ -65,6 +68,7 @@ class FreelancerProfileModel {
       email: email ?? this.email,
       bio: bio ?? this.bio,
       photoUrl: clearPhotoUrl ? null : (photoUrl ?? this.photoUrl),
+      isBlocked: isBlocked ?? this.isBlocked,
       serviceField: serviceField ?? this.serviceField,
       serviceType: clearServiceType ? null : (serviceType ?? this.serviceType),
       workingMode: clearWorkingMode ? null : (workingMode ?? this.workingMode),
@@ -98,6 +102,7 @@ class FreelancerProfileModel {
       email: (data['email'] ?? '').toString(),
       bio: (data['bio'] ?? '').toString(),
       photoUrl: data['profile']?.toString(),
+      isBlocked: data['isBlocked'] == true,
       serviceField: data['serviceField']?.toString(),
       serviceType: data['serviceType']?.toString(),
       workingMode: data['workingMode']?.toString(),

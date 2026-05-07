@@ -290,6 +290,64 @@ class _AdminContractReviewDetailsViewState
     }
   }
 
+  Future<void> _removeReport() async {
+    final shouldRemove = await _showRemoveReportDialog();
+    if (!shouldRemove || !mounted) return;
+
+    setState(() {
+      _isUpdatingStatus = true;
+    });
+
+    try {
+      await _reportsController.softDeleteContractReview(reviewId: widget.reviewId);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Report removed from admin list.')),
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(e))));
+    } finally {
+      if (!mounted) return;
+
+      setState(() {
+        _isUpdatingStatus = false;
+      });
+    }
+  }
+
+  Future<bool> _showRemoveReportDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Remove Report?'),
+          content: const Text(
+            "This will remove the report from the admin list only. The user's warning count and block status will not be changed.",
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          actions: [
+            AdminDialogActionRow(
+              cancelLabel: 'Cancel',
+              confirmLabel: 'Remove',
+              confirmColor: kAdminDanger,
+              onCancel: () => Navigator.pop(dialogContext, false),
+              onConfirm: () => Navigator.pop(dialogContext, true),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
+  }
+
   Future<void> _showAdminTerminateContractDialog() async {
     final noteController = TextEditingController();
 
@@ -985,6 +1043,14 @@ class _AdminContractReviewDetailsViewState
             onPressed: _isUpdatingStatus ? null : _showReviewStatusSheet,
             tooltip: 'Update Review Status',
             icon: const Icon(Icons.edit_note_rounded),
+          ),
+          IconButton(
+            onPressed: _isUpdatingStatus ? null : _removeReport,
+            tooltip: 'Remove Report',
+            icon: Icon(
+              Icons.delete_outline_rounded,
+              color: _isUpdatingStatus ? kAdminMuted : kAdminDanger,
+            ),
           ),
         ],
       ),

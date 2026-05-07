@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:saneea_app/views/freelancer_profile.dart';
 import 'package:saneea_app/views/my_announcement_requests_view.dart';
+import '../controlles/account_access_service.dart';
 import '../controlles/recommendation_controller.dart';
 import '../controlles/freelancer_profile_controller.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -254,8 +255,16 @@ class _BrowseAnnouncementsViewState extends State<BrowseAnnouncementsView> {
                 );
               } catch (e) {
                 if (!mounted) return;
+                final errorMessage =
+                    e.toString().replaceFirst('Exception: ', '').trim();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Failed to send proposal: $e')),
+                  SnackBar(
+                    content: Text(
+                      errorMessage == AccountAccessService.blockedActionMessage
+                          ? errorMessage
+                          : 'Failed to send proposal: $e',
+                    ),
+                  ),
                 );
               }
             },

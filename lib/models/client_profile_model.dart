@@ -9,6 +9,7 @@ class ClientProfileModel {
   final String email;
   final String bio; // <= 150
   final String? photoUrl;
+  final bool isBlocked;
 
   // computed read-only
   final double rating;
@@ -20,6 +21,7 @@ class ClientProfileModel {
     required this.email,
     required this.bio,
     required this.photoUrl,
+    required this.isBlocked,
     required this.rating,
   });
 
@@ -30,6 +32,7 @@ class ClientProfileModel {
   String? bio,
   String? photoUrl,
   bool clearPhotoUrl = false,
+  bool? isBlocked,
   
   double? rating,
 }) {
@@ -40,6 +43,7 @@ class ClientProfileModel {
     email: email ?? this.email,
     bio: bio ?? this.bio,
     photoUrl: clearPhotoUrl ? null : (photoUrl ?? this.photoUrl),
+    isBlocked: isBlocked ?? this.isBlocked,
     rating: rating ?? this.rating,
   );
 }
@@ -52,6 +56,7 @@ class ClientProfileModel {
       'email': email,
       'bio': bio,
       'photoUrl': photoUrl,
+      'isBlocked': isBlocked,
     };
   }
 
@@ -73,6 +78,7 @@ class ClientProfileModel {
       email: (data['email'] ?? '').toString(),
       bio: (data['bio'] ?? '').toString(),
       photoUrl: data['photoUrl']?.toString(),
+      isBlocked: data['isBlocked'] == true,
       rating: rating,
     );
   }
