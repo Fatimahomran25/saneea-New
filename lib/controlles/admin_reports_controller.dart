@@ -202,15 +202,28 @@ class AdminReportsController {
     );
 
     await _firestore.runTransaction((transaction) async {
+      var linkedContractId = (reviewData['contractId'] ?? '').toString().trim();
+
       if (requestRef != null) {
         final requestSnapshot = await transaction.get(requestRef);
         final requestData = requestSnapshot.data() ?? <String, dynamic>{};
         final contractData = _asMap(requestData['contractData']);
         final approval = _asMap(contractData['approval']);
+        final contractMeta = _asMap(contractData['meta']);
+        linkedContractId = (reviewData['contractId'] ??
+                requestData['contractId'] ??
+                contractData['contractId'] ??
+                contractMeta['contractId'] ??
+                linkedContractId)
+            .toString()
+            .trim();
 
         approval['contractStatus'] = 'admin_terminated';
         contractData['approval'] = approval;
         contractData['contractStatus'] = 'admin_terminated';
+        contractData['status'] = 'admin_terminated';
+        contractData['terminatedBy'] = 'admin';
+        contractData['terminatedAt'] = FieldValue.serverTimestamp();
         contractData['adminDecision'] = 'admin_terminated';
         contractData['adminDecisionNote'] = adminDecisionNote.trim();
         contractData['adminTerminatedAt'] = FieldValue.serverTimestamp();
@@ -218,6 +231,24 @@ class AdminReportsController {
 
         transaction.set(requestRef, {
           'contractData': contractData,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      if (linkedContractId.isNotEmpty) {
+        final contractRef = _firestore.collection('contracts').doc(
+          linkedContractId,
+        );
+
+        transaction.set(contractRef, {
+          'status': 'admin_terminated',
+          'contractStatus': 'admin_terminated',
+          'terminatedBy': 'admin',
+          'terminatedAt': FieldValue.serverTimestamp(),
+          'adminDecision': 'admin_terminated',
+          'adminDecisionNote': adminDecisionNote.trim(),
+          'adminTerminatedAt': FieldValue.serverTimestamp(),
+          'adminTerminatedBy': adminUid,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }

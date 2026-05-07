@@ -157,6 +157,7 @@ class ContractsController {
     }
 
     if (status == 'rejected' ||
+        status == 'admin_terminated' ||
         status == 'terminated' ||
         status == 'cancelled' ||
         status == 'canceled' ||

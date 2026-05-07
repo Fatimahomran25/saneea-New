@@ -33,6 +33,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
       case 'completed':
       case 'past':
         return const Color(0xFF546E7A);
+      case 'admin_terminated':
       case 'terminated':
       case 'rejected':
         return const Color(0xFFC75A5A);
@@ -258,6 +259,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final showTerminationStatus =
+        contract.contractStatus == 'admin_terminated' ||
         contract.contractStatus == 'terminated' ||
         contract.contractStatus == 'termination_pending' ||
         contract.terminationRequested;
