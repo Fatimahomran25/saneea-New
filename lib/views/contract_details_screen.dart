@@ -259,6 +259,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
   Widget build(BuildContext context) {
     final showTerminationStatus =
         contract.contractStatus == 'terminated' ||
+        contract.contractStatus == 'admin_terminated' ||
         contract.contractStatus == 'termination_pending' ||
         contract.terminationRequested;
 

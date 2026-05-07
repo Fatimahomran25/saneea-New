@@ -40,7 +40,8 @@ class _ContractsListScreenState extends State<ContractsListScreen> {
       final isExpired = contract.hasDeadlinePassed;
       final isCancelled = status == 'cancelled' || status == 'canceled';
       final isRejected = status == 'rejected';
-      final isTerminated = status == 'terminated';
+      final isTerminated =
+          status == 'terminated' || status == 'admin_terminated';
       final needsCurrentUserAction =
           _controller.getContractSection(contract) ==
           ContractSection.requiresAction;

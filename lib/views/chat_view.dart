@@ -176,6 +176,7 @@ class _ChatViewState extends State<ChatView> {
   static const String moyasarPublishableKey =
       'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
   static const Duration _contractRequestTimeout = Duration(seconds: 25);
+  static const Duration _generateContractRequestTimeout = Duration(seconds: 90);
   static const Duration _panelSwitchDuration = Duration(milliseconds: 220);
   static const double _pinnedPanelHeaderMinHeight = 92;
   static const double _chatPanelRadius = 16;
@@ -1986,20 +1987,22 @@ class _ChatViewState extends State<ChatView> {
               endpointPath: 'generate-contract-from-request-id',
               body: requestBody,
               logLabel: 'Generate contract',
+              timeout: _generateContractRequestTimeout,
             );
 
-            final data = _decodeResponseBodyAsMap(
+            final data = _tryDecodeResponseBodyAsMap(
               response,
               actionLabel: 'Generate contract',
             );
 
-            if (_didApiResponseSucceed(response, data)) {
+            if (_isSuccessfulStatusCode(response.statusCode)) {
               debugPrint('Generate contract response: $data');
 
               final freshContractData = _normalizeGeneratedContractData(
                 await _resolveContractDataForUiSync(
                   actionLabel: 'Generate contract',
                   responseData: data,
+                  retrySavedSource: true,
                 ),
               );
 
@@ -2011,6 +2014,13 @@ class _ChatViewState extends State<ChatView> {
                   _contractData = freshContractData;
                 }
               });
+
+              if (freshContractData == null) {
+                debugPrint(
+                  'Generate contract returned HTTP ${response.statusCode}, '
+                  'but Flutter could not reload contractData yet.',
+                );
+              }
 
               await _runNonBlockingSecondaryAction(
                 'Generate contract notification',
@@ -2034,46 +2044,40 @@ class _ChatViewState extends State<ChatView> {
               );
             }
           } on TimeoutException catch (error, stackTrace) {
-            await _showLoggedError(
+            await _handleGenerateContractException(
               'Generate contract error',
               error,
               stackTrace,
-              updateContractError: true,
             );
           } on SocketException catch (error, stackTrace) {
-            await _showLoggedError(
+            await _handleGenerateContractException(
               'Generate contract error',
               error,
               stackTrace,
-              updateContractError: true,
             );
           } on http.ClientException catch (error, stackTrace) {
-            await _showLoggedError(
+            await _handleGenerateContractException(
               'Generate contract error',
               error,
               stackTrace,
-              updateContractError: true,
             );
           } on FirebaseException catch (error, stackTrace) {
-            await _showLoggedError(
+            await _handleGenerateContractException(
               'Generate contract error',
               error,
               stackTrace,
-              updateContractError: true,
             );
           } on FormatException catch (error, stackTrace) {
-            await _showLoggedError(
+            await _handleGenerateContractException(
               'Generate contract error',
               error,
               stackTrace,
-              updateContractError: true,
             );
           } catch (error, stackTrace) {
-            await _showLoggedError(
+            await _handleGenerateContractException(
               'Generate contract error',
               error,
               stackTrace,
-              updateContractError: true,
             );
           } finally {
             if (!mounted) return;
@@ -4090,6 +4094,17 @@ class _ChatViewState extends State<ChatView> {
         ? proposalId
         : requestId;
 
+    final requestDoc = await FirebaseFirestore.instance
+        .collection('requests')
+        .doc(requestId)
+        .get();
+    final requestContractData = _nonEmptyMapOrNull(
+      requestDoc.data()?['contractData'],
+    );
+    if (requestContractData != null) {
+      return requestContractData;
+    }
+
     final sourceDoc = await FirebaseFirestore.instance
         .collection(sourceCollection)
         .doc(sourceDocumentId)
@@ -4098,19 +4113,42 @@ class _ChatViewState extends State<ChatView> {
     return _nonEmptyMapOrNull(sourceDoc.data()?['contractData']);
   }
 
+  Future<Map<String, dynamic>?> _waitForSavedContractData({
+    int attempts = 24,
+    Duration delay = const Duration(seconds: 1),
+  }) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      final savedContractData = await _loadContractDataFromSource();
+      if (savedContractData != null) {
+        return savedContractData;
+      }
+
+      debugPrint(
+        'Waiting for saved contractData attempt ${attempt + 1}/$attempts',
+      );
+
+      if (attempt < attempts - 1) {
+        await Future<void>.delayed(delay);
+      }
+    }
+
+    return null;
+  }
+
   Future<Map<String, dynamic>?> _resolveContractDataForUiSync({
     required String actionLabel,
     required Map<String, dynamic> responseData,
+    bool retrySavedSource = false,
   }) async {
-    final responseContractData = _nonEmptyMapOrNull(
-      responseData['contractData'],
-    );
+    final responseContractData = _contractDataFromApiResponse(responseData);
     if (responseContractData != null) {
       return responseContractData;
     }
 
     try {
-      final savedContractData = await _loadContractDataFromSource();
+      final savedContractData = retrySavedSource
+          ? await _waitForSavedContractData()
+          : await _loadContractDataFromSource();
       if (savedContractData != null) {
         return savedContractData;
       }
@@ -4134,6 +4172,62 @@ class _ChatViewState extends State<ChatView> {
     }
 
     return null;
+  }
+
+  Map<String, dynamic>? _contractDataFromApiResponse(
+    Map<String, dynamic> responseData,
+  ) {
+    final directContractData = _nonEmptyMapOrNull(responseData['contractData']);
+    if (directContractData != null) {
+      return directContractData;
+    }
+
+    final contract = _nonEmptyMapOrNull(responseData['contract']);
+    if (contract == null) {
+      return null;
+    }
+
+    return _nonEmptyMapOrNull(contract['contractData']) ?? contract;
+  }
+
+  Future<void> _handleGenerateContractException(
+    String label,
+    Object error,
+    StackTrace stackTrace,
+  ) async {
+    _logCaughtError(label, error, stackTrace);
+
+    try {
+      final savedContractData = _normalizeGeneratedContractData(
+        await _waitForSavedContractData(),
+      );
+
+      if (savedContractData != null) {
+        if (!mounted) return;
+        setState(() {
+          _contractError = null;
+          _contractData = savedContractData;
+        });
+        debugPrint(
+          '$label ignored because contractData was saved successfully.',
+        );
+        return;
+      }
+    } on FirebaseException catch (syncError, syncStackTrace) {
+      _logCaughtError(
+        '$label post-error contract sync error',
+        syncError,
+        syncStackTrace,
+      );
+    } catch (syncError, syncStackTrace) {
+      _logCaughtError(
+        '$label post-error contract sync error',
+        syncError,
+        syncStackTrace,
+      );
+    }
+
+    await _showLoggedError(label, error, stackTrace, updateContractError: true);
   }
 
   Map<String, dynamic>? _normalizeGeneratedContractData(
@@ -9613,6 +9707,7 @@ class _ChatViewState extends State<ChatView> {
     if (contractStatus == 'approved' ||
         contractStatus == 'completed' ||
         contractStatus == 'terminated' ||
+        contractStatus == 'admin_terminated' ||
         contractStatus == 'cancelled' ||
         contractStatus == 'canceled') {
       return const SizedBox.shrink();
@@ -9794,6 +9889,8 @@ class _ChatViewState extends State<ChatView> {
         ? 'Termination Pending'
         : contractStatus == 'terminated'
         ? 'Terminated'
+        : contractStatus == 'admin_terminated'
+        ? 'Terminated'
         : 'Draft';
 
     final statusChipBackgroundColor = contractStatus == 'approved'
@@ -9807,6 +9904,8 @@ class _ChatViewState extends State<ChatView> {
         : contractStatus == 'termination_pending'
         ? const Color(0xFFFFF4E5)
         : contractStatus == 'terminated'
+        ? const Color(0xFFF3E5F5)
+        : contractStatus == 'admin_terminated'
         ? const Color(0xFFF3E5F5)
         : const Color(0xFFF1F3F4);
 
@@ -9822,6 +9921,8 @@ class _ChatViewState extends State<ChatView> {
         ? const Color(0xFFEF6C00)
         : contractStatus == 'terminated'
         ? const Color(0xFF6A1B9A)
+        : contractStatus == 'admin_terminated'
+        ? const Color(0xFF6A1B9A)
         : Colors.black54;
 
     final statusChipIcon = contractStatus == 'approved'
@@ -9835,6 +9936,8 @@ class _ChatViewState extends State<ChatView> {
         : contractStatus == 'termination_pending'
         ? Icons.warning_amber_rounded
         : contractStatus == 'terminated'
+        ? Icons.block_rounded
+        : contractStatus == 'admin_terminated'
         ? Icons.block_rounded
         : Icons.description_outlined;
 
@@ -10615,6 +10718,7 @@ class _ChatViewState extends State<ChatView> {
         !_isLoadingContractData &&
         (_contractData == null ||
             previewContractStatus == 'terminated' ||
+            previewContractStatus == 'admin_terminated' ||
             previewContractStatus == 'cancelled' ||
             previewContractStatus == 'canceled');
     final showPinnedApprovedContract =

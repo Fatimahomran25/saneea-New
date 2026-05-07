@@ -220,7 +220,8 @@ class GeneratedContract {
     return ContractStatusGroup.ongoing;
   }
 
-  bool get isTerminated => contractStatus == 'terminated';
+  bool get isTerminated =>
+      contractStatus == 'terminated' || contractStatus == 'admin_terminated';
 
   bool get isPast {
     return contractStatus == 'past' || isCompleted || hasDeadlinePassed;
@@ -232,6 +233,7 @@ class GeneratedContract {
     if (hasDeadlinePassed) return true;
 
     return status == 'terminated' ||
+        status == 'admin_terminated' ||
         status == 'rejected' ||
         status == 'cancelled' ||
         status == 'canceled';
@@ -285,6 +287,8 @@ class GeneratedContract {
         return 'Termination Pending';
       case 'terminated':
         return 'Terminated';
+      case 'admin_terminated':
+        return 'Terminated';
       case 'rejected':
         return 'Rejected';
       case 'edited':
@@ -314,7 +318,8 @@ class GeneratedContract {
   }
 
   String get terminationStatusLabel {
-    if (contractStatus == 'terminated') {
+    if (contractStatus == 'terminated' ||
+        contractStatus == 'admin_terminated') {
       final approvedBy = _roleLabel(terminationApprovedBy);
       final approvedAt = terminationApprovedAt.isEmpty
           ? ''

@@ -339,11 +339,31 @@ class _loginState extends State<login> {
                                       return;
                                     }
 
-                                    final accessState =
-                                        await _accountAccessService
-                                            .loadAccessState(uid: user.uid);
+                                    AccountAccessState accessState;
+                                    try {
+                                      accessState = await _accountAccessService
+                                          .loadAccessState(uid: user.uid);
+                                    } on FirebaseException catch (e) {
+                                      await FirebaseAuth.instance.signOut();
+                                      if (!mounted) return;
+                                      setState(() {
+                                        showTopMessage = true;
+                                        topMessage =
+                                            'Could not load your profile. (${e.code})';
+                                      });
+                                      return;
+                                    } catch (e) {
+                                      await FirebaseAuth.instance.signOut();
+                                      if (!mounted) return;
+                                      setState(() {
+                                        showTopMessage = true;
+                                        topMessage =
+                                            'Could not load your profile.';
+                                      });
+                                      return;
+                                    }
 
-                                    if (!mounted) return;
+                                    if (!context.mounted) return;
 
                                     if (accessState.isBlocked) {
                                       Navigator.pushNamedAndRemoveUntil(
