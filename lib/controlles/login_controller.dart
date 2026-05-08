@@ -72,7 +72,7 @@ class LoginController {
           .where('nationalId', isEqualTo: nid)
           .limit(1)
           .get()
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 12));
 
       if (snap.docs.isEmpty) return null;
 
@@ -81,8 +81,8 @@ class LoginController {
       return email.isEmpty ? null : email;
     } on TimeoutException {
       throw FirebaseAuthException(code: 'network-request-failed');
-    } catch (_) {
-      throw FirebaseAuthException(code: 'network-request-failed');
+    } on FirebaseException catch (e) {
+      throw FirebaseAuthException(code: e.code, message: e.message);
     }
   }
 
@@ -93,11 +93,15 @@ class LoginController {
       case 'user-not-found':
         return 'National ID / Password is incorrect.';
       case 'network-request-failed':
+      case 'unavailable':
+      case 'deadline-exceeded':
         return 'Check your internet connection.';
+      case 'permission-denied':
+        return 'Login lookup is blocked by database rules.';
       case 'operation-not-allowed':
         return 'Login service is currently unavailable.';
       default:
-        return 'Login failed. Please try again.';
+        return 'Login failed. Please try again. (${e.code})';
     }
   }
 
@@ -125,6 +129,7 @@ class LoginController {
 
       return true;
     } on FirebaseAuthException catch (e) {
+      debugPrint('Login failed: ${e.code} ${e.message ?? ''}');
       serverError = _mapAuthError(e);
       return false;
     } catch (_) {

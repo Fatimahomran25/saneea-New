@@ -3,11 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/contract_model.dart';
 
-enum ContractSection {
-  requiresAction,
-  inProgress,
-  history,
-}
+enum ContractSection { requiresAction, inProgress, history }
 
 class ContractsController {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -159,6 +155,7 @@ class ContractsController {
     if (status == 'rejected' ||
         status == 'admin_terminated' ||
         status == 'terminated' ||
+        status == 'admin_terminated' ||
         status == 'cancelled' ||
         status == 'canceled' ||
         contract.hasDeadlinePassed) {

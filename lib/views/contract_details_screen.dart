@@ -261,6 +261,7 @@ class _ContractDetailsScreenState extends State<ContractDetailsScreen> {
     final showTerminationStatus =
         contract.contractStatus == 'admin_terminated' ||
         contract.contractStatus == 'terminated' ||
+        contract.contractStatus == 'admin_terminated' ||
         contract.contractStatus == 'termination_pending' ||
         contract.terminationRequested;
 

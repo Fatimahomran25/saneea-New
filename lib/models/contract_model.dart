@@ -176,12 +176,10 @@ class GeneratedContract {
       deadlineText: deadlineText,
       deadlineDate: _parseDate(deadlineText),
       requestStatus: _stringValue(requestData['status']).toLowerCase(),
-      contractStatus: _normalizedContractStatus([
+      contractStatus: _stringValue(
         approval['contractStatus'],
-        contractData['contractStatus'],
-        contractData['status'],
-        requestData['contractStatus'],
-      ], fallback: 'draft'),
+        fallback: 'draft',
+      ).toLowerCase(),
       createdAtText: createdAtText,
       sortDate: sortDate,
       clientApproved: approval['clientApproved'] == true,
@@ -222,10 +220,8 @@ class GeneratedContract {
     return ContractStatusGroup.ongoing;
   }
 
-  bool get isTerminated {
-    return contractStatus == 'terminated' ||
-        contractStatus == 'admin_terminated';
-  }
+  bool get isTerminated =>
+      contractStatus == 'terminated' || contractStatus == 'admin_terminated';
 
   bool get isPast {
     return contractStatus == 'past' || isCompleted || hasDeadlinePassed;
@@ -289,9 +285,9 @@ class GeneratedContract {
         return 'Waiting';
       case 'termination_pending':
         return 'Termination Pending';
-      case 'admin_terminated':
-        return 'Admin Terminated';
       case 'terminated':
+        return 'Terminated';
+      case 'admin_terminated':
         return 'Terminated';
       case 'rejected':
         return 'Rejected';
@@ -322,11 +318,8 @@ class GeneratedContract {
   }
 
   String get terminationStatusLabel {
-    if (contractStatus == 'admin_terminated') {
-      return 'Admin terminated this contract.';
-    }
-
-    if (contractStatus == 'terminated') {
+    if (contractStatus == 'terminated' ||
+        contractStatus == 'admin_terminated') {
       final approvedBy = _roleLabel(terminationApprovedBy);
       final approvedAt = terminationApprovedAt.isEmpty
           ? ''
@@ -416,14 +409,6 @@ class GeneratedContract {
       if (text.isNotEmpty) return text;
     }
     return '';
-  }
-
-  static String _normalizedContractStatus(
-    List<dynamic> values, {
-    String fallback = '',
-  }) {
-    final status = _firstFilled(values).toLowerCase();
-    return status.isEmpty ? fallback : status;
   }
 
   static String _stringValue(dynamic value, {String fallback = ''}) {

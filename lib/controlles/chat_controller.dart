@@ -362,10 +362,10 @@ class ChatController {
       final fileName =
           '${DateTime.now().millisecondsSinceEpoch}_${imageItems.length}';
       final previewRef = _storage
-        .ref()
-        .child('delivery_previews')
-        .child(chatId)
-        .child('$fileName.jpg');
+          .ref()
+          .child('delivery_previews')
+          .child(chatId)
+          .child('$fileName.jpg');
       final storageRef = _storage
           .ref()
           .child('delivery_files')
@@ -678,7 +678,9 @@ class ChatController {
   }
 
   Map<String, dynamic> _asMap(dynamic value) {
-    return value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+    return value is Map
+        ? Map<String, dynamic>.from(value)
+        : <String, dynamic>{};
   }
 
   String _chatPreviewText(Map<String, dynamic> chatData) {
@@ -711,7 +713,8 @@ class ChatController {
         return 'Termination Pending';
       }
 
-      if (contractStatus == 'terminated') {
+      if (contractStatus == 'terminated' ||
+          contractStatus == 'admin_terminated') {
         return 'Terminated Contract';
       }
 

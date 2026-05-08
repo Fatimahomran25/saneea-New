@@ -19,6 +19,7 @@ class ClientHomeController extends ChangeNotifier {
       role: "Marketing",
       rating: 4.0,
       imagePath: "assets/toprated/lina.jpg", // ✅ صورتك
+      
     ),
     FreelancerModel(
       name: "Ahmed Ali",
