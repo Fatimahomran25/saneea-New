@@ -3397,8 +3397,6 @@ class _ChatViewState extends State<ChatView> {
 
     final contractData = _contractData;
     if (contractData == null) return false;
-    final progressData = _asMap(contractData['progressData']);
-    final currentStage = _normalizeContractProgressStage(progressData['stage']);
     final deliveryData = _asMap(contractData['deliveryData']);
     final paymentData = _asMap(contractData['paymentData']);
     final deliveryStatus = _normalizeDeliveryStatus(deliveryData['status']);
@@ -3409,14 +3407,12 @@ class _ChatViewState extends State<ChatView> {
     final isPaidDelivered =
         deliveryStatus == 'paid_delivered' ||
         _isCompletedPaymentStatus(paymentStatus);
-    final isLocked = isPaidDelivered || contractStatus == 'completed';
 
     if (isPaidDelivered || contractStatus == 'completed') return false;
 
-    return currentStage == 'completed' &&
-        (deliveryStatus == 'not_submitted' ||
-            deliveryStatus == 'changes_requested' ||
-            deliveryStatus == 'submitted');
+    return deliveryStatus == 'not_submitted' ||
+        deliveryStatus == 'changes_requested' ||
+        deliveryStatus == 'submitted';
   }
 
   Future<void> _saveWorkflowContractData(
@@ -3568,8 +3564,10 @@ class _ChatViewState extends State<ChatView> {
         draft.linkUrls.map(_normalizeDeliveryLink),
       );
 
+      final submittedAt = DateTime.now().toIso8601String();
       final updatedContractData = Map<String, dynamic>.from(contractData);
       final updatedDeliveryData = _asMap(updatedContractData['deliveryData']);
+      final updatedProgressData = _asMap(updatedContractData['progressData']);
       updatedDeliveryData['status'] = 'submitted';
       updatedDeliveryData['previewImageUrls'] = imagePreviewUrls;
       updatedDeliveryData['imageUrls'] = imagePreviewUrls;
@@ -3587,13 +3585,17 @@ class _ChatViewState extends State<ChatView> {
       updatedDeliveryData['linkUrls'] = normalizedLinks;
       updatedDeliveryData['notes'] = draft.notes.trim();
       updatedDeliveryData['submittedBy'] = _currentUserRole();
-      updatedDeliveryData['submittedAt'] = DateTime.now().toIso8601String();
+      updatedDeliveryData['submittedAt'] = submittedAt;
       updatedDeliveryData['changesRequestedBy'] = '';
       updatedDeliveryData['changesRequestedAt'] = '';
       updatedDeliveryData['approvedBy'] = '';
       updatedDeliveryData['approvedAt'] = '';
       updatedDeliveryData['approvedByClient'] = false;
+      updatedProgressData['stage'] = 'completed';
+      updatedProgressData['updatedAt'] = submittedAt;
+      updatedProgressData['updatedBy'] = _currentUserRole();
       updatedContractData['deliveryData'] = updatedDeliveryData;
+      updatedContractData['progressData'] = updatedProgressData;
 
       await _saveWorkflowContractData(updatedContractData);
 
@@ -6280,7 +6282,9 @@ class _ChatViewState extends State<ChatView> {
             Text(
               deliveryStatus == 'submitted'
                   ? 'You can update the submitted work while it is awaiting client review.'
-                  : 'You can now submit the completed work for client review.',
+                  : currentStage == 'completed'
+                  ? 'You can now submit the completed work for client review.'
+                  : 'You can submit the work now. This will also mark progress as Completed for client review.',
               style: const TextStyle(
                 color: Colors.black54,
                 fontSize: 12.5,
