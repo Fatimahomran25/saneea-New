@@ -89,7 +89,7 @@ class _ChatViewState extends State<ChatView> {
   static const Color primary = Color(0xFF5A3E9E);
   static const String contractDisplayTitle = 'Freelancer Service Agreement';
   static const String moyasarPublishableKey =
-      'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
+      String.fromEnvironment('MOYASAR_PUBLISHABLE_KEY');
   static const double _pinnedPanelHeaderMinHeight = 92;
   List<File> _selectedImages = [];
   String? _otherUserPhotoUrl;

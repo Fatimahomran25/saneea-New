@@ -3,6 +3,7 @@ import os
 import requests
 import traceback
 from datetime import datetime
+from dotenv import load_dotenv
 from firebase_admin import firestore
 import firebase_service
 from firebase_service import (
@@ -32,6 +33,7 @@ from contract_controller import (
 
 # Keep all contract endpoints together so server.py only handles app setup.
 contract_routes = Blueprint("contract_routes", __name__)
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 
 def _safe_notification_text(value, fallback):
@@ -390,6 +392,7 @@ def update_contract_api():
     try:
         data = request.get_json(force=True)
         request_id = data.get("requestId", "")
+        proposal_id = data.get("proposalId", "")
         contract_data = data.get("contractData")
         role = data.get("role", "")
 
@@ -405,7 +408,7 @@ def update_contract_api():
                 "error": "contractData is required"
             }), 400
 
-        result = update_contract(request_id, contract_data, role)
+        result = update_contract(request_id, contract_data, role, proposal_id)
         status_code = 200 if result.get("success") else 404
         return jsonify(result), status_code
 
@@ -498,9 +501,11 @@ def download_contract_pdf_api():
             "error": str(error)
         }), 500
 
-
-
-MOYASAR_SECRET_KEY = "sk_test_c4eiqi5WGWheVnQFws8m6CEcLQqAebHyM64o46U1"
+def _get_moyasar_secret_key():
+    secret_key = os.getenv("MOYASAR_SECRET_KEY", "").strip()
+    if not secret_key:
+        raise RuntimeError("MOYASAR_SECRET_KEY is not configured")
+    return secret_key
 
 
 @contract_routes.route("/verify-payment", methods=["POST"])
@@ -520,7 +525,7 @@ def verify_payment_api():
 
         response = requests.get(
             f"https://api.moyasar.com/v1/payments/{payment_id}",
-            auth=(MOYASAR_SECRET_KEY, "")
+            auth=(_get_moyasar_secret_key(), "")
         )
 
         payment = response.json()
@@ -634,7 +639,7 @@ def verify_termination_payment_api():
 
         response = requests.get(
             f"https://api.moyasar.com/v1/payments/{payment_id}",
-            auth=(MOYASAR_SECRET_KEY, "")
+            auth=(_get_moyasar_secret_key(), "")
         )
         payment = response.json()
 

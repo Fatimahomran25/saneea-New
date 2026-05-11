@@ -375,9 +375,11 @@ class ChatController {
       await previewRef.putFile(imageFile);
       await storageRef.putFile(imageFile);
       final previewUrl = await previewRef.getDownloadURL();
+      final fileUrl = await storageRef.getDownloadURL();
 
       imageItems.add({
         'fileName': '$fileName.jpg',
+        'url': fileUrl,
         'previewUrl': previewUrl,
         'storagePath': storageRef.fullPath,
       });
@@ -408,7 +410,12 @@ class ChatController {
         .child('${DateTime.now().millisecondsSinceEpoch}_$normalizedName');
 
     await storageRef.putFile(file);
-    return {'name': normalizedName, 'storagePath': storageRef.fullPath};
+    final fileUrl = await storageRef.getDownloadURL();
+    return {
+      'name': normalizedName,
+      'url': fileUrl,
+      'storagePath': storageRef.fullPath,
+    };
   }
 
   Stream<List<MessageModel>> getMessages(String chatId) {

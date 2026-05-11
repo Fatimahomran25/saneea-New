@@ -5,15 +5,48 @@ from dotenv import load_dotenv
 
 os.environ["HF_HOME"] = "D:/huggingface"
 os.environ["TRANSFORMERS_CACHE"] = "D:/huggingface"
+
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-from flask import Flask
-
+from flask import Flask, request, jsonify
 from contract_routes import contract_routes
 
 app = Flask(__name__)
 app.register_blueprint(contract_routes)
+
+
+# =========================
+# Temporary analyze endpoint
+# Shows freelancers while AI model is disabled
+# =========================
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    try:
+        data = request.get_json(force=True) or {}
+
+        description = data.get("description", "")
+        images = data.get("images", [])
+
+        print("Analyze request received")
+        print("Description:", description)
+        print("Images count:", len(images) if isinstance(images, list) else 0)
+
+        return jsonify({
+            "matchedWorks": 1,
+            "matchPercentage": 85,
+            "message": "Temporary match result while AI analysis is disabled."
+        }), 200
+
+    except Exception as e:
+        print("Analyze endpoint error:", e)
+
+        return jsonify({
+            "matchedWorks": 0,
+            "matchPercentage": 0,
+            "error": str(e)
+        }), 500
+
 
 # =========================
 # AI imports temporarily disabled
@@ -25,6 +58,7 @@ app.register_blueprint(contract_routes)
 # from PIL import Image
 # import requests
 # from io import BytesIO
+
 
 # =========================
 # AI model loading temporarily disabled
@@ -43,6 +77,7 @@ app.register_blueprint(contract_routes)
 # device = "cpu"
 # model = model.to(device)
 # model.eval()
+
 
 # =========================
 # AI analysis function temporarily disabled
@@ -127,11 +162,12 @@ app.register_blueprint(contract_routes)
 #
 #     return 0, round(best_percentage)
 
+
 # =========================
-# AI endpoint temporarily disabled
+# Real AI endpoint temporarily disabled
 # =========================
 # @app.route("/analyze", methods=["POST"])
-# def analyze():
+# def analyze_ai():
 #     data = request.get_json(force=True)
 #
 #     description = data.get("description", "")
@@ -143,6 +179,7 @@ app.register_blueprint(contract_routes)
 #         "matchedWorks": matched,
 #         "matchPercentage": percentage
 #     })
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=True)

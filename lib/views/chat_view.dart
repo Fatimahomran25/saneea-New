@@ -44,6 +44,11 @@ class _DeliveryRemoteFile {
 
   String get bestPreviewUrl =>
       watermarkedPreviewUrl.isNotEmpty ? watermarkedPreviewUrl : previewUrl;
+
+  bool get hasAccessibleUrl =>
+      bestPreviewUrl.isNotEmpty ||
+      storagePath.trim().isNotEmpty ||
+      url.trim().isNotEmpty;
 }
 
 class _DeliverySubmissionDraft {
@@ -174,7 +179,7 @@ class _ChatViewState extends State<ChatView> {
   static const Color primary = Color(0xFF5A3E9E);
   static const String contractDisplayTitle = 'Freelancer Service Agreement';
   static const String moyasarPublishableKey =
-      'pk_test_tP63K4Te6zdS9egGFnhNy3TYtkZJHPKkMPGcK7Gx';
+      String.fromEnvironment('MOYASAR_PUBLISHABLE_KEY');
   static const Duration _contractRequestTimeout = Duration(seconds: 25);
   static const Duration _generateContractRequestTimeout = Duration(seconds: 90);
   static const Duration _panelSwitchDuration = Duration(milliseconds: 220);
@@ -2700,7 +2705,9 @@ class _ChatViewState extends State<ChatView> {
   }) async {
     if (previewOnly) {
       final previewUrl = item.bestPreviewUrl;
-      return previewUrl.trim().isEmpty ? null : previewUrl;
+      if (previewUrl.trim().isNotEmpty) {
+        return previewUrl;
+      }
     }
 
     if (item.storagePath.trim().isNotEmpty) {
@@ -2715,6 +2722,89 @@ class _ChatViewState extends State<ChatView> {
 
     final previewUrl = item.bestPreviewUrl;
     return previewUrl.trim().isEmpty ? null : previewUrl;
+  }
+
+  Widget _buildDeliveryThumbnailPlaceholder({
+    bool isLoading = false,
+    bool isLocked = false,
+  }) {
+    return Container(
+      width: 88,
+      height: 88,
+      color: const Color(0xFFF4EFFB),
+      alignment: Alignment.center,
+      child: isLoading
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: primary),
+            )
+          : Icon(
+              isLocked ? Icons.lock_outline_rounded : Icons.image_outlined,
+              color: primary,
+            ),
+    );
+  }
+
+  Widget _buildDeliveryImageThumbnail(
+    _DeliveryRemoteFile item, {
+    required bool previewOnly,
+  }) {
+    final directPreviewUrl = previewOnly
+        ? item.bestPreviewUrl
+        : item.bestPreviewUrl.isNotEmpty
+        ? item.bestPreviewUrl
+        : item.url;
+
+    if (directPreviewUrl.trim().isNotEmpty) {
+      return Image.network(
+        directPreviewUrl,
+        width: 88,
+        height: 88,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return _buildDeliveryThumbnailPlaceholder(isLoading: true);
+        },
+        errorBuilder: (_, __, ___) {
+          return _buildDeliveryThumbnailPlaceholder(
+            isLocked: !item.hasAccessibleUrl,
+          );
+        },
+      );
+    }
+
+    if (!item.hasAccessibleUrl) {
+      return _buildDeliveryThumbnailPlaceholder(isLocked: true);
+    }
+
+    return FutureBuilder<String?>(
+      future: _resolveDeliveryAssetUrl(item, previewOnly: previewOnly),
+      builder: (context, snapshot) {
+        final resolvedUrl = snapshot.data?.trim() ?? '';
+        if (resolvedUrl.isNotEmpty) {
+          return Image.network(
+            resolvedUrl,
+            width: 88,
+            height: 88,
+            fit: BoxFit.cover,
+            loadingBuilder: (context, child, progress) {
+              if (progress == null) return child;
+              return _buildDeliveryThumbnailPlaceholder(isLoading: true);
+            },
+            errorBuilder: (_, __, ___) {
+              return _buildDeliveryThumbnailPlaceholder();
+            },
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _buildDeliveryThumbnailPlaceholder(isLoading: true);
+        }
+
+        return _buildDeliveryThumbnailPlaceholder();
+      },
+    );
   }
 
   Future<void> _openDeliveryImageItem(
@@ -3423,12 +3513,15 @@ class _ChatViewState extends State<ChatView> {
         .collection('chat')
         .doc(widget.chatId)
         .get();
-    final requestId = _extractRequestId(chatDoc.data());
+    final chatData = chatDoc.data();
+    final requestId = _extractRequestId(chatData);
+    final proposalId = (chatData?['proposalId'] ?? '').toString().trim();
 
     final response = await _postContractApi(
       endpointPath: 'update-contract',
       body: {
         'requestId': requestId,
+        if (proposalId.isNotEmpty) 'proposalId': proposalId,
         'role': _currentUserRole(),
         'contractData': updatedContractData,
       },
@@ -4096,23 +4189,22 @@ class _ChatViewState extends State<ChatView> {
         ? proposalId
         : requestId;
 
-    final requestDoc = await FirebaseFirestore.instance
-        .collection('requests')
-        .doc(requestId)
-        .get();
-    final requestContractData = _nonEmptyMapOrNull(
-      requestDoc.data()?['contractData'],
-    );
-    if (requestContractData != null) {
-      return requestContractData;
-    }
-
     final sourceDoc = await FirebaseFirestore.instance
         .collection(sourceCollection)
         .doc(sourceDocumentId)
         .get();
+    final sourceContractData = _nonEmptyMapOrNull(
+      sourceDoc.data()?['contractData'],
+    );
+    if (sourceContractData != null) {
+      return sourceContractData;
+    }
 
-    return _nonEmptyMapOrNull(sourceDoc.data()?['contractData']);
+    final requestDoc = await FirebaseFirestore.instance
+        .collection('requests')
+        .doc(requestId)
+        .get();
+    return _nonEmptyMapOrNull(requestDoc.data()?['contractData']);
   }
 
   Future<Map<String, dynamic>?> _waitForSavedContractData({
@@ -6319,14 +6411,9 @@ class _ChatViewState extends State<ChatView> {
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   final imageItem = imageItems[index];
-                  final previewUrl = restrictSubmittedWork
-                      ? imageItem.bestPreviewUrl
-                      : imageItem.bestPreviewUrl.isNotEmpty
-                      ? imageItem.bestPreviewUrl
-                      : imageItem.url;
 
                   return GestureDetector(
-                    onTap: previewUrl.trim().isEmpty
+                    onTap: !imageItem.hasAccessibleUrl
                         ? null
                         : () => _openDeliveryImageItem(
                             imageItem,
@@ -6336,23 +6423,10 @@ class _ChatViewState extends State<ChatView> {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(12),
-                          child: previewUrl.trim().isEmpty
-                              ? Container(
-                                  width: 88,
-                                  height: 88,
-                                  color: const Color(0xFFF4EFFB),
-                                  alignment: Alignment.center,
-                                  child: const Icon(
-                                    Icons.lock_outline_rounded,
-                                    color: primary,
-                                  ),
-                                )
-                              : Image.network(
-                                  previewUrl,
-                                  width: 88,
-                                  height: 88,
-                                  fit: BoxFit.cover,
-                                ),
+                          child: _buildDeliveryImageThumbnail(
+                            imageItem,
+                            previewOnly: restrictSubmittedWork,
+                          ),
                         ),
                         if (restrictSubmittedWork)
                           Positioned(
@@ -6438,9 +6512,7 @@ class _ChatViewState extends State<ChatView> {
                         ),
                       ),
                       OutlinedButton(
-                        onPressed:
-                            restrictSubmittedWork &&
-                                item.bestPreviewUrl.trim().isEmpty
+                        onPressed: !item.hasAccessibleUrl
                             ? null
                             : () => _openDeliveryFileItem(
                                 item,
@@ -6455,9 +6527,7 @@ class _ChatViewState extends State<ChatView> {
                         ),
                         child: Text(
                           restrictSubmittedWork
-                              ? (item.bestPreviewUrl.trim().isNotEmpty
-                                    ? 'Preview'
-                                    : 'Locked')
+                              ? (item.hasAccessibleUrl ? 'Preview' : 'Locked')
                               : 'Open Final Work',
                         ),
                       ),

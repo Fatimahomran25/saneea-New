@@ -1,9 +1,49 @@
+import json
+import os
+from pathlib import Path
+
 import firebase_admin
+from dotenv import load_dotenv
 from firebase_admin import credentials, firestore, messaging
+
+
+_BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(_BACKEND_DIR / ".env")
+
+
+def _load_firebase_credentials():
+    service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    if service_account_json:
+        try:
+            return credentials.Certificate(json.loads(service_account_json))
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON"
+            ) from error
+
+    service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
+    if service_account_path:
+        resolved_path = Path(service_account_path).expanduser()
+        if not resolved_path.is_absolute():
+            resolved_path = (_BACKEND_DIR / resolved_path).resolve()
+        if not resolved_path.is_file():
+            raise FileNotFoundError(
+                f"Firebase service account file not found: {resolved_path}"
+            )
+        return credentials.Certificate(str(resolved_path))
+
+    default_local_path = _BACKEND_DIR / "serviceAccountKey.json"
+    if default_local_path.is_file():
+        return credentials.Certificate(str(default_local_path))
+
+    raise RuntimeError(
+        "Firebase Admin credentials are not configured. "
+        "Set FIREBASE_SERVICE_ACCOUNT_PATH or FIREBASE_SERVICE_ACCOUNT_JSON."
+    )
 
 # Initialize Firebase only once.
 if not firebase_admin._apps:
-    cred = credentials.Certificate("serviceAccountKey.json")
+    cred = _load_firebase_credentials()
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()

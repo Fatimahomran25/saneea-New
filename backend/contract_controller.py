@@ -1116,18 +1116,21 @@ def cancel_termination(request_id, role):
     }
 
 
-def update_contract(request_id, contract_data, role=""):
-    request_data = get_request_by_id(request_id)
+def update_contract(request_id, contract_data, role="", proposal_id=""):
+    contract_source = get_contract_source_by_id(request_id, proposal_id)
 
-    if not request_data:
+    if not contract_source:
         return {
             "success": False,
             "error": "Request not found"
         }
 
-    existing_contract_data = request_data.get("contractData")
+    source = contract_source.get("source")
+    source_data = contract_source.get("data") or {}
+
+    existing_contract_data = source_data.get("contractData")
     if not isinstance(existing_contract_data, dict):
-        generated = generate_contract_from_data(request_data)
+        generated = generate_contract_from_data(source_data)
         existing_contract_data = generated["contractData"]
 
     existing_parties = existing_contract_data.get("parties")
@@ -1239,7 +1242,39 @@ def update_contract(request_id, contract_data, role=""):
         )
         updated_approval["edited"] = False
 
-    update_request_contract_data(request_id, updated_contract_data)
+    if source == "request":
+        update_request_contract_data(request_id, updated_contract_data)
+    elif source == "announcement":
+        normalized_proposal_id = str(
+            contract_source.get("proposalId") or proposal_id or ""
+        ).strip()
+        announcement_id = str(
+            contract_source.get("announcementId") or request_id or ""
+        ).strip()
+        client_id = str(contract_source.get("clientId") or "").strip()
+
+        if not normalized_proposal_id:
+            return {
+                "success": False,
+                "error": "proposalId is required for announcement contracts"
+            }
+
+        update_announcement_proposal_contract_data(
+            normalized_proposal_id,
+            updated_contract_data,
+        )
+
+        if client_id and announcement_id:
+            update_announcement_contract_data(
+                client_id,
+                announcement_id,
+                updated_contract_data,
+            )
+    else:
+        return {
+            "success": False,
+            "error": "Unsupported contract source"
+        }
 
     return {
         "success": True,
