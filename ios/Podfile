@@ -54,13 +54,15 @@ post_install do |installer|
     end
   end
 
-  basic_seq = File.join(installer.sandbox.root, 'gRPC-Core', 'src/core/lib/promise/detail/basic_seq.h')
-  if File.exist?(basic_seq)
-    text = File.read(basic_seq)
-    text = text.gsub(
-      'Traits::template CallSeqFactory(f_, *cur_, std::move(arg))',
-      'Traits::template CallSeqFactory<>(f_, *cur_, std::move(arg))'
-    )
-    File.write(basic_seq, text)
+  ['gRPC-Core', 'gRPC-C++'].each do |grpc_pod|
+    basic_seq = File.join(installer.sandbox.root, grpc_pod, 'src/core/lib/promise/detail/basic_seq.h')
+    if File.exist?(basic_seq)
+      text = File.read(basic_seq)
+      text = text.gsub(
+        'Traits::template CallSeqFactory(f_, *cur_, std::move(arg))',
+        'Traits::template CallSeqFactory<>(f_, *cur_, std::move(arg))'
+      )
+      File.write(basic_seq, text)
+    end
   end
 end
